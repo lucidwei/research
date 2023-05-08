@@ -3,7 +3,7 @@ server/docker-compose.yml
 config.ini
 .idea/
 归档/
-
+*uploading.cfg
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
