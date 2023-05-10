@@ -188,7 +188,7 @@ class PgDbManager:
         # 从数据库中的最晚日期到 all_dates 的最晚日期
         missing_dates.extend([d for d in all_dates if d > max_date])
 
-        return missing_dates
+        return sorted(missing_dates)
 
     def get_missing_months_ends(self, all_month_ends, table_name):
         return self.get_missing_dates(all_month_ends, table_name)

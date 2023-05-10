@@ -55,7 +55,7 @@ class PgDbUpdaterBase(PgDbManager):
 
         return {'id_to_english': id_to_english, 'english_to_chinese': english_to_chinese}
 
-    def update_edb_by_id_to_high_freq(self, code: str):
+    def update_high_freq_by_edb_id(self, code: str):
         """
         TODO: 这种函数不能给上传的数据加description列，但后续描述列是要放在外键的。因此不用担心
         注意：
@@ -95,7 +95,7 @@ class PgDbUpdaterBase(PgDbManager):
             downloaded_df.to_sql('high_freq_long', self.alch_engine, if_exists='append', index=False)
 
     @timeit
-    def update_wsd(self, code: str, fields: str):
+    def update_markets_daily_by_wsd_id_fields(self, code: str, fields: str):
         """
         code和field根据代码生成器CG获取。
         先获取缺失的日期列表,需要更新的两段日期是：
@@ -113,7 +113,8 @@ class PgDbUpdaterBase(PgDbManager):
             if len(dates_missing) != 0:
                 print(
                     f'Wind downloading {code} {field} for markets_daily_long between {str(dates_missing[0])} and {str(dates_missing[-1])}')
-                downloaded_df = w.wsd(code, field, str(dates_missing[0]), str(dates_missing[-1]), "", usedf=True)[1]
+                # 这里Days=Weekdays简化设置，为所有product设定交易所有点难度。
+                downloaded_df = w.wsd(code, field, str(dates_missing[0]), str(dates_missing[-1]), "Days=Weekdays", usedf=True)[1]
                 # 转换下载的数据框为长格式
                 downloaded_df.index.name = 'date'
                 downloaded_df.reset_index(inplace=True)
@@ -122,13 +123,33 @@ class PgDbUpdaterBase(PgDbManager):
                 downloaded_df.dropna(subset=['value'], inplace=True)
 
                 # 添加其他所需列
-                downloaded_df['product_name'] = self.conversion_dicts['id_to_english'][code]
-                downloaded_df['source_code'] = f"wind_{code}"
-                downloaded_df['chinese_name'] = downloaded_df['product_name'].map(
-                    self.conversion_dicts['english_to_chinese'])
+                product_name = self.conversion_dicts['id_to_english'][code]
+                source_code = f"wind_{code}"
+                chinese_name = self.conversion_dicts['english_to_chinese'][product_name]
+
+                # 确保metric_static_info表中存在对应的source_code和chinese_name
+                with self.alch_engine.connect() as conn:
+                    query = f"""
+                    INSERT INTO metric_static_info (source_code, chinese_name)
+                    VALUES ('{source_code}', '{chinese_name}')
+                    ON CONFLICT (source_code) DO UPDATE
+                    SET chinese_name = EXCLUDED.chinese_name;
+                    """
+                    conn.execute(text(query))
+
+                    # 获取metric_static_info表中对应记录的internal_id
+                    query = f"""
+                    SELECT internal_id
+                    FROM metric_static_info
+                    WHERE source_code = '{source_code}' AND chinese_name = '{chinese_name}';
+                    """
+                    internal_id = conn.execute(text(query)).fetchone()[0]
 
                 # 将新行插入数据库中, df要非空
                 if downloaded_df.iloc[0, 0] != 0:
+                    print('Uploading data to database...')
+                    downloaded_df['product_name'] = product_name
+                    downloaded_df['metric_static_info_id'] = internal_id
                     downloaded_df.to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
 
     @timeit

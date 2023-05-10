@@ -1,0 +1,28 @@
+## docker build -t chfs_image -f Dockerfile_chfs .
+
+# 使用基础镜像
+FROM alpine:latest
+
+# 安装 unzip
+RUN apk add --no-cache unzip
+
+# 下载 CHFS 可执行文件
+RUN wget -O chfs.zip http://iscute.cn/tar/chfs/2.0/chfs-linux-amd64-2.0.zip
+
+# 解压并移动 CHFS 可执行文件
+RUN unzip chfs.zip && mv chfs /usr/local/bin/chfs
+
+# 使 CHFS 可执行文件可执行
+RUN chmod +x /usr/local/bin/chfs
+
+# 暴露端口，假设 CHFS 监听在 8001 端口
+EXPOSE 8001
+
+# 创建一个文件夹用于共享
+RUN mkdir /shared-folder
+
+# 设置共享文件夹的权限
+RUN chmod 777 /shared-folder
+
+# 运行 CHFS
+CMD ["/usr/local/bin/chfs", "--path=/shared-folder", "--port=8001", "--rule=::RW"]
