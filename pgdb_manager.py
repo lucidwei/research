@@ -8,8 +8,7 @@ import psycopg2, sqlalchemy, subprocess
 from sqlalchemy import create_engine, text, select, case, String, cast
 from sqlalchemy.schema import MetaData, Table
 from utils import timeit
-from WindPy import w
-
+import pandas as pd
 
 class PgDbManager:
     """
@@ -152,7 +151,7 @@ class PgDbManager:
                 with self.alch_engine.begin() as connection:
                     connection.execute(update_stmt)
 
-    def get_min_max_dates_from_db(self, table_name, metric_name=None, field=None):
+    def get_existing_dates_from_db(self, table_name, metric_name=None, field=None):
         columns = self.alch_conn.execute(text(f"SELECT * FROM {table_name} LIMIT 0")).keys()
 
         conditions = []
@@ -170,18 +169,22 @@ class PgDbManager:
 
         condition = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
-        min_date = self.alch_conn.execute(text(f"SELECT MIN(date) FROM {table_name} {condition}")).scalar()
-        max_date = self.alch_conn.execute(text(f"SELECT MAX(date) FROM {table_name} {condition}")).scalar()
-        return min_date, max_date
+        existing_dates = self.alch_conn.execute(text(f"SELECT date FROM {table_name} {condition}")).fetchall()
+        existing_dates = [row[0] for row in existing_dates]
 
-    def get_missing_dates(self, all_dates, table_name, column_name=None, field=None):
-        min_date, max_date = self.get_min_max_dates_from_db(table_name, column_name, field)
+        return existing_dates
 
-        missing_dates = []
+    def get_missing_dates(self, all_dates, table_name, english_id, field=None):
+        existing_dates = self.get_existing_dates_from_db(table_name, english_id, field)
 
-        if not min_date and not max_date:  # 如果表是空的
+        # 如果表是空的，没有数据，则全部missing
+        if not existing_dates:
             return all_dates
 
+        min_date = min(existing_dates)
+        max_date = max(existing_dates)
+
+        missing_dates = []
         # 从 all_dates 的最早日期到数据库中的最早日期
         missing_dates.extend([d for d in all_dates if d < min_date])
 
@@ -190,8 +193,11 @@ class PgDbManager:
 
         return sorted(missing_dates)
 
-    def get_missing_months_ends(self, all_month_ends, table_name):
-        return self.get_missing_dates(all_month_ends, table_name)
-
-
+    def get_missing_months_ends(self, all_month_ends, earliest_available, table_name, column_name):
+        missing_dates = self.get_missing_dates(all_month_ends, table_name, column_name)
+        # 将 missing_dates 转换为 pandas 的 DatetimeIndex
+        missing_dates = pd.DatetimeIndex(missing_dates)
+        # 过滤出 earliest_available 之后的日期
+        missing_dates = missing_dates[missing_dates >= earliest_available]
+        return sorted(missing_dates)
 

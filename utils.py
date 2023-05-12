@@ -11,7 +11,6 @@ from chinese_calendar import is_holiday
 from WindPy import w
 import pandas as pd
 import re
-import translators as ts
 
 
 def get_image_url(filename):
@@ -159,6 +158,7 @@ def get_month_end_dates(start_date: date, end_date: date):
 
 
 def translate_and_convert_to_camel(column_names, manual_translations: dict):
+    import translators as ts
     # 每次调用api最多处理的变量个数，防止文本过长。而且同时翻译过多时会有漏翻现象
     max_length = 20
     # 拆分为多个小于最大长度的段
@@ -173,7 +173,7 @@ def translate_and_convert_to_camel(column_names, manual_translations: dict):
             joined = joined.replace(original, translation)
 
         # Translate the entire string
-        translated = ts.translate_text(joined, translator='alibaba')
+        translated = ts.translate_text(joined, translator='youdao')
 
         # Split the translated string by the separator
         translated_parts = translated.split(',')

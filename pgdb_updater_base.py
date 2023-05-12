@@ -30,6 +30,7 @@ class PgDbUpdaterBase(PgDbManager):
     @property
     def conversion_dicts(self):
         """
+        存在的原因：WSD和EDB不同，不会返回id的中英文名，所以需要转换字典。
         保存所有ID->english以及english->chinese的转换。
         TODO: 不完美，这个步骤需要手工。最好通过wind API自动获取
         """
@@ -65,7 +66,8 @@ class PgDbUpdaterBase(PgDbManager):
         - all_dates的最早一天到数据库存在数据的最早一天
         - 数据库存在数据的最后一天到all_dates的最后一天，也就是今天
         """
-        dates_missing = self.get_missing_dates(self.tradedays, 'high_freq_long', column_name=self.conversion_dicts['id_to_english'][code])
+        dates_missing = self.get_missing_dates(self.tradedays, 'high_freq_long',
+                                               english_id=self.conversion_dicts['id_to_english'][code])
         if len(dates_missing) == 0:
             return
         old_dates = [date for date in dates_missing if date.year < 2023]
@@ -73,7 +75,8 @@ class PgDbUpdaterBase(PgDbManager):
         for dates_update in [old_dates, new_dates]:
             if not dates_update:
                 continue
-            print(f'Wind downloading {code} for table high_freq_long between {str(dates_update[0])} and {str(dates_update[-1])}')
+            print(
+                f'Wind downloading {code} for table high_freq_long between {str(dates_update[0])} and {str(dates_update[-1])}')
             downloaded_df = w.edb(code, str(dates_update[0]), str(dates_update[-1]), usedf=True)[1]
             # wind返回的df有毛病，日期为一天和多天的格式不一样
             try:
@@ -94,6 +97,94 @@ class PgDbUpdaterBase(PgDbManager):
             downloaded_df = downloaded_df.melt(id_vars=['date'], var_name='metric_name', value_name='value')
             downloaded_df.to_sql('high_freq_long', self.alch_engine, if_exists='append', index=False)
 
+    def update_low_freq_by_edb_id(self, earliest_available_date, code, maps: tuple):
+        map_id_to_name, map_id_to_unit, map_id_to_english = maps
+        # 更新数据
+        existing_dates = self.get_existing_dates_from_db('low_freq_long', map_id_to_english[code])
+        dates_missing = self.get_missing_months_ends(self.months_ends, earliest_available_date, 'low_freq_long', map_id_to_english[code])
+        if len(dates_missing) == 0:
+            print(f'No missing data for low_freq_long {map_id_to_name[code]}, skipping download')
+            return
+
+        print(f'Wind downloading for low_freq_long {map_id_to_name[code]} between {str(dates_missing[0])} and {str(dates_missing[-1])}')
+        downloaded_df = w.edb(code, str(dates_missing[0]), str(self.all_dates[-1]), usedf=True)[1]
+        downloaded_df.columns=[code]
+
+        # 删除与 existing_dates 中日期相同的行
+        existing_dates_set = set(existing_dates)
+        downloaded_df = downloaded_df.loc[~downloaded_df.index.isin(existing_dates_set)]
+
+        if downloaded_df.empty:
+            print(f'No missing data for low_freq_long的{map_id_to_name[code]}, downloaded but will not upload')
+            return
+
+        # wind返回的df，日期为一天和多天的格式不一样
+        if dates_missing[0] == dates_missing[-1]:
+            downloaded_df = downloaded_df.T
+            downloaded_df.index = dates_missing
+
+        # 重命名列为数据库中列
+        downloaded_df.reset_index(inplace=True)
+        downloaded_df.rename(columns={'index': 'date'}, inplace=True)
+
+        # 计算近半年起始日期
+        six_months_ago = datetime.date.today() - datetime.timedelta(days=6 * 30)
+        # 计算近半年的数据点个数并计算更新频率
+        existing_dates_series = pd.Series(existing_dates, dtype='datetime64[D]').dt.date
+        combined_dates = pd.concat([existing_dates_series, downloaded_df['date']])
+
+        # 选择六个月前之后的日期
+        recent_dates = combined_dates[combined_dates >= six_months_ago]
+        # 计算近半年的数据点个数并计算更新频率
+        non_null_data_points = recent_dates.count()
+        # 计算更新频率=近半年的天数/非空数据点个数
+        update_freq = 180 / non_null_data_points
+
+        # 更新metric_static_info 元数据table
+        unit = map_id_to_unit[code]
+        source_code = f'wind_{code}'
+        chinese_name = map_id_to_name[code]
+        english_name = map_id_to_english[code]
+
+        # Ensure the corresponding source_code and chinese_name exist in the metric_static_info table
+        with self.alch_engine.connect() as conn:
+            query = text("""
+                        INSERT INTO metric_static_info (source_code, chinese_name, unit, english_name)
+                        VALUES (:source_code, :chinese_name, :unit, :english_name)
+                        ON CONFLICT (source_code) DO UPDATE
+                        SET english_name = EXCLUDED.english_name,
+                            unit = EXCLUDED.unit;
+                        """)
+            conn.execute(query,
+                         {
+                             'source_code': source_code,
+                             'chinese_name': chinese_name,
+                             'unit': unit,
+                             'english_name': english_name
+                         })
+            conn.commit()
+
+            # Get the internal_id of the corresponding record in the metric_static_info table
+            query = f"""
+                    SELECT internal_id
+                    FROM metric_static_info
+                    WHERE source_code = :source_code AND chinese_name = :chinese_name;
+                    """
+            internal_id = conn.execute(text(query), {
+                'source_code': source_code,
+                'chinese_name': chinese_name,
+            }).fetchone()[0]
+
+        # 将新数据插入数据库中
+        df_upload = downloaded_df.rename(columns=map_id_to_english)
+        df_upload = df_upload.melt(id_vars=['date'], var_name='metric_name', value_name='value')
+        df_upload.dropna(subset=['value'], inplace=True)
+        # 添加 additional_info:update_freq 和 metric_static_info_id 列
+        df_upload['update_freq'] = update_freq
+        df_upload['metric_static_info_id'] = internal_id
+
+        df_upload.to_sql('low_freq_long', self.alch_engine, if_exists='append', index=False)
+
     @timeit
     def update_markets_daily_by_wsd_id_fields(self, code: str, fields: str):
         """
@@ -107,53 +198,56 @@ class PgDbUpdaterBase(PgDbManager):
 
         for field in fields_list:
             dates_missing = self.get_missing_dates(self.tradedays, "markets_daily_long",
-                                                   column_name=self.conversion_dicts['id_to_english'][code],
+                                                   english_id=self.conversion_dicts['id_to_english'][code],
                                                    field=field.lower())
+            if len(dates_missing) == 0:
+                print(f'No missing data for {code} {field} in markets_daily_long, skipping download')
+                return
 
-            if len(dates_missing) != 0:
-                print(
-                    f'Wind downloading {code} {field} for markets_daily_long between {str(dates_missing[0])} and {str(dates_missing[-1])}')
-                # 这里Days=Weekdays简化设置，为所有product设定交易所有点难度。
-                downloaded_df = w.wsd(code, field, str(dates_missing[0]), str(dates_missing[-1]), "Days=Weekdays", usedf=True)[1]
-                # 转换下载的数据框为长格式
-                downloaded_df.index.name = 'date'
-                downloaded_df.reset_index(inplace=True)
-                downloaded_df.columns = [col.lower() for col in downloaded_df.columns]
-                downloaded_df = downloaded_df.melt(id_vars=['date'], var_name='field', value_name='value')
-                downloaded_df.dropna(subset=['value'], inplace=True)
+            print(
+                f'Wind downloading {code} {field} for markets_daily_long between {str(dates_missing[0])} and {str(dates_missing[-1])}')
+            # 这里Days=Weekdays简化设置，为所有product设定交易所有点难度。
+            downloaded_df = \
+            w.wsd(code, field, str(dates_missing[0]), str(dates_missing[-1]), "Days=Weekdays", usedf=True)[1]
+            # 转换下载的数据框为长格式
+            downloaded_df.index.name = 'date'
+            downloaded_df.reset_index(inplace=True)
+            downloaded_df.columns = [col.lower() for col in downloaded_df.columns]
+            downloaded_df = downloaded_df.melt(id_vars=['date'], var_name='field', value_name='value')
+            downloaded_df.dropna(subset=['value'], inplace=True)
 
-                # 添加其他所需列
-                product_name = self.conversion_dicts['id_to_english'][code]
-                source_code = f"wind_{code}"
-                chinese_name = self.conversion_dicts['english_to_chinese'][product_name]
+            # 添加其他所需列
+            product_name = self.conversion_dicts['id_to_english'][code]
+            source_code = f"wind_{code}"
+            chinese_name = self.conversion_dicts['english_to_chinese'][product_name]
 
-                # 确保metric_static_info表中存在对应的source_code和chinese_name
-                with self.alch_engine.connect() as conn:
-                    query = f"""
-                    INSERT INTO metric_static_info (source_code, chinese_name)
-                    VALUES ('{source_code}', '{chinese_name}')
-                    ON CONFLICT (source_code) DO UPDATE
-                    SET chinese_name = EXCLUDED.chinese_name;
-                    """
-                    conn.execute(text(query))
+            # 确保metric_static_info表中存在对应的source_code和chinese_name
+            with self.alch_engine.connect() as conn:
+                query = f"""
+                INSERT INTO metric_static_info (source_code, chinese_name)
+                VALUES ('{source_code}', '{chinese_name}')
+                ON CONFLICT (source_code) DO UPDATE
+                SET chinese_name = EXCLUDED.chinese_name;
+                """
+                conn.execute(text(query))
 
-                    # 获取metric_static_info表中对应记录的internal_id
-                    query = f"""
-                    SELECT internal_id
-                    FROM metric_static_info
-                    WHERE source_code = '{source_code}' AND chinese_name = '{chinese_name}';
-                    """
-                    internal_id = conn.execute(text(query)).fetchone()[0]
+                # 获取metric_static_info表中对应记录的internal_id
+                query = f"""
+                SELECT internal_id
+                FROM metric_static_info
+                WHERE source_code = '{source_code}' AND chinese_name = '{chinese_name}';
+                """
+                internal_id = conn.execute(text(query)).fetchone()[0]
 
-                # 将新行插入数据库中, df要非空
-                if downloaded_df.iloc[0, 0] != 0:
-                    print('Uploading data to database...')
-                    downloaded_df['product_name'] = product_name
-                    downloaded_df['metric_static_info_id'] = internal_id
-                    downloaded_df.to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
+            # 将新行插入数据库中, df要非空
+            if downloaded_df.iloc[0, 0] != 0:
+                print('Uploading data to database...')
+                downloaded_df['product_name'] = product_name
+                downloaded_df['metric_static_info_id'] = internal_id
+                downloaded_df.to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
 
     @timeit
-    def update_low_freq_from_excel_meta(self, excel_file: str, name_mapping: dict, table_name='low_freq_long'):
+    def update_low_freq_from_excel_meta(self, excel_file: str, name_mapping: dict, if_rename=False):
         """
         先获取缺失的月末日期列表,需要更新的两段日期是：
         - all_dates的最早一天到数据库存在数据的最早一天
@@ -161,64 +255,59 @@ class PgDbUpdaterBase(PgDbManager):
         wind fetch缺失日期的EDB数据
         整理好格式传入数据库
         """
+        def get_start_month_end(s):
+            start_date_str = s.split(':')[0]  # 提取开始日期字符串
+            start_date = pd.to_datetime(start_date_str, format='%Y-%m')  # 转换成日期格式
+            start_month_end = start_date + pd.offsets.MonthEnd(1)  # 获取月末日期
+            return start_month_end
+
         # 剔除 '指标ID' 列字符串长度小于 5 的行，这些是EDB中计算后数值
         self.metadata = self.base_config.process_wind_metadata(excel_file)
         self.metadata = self.metadata[self.metadata['指标ID'].apply(lambda x: len(str(x)) >= 5)]
+
         # 定义 DataFrame 中列名和表中列名的对应关系
-        indicator_id_col = self.metadata.loc[:, '指标ID']
-        indicator_name_col = self.metadata.loc[:, '指标名称']
+        col_indicator_id = self.metadata.loc[:, '指标ID']
+        col_indicator_name = self.metadata.loc[:, '指标名称']
+        col_unit = self.metadata.loc[:, '单位']
+        col_earlist_date = self.metadata['时间区间'].apply(get_start_month_end)
+        # maps
+        map_id_to_name = dict(zip(col_indicator_id, col_indicator_name))
+        map_id_to_unit = dict(zip(col_indicator_id, col_unit))
+        map_id_to_english = {id: name_mapping[name] for id, name in map_id_to_name.items()}
+        map_id_to_earlist_date = dict(zip(col_indicator_id, col_earlist_date))
+        # renaming中会用到
+        names_to_delete = list(map_id_to_name.values())
 
-        map_id_to_english = {}
-        for ind_id, ind_name in zip(indicator_id_col, indicator_name_col):
-            # 使用手动映射的字典来替换列名
-            new_string = name_mapping[ind_name]
-            # 将指标 ID 与新字符串添加到字典中
-            map_id_to_english[ind_id] = new_string
-        self.db_col = map_id_to_english.values()
+        if if_rename:
+            self.delete_for_renaming(names_to_delete)
 
-        # 反转 map_id_to_english 字典，将英文列名映射回指标名称
-        map_english_to_id = {v: k for k, v in map_id_to_english.items()}
-        map_english_to_name = {v: k for k, v in name_mapping.items()}
-
+        maps_tuple = (map_id_to_name, map_id_to_unit, map_id_to_english)
         # 更新数据
-        dates_missing = self.get_missing_months_ends(self.months_ends, table_name)
-        ids = self.metadata['指标ID'].str.cat(sep=',')
-        if len(dates_missing) != 0:
-            print(f'Wind downloading for {table_name} 数据')
-            downloaded_df = w.edb(ids, str(dates_missing[0]), str(self.all_dates[-1]), usedf=True)[1]
-            # wind返回的df，日期为一天和多天的格式不一样
-            if dates_missing[0] == dates_missing[-1]:
-                downloaded_df = downloaded_df.T
-                downloaded_df.index = dates_missing
+        for id in col_indicator_id:
+            self.update_low_freq_by_edb_id(map_id_to_earlist_date[id], id, maps_tuple)
 
-            # 重命名列为数据库中列
-            downloaded_df.reset_index(inplace=True)
-            downloaded_df.rename(columns={'index': 'date'}, inplace=True)
-            downloaded_df.rename(columns=map_id_to_english, inplace=True)
+    def delete_for_renaming(self, names_to_delete):
+        with self.alch_engine.connect() as conn:
+            # 通过metric_static_info获取所有可能冲突的metric_name
+            conflict_metric_names_set = set()
+            for name in names_to_delete:
+                query = f"""
+                SELECT english_name
+                FROM metric_static_info
+                WHERE chinese_name = '{name}'
+                """
+                result = conn.execute(text(query))
+                for row in result:
+                    conflict_metric_names_set.add(row[0])
 
-            # 计算近半年起始日期
-            six_months_ago = datetime.date.today() - datetime.timedelta(days=6 * 30)
-            # 计算近半年的数据点数并计算更新频率
-            update_freq_dict = {}
-            for col in downloaded_df.columns:
-                if col != 'date':
-                    recent_data = downloaded_df.loc[downloaded_df['date'] >= six_months_ago, col]
-                    non_null_data_points = recent_data.count()
-
-                    # 计算更新频率
-                    date_range = 6 * 30  # 近半年的天数
-                    update_freq = date_range / non_null_data_points
-                    update_freq_dict[col] = update_freq
-
-            # 将新行插入数据库中
-            downloaded_df = downloaded_df.melt(id_vars=['date'], var_name='metric_name', value_name='value')
-            downloaded_df.dropna(subset=['value'], inplace=True)
-            # 添加 chinese_name、update_freq 和 source 列
-            downloaded_df['chinese_name'] = downloaded_df['metric_name'].map(map_english_to_name)
-            downloaded_df['update_freq'] = downloaded_df['metric_name'].map(update_freq_dict)
-            downloaded_df['source'] = downloaded_df['metric_name'].map(map_english_to_id).apply(lambda x: f'wind_{x}')
-
-            downloaded_df.to_sql(table_name, self.alch_engine, if_exists='append', index=False)
+            # 删除所有可能冲突的 metric_name
+            for metric_name in conflict_metric_names_set:
+                query = f"""
+                DELETE FROM low_freq_long
+                WHERE metric_name = '{metric_name}'
+                """
+                conn.execute(text(query))
+                conn.commit()
 
     def read_from_high_freq_view(self, code_list: List[str]) -> pd.DataFrame:
         """
