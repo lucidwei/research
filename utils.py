@@ -10,6 +10,8 @@ from datetime import datetime, timedelta, date
 from chinese_calendar import is_holiday
 from WindPy import w
 import pandas as pd
+import re
+import translators as ts
 
 
 def get_image_url(filename):
@@ -135,6 +137,7 @@ def is_date(value):
     except Exception:
         return False
 
+
 def get_month_end_dates(start_date: date, end_date: date):
     """
     返回一个包含给定时间范围内所有月末日期的元组(tuple)，元组包含 datetime 对象和 str 对象两种格式
@@ -154,3 +157,41 @@ def get_month_end_dates(start_date: date, end_date: date):
         temp_date = last_day + timedelta(days=1)
     return dates, date_strs
 
+
+def translate_and_convert_to_camel(column_names, manual_translations: dict):
+    # 每次调用api最多处理的变量个数，防止文本过长。而且同时翻译过多时会有漏翻现象
+    max_length = 20
+    # 拆分为多个小于最大长度的段
+    segments = [column_names[i:i + max_length] for i in range(0, len(column_names), max_length)]
+    camel_case_names = []
+
+    for segment in segments:
+        # Join the column names with a separator that is unlikely to appear in the translations
+        joined = ','.join(segment)
+        # Before translating, replace any strings that have manual translations
+        for original, translation in manual_translations.items():
+            joined = joined.replace(original, translation)
+
+        # Translate the entire string
+        translated = ts.translate_text(joined, translator='alibaba')
+
+        # Split the translated string by the separator
+        translated_parts = translated.split(',')
+
+        for translated_part in translated_parts:
+            # 转换成首字母大写
+            words = re.split(r'(?<=:)|\s+', translated_part)
+            words[0] = words[0].lower()
+            for i in range(0, len(words)):
+                words[i] = words[i].capitalize()
+            translated_part = ' '.join(words)
+
+            formated = translated_part.replace(': ', '_').replace(':', '_').replace(' ', '')
+            camel_case_names.append(formated)
+    return camel_case_names
+
+
+def generate_column_name_dict(chinese_column_names, manual_translations: dict):
+    english_column_names = translate_and_convert_to_camel(chinese_column_names, manual_translations)
+    column_name_dict = dict(zip(chinese_column_names, english_column_names))
+    return column_name_dict

@@ -19,7 +19,7 @@ class DatabaseUpdater(PgDbManager):
         check_wind()
         self.set_dates()
         self.update_estate_area()
-        self.calc_estate_area_ma()
+        self.process_estate_area()
         self.set_all_nan_to_null()
         self.close()
 
@@ -55,14 +55,33 @@ class DatabaseUpdater(PgDbManager):
 
             # 将指标 ID 与新字符串添加到字典中
             id_to_new_string[ind_id] = new_string
+
+            # 构建source_code
+            source_code = f"wind_{ind_id}"
+
+            # 注意，单位转换在上传数据部分完成
+            unit = '万平方米'
+
+            # 向metric_static_info表中插入source_code, chinese_name, 和unit
+            with self.alch_engine.begin() as connection:
+                connection.execute(text(f"""
+                    INSERT INTO metric_static_info (source_code, chinese_name, unit)
+                    VALUES ('{source_code}', '{ind_name}', '{unit}')
+                    ON CONFLICT (source_code) DO UPDATE
+                    SET chinese_name = EXCLUDED.chinese_name,
+                        unit = EXCLUDED.unit;
+                """))
+
         self.cities_col = id_to_new_string.values()
 
         # 更新数据
-        dates_missing = self.get_missing_dates(self.all_dates, "high_freq_wide")
+        dates_missing = self.get_missing_dates(self.all_dates, "estate_new_wide")
         ids = self.metadata['指标ID'].str.cat(sep=',')
         if len(dates_missing) != 0:
             print('Wind downloading for high_freq 房地产销售数据')
             downloaded_df = w.edb(ids, str(dates_missing[0]), str(dates_missing[-1]), usedf=True)[1]
+            # wind有时会返回莫名其妙的行，把非空小于2个的行删除
+            downloaded_df.dropna(thresh=2, inplace=True)
             # wind返回的df，日期为一天和多天的格式不一样
             if dates_missing[0] == dates_missing[-1]:
                 downloaded_df = downloaded_df.T
@@ -83,43 +102,53 @@ class DatabaseUpdater(PgDbManager):
                 downloaded_df[new_col_name] = downloaded_df[new_col_name] * 10000
 
             # 将新行插入数据库中
-            downloaded_df = downloaded_df.melt(id_vars=['date'], var_name='metric_name', value_name='value')
-            downloaded_df.to_sql('high_freq_long', self.alch_engine, if_exists='append', index=False)
+            long_df = downloaded_df.melt(id_vars=['date'], var_name='metric_name', value_name='value')
+            long_df.dropna(inplace=True)
+            long_df.to_sql('high_freq_long', self.alch_engine, if_exists='append', index=False)
 
-    def calc_estate_area_ma(self):
+    def process_estate_area(self):
         """
-        对数据本身做一些处理。首先，检查这些列数据是不是日度更新：
-        日度更新的判别标准是，最近半年的数据，非空非0的数据点是否占90%以上。
-        对于非日度更新的数据我们要对它们求移动平均MA，具体求几天的移动平均需要根据数据的更新频率决定，MA(n)的n取决于平均几天出现一次非空非0数据点。
+        首先，针对无锡和厦门一段一段处理，比如最新的三个数据在5月1号和5月10号和5月17号，首先把5月11~5月17的值设为5月17号的值除以7，
+        然后把5月2号到5月10号的值设为5月10号的值除以9，具体除以几其实应该取决于数据表中的空值数量+1。注意，每一段之间的间隔是不恒定的。
         """
-        # Read data from the database
-        query = text("SELECT * FROM high_freq_wide")
-        df_wide = pd.read_sql_query(query, self.alch_conn)
 
-        # Define a function to calculate the moving average based on a given n
-        def calculate_moving_average(column, n):
-            return column.rolling(window=n).mean()
+        # Read data from the estate_new_wide view
+        df = pd.read_sql(text("SELECT * FROM estate_new_wide"), self.alch_conn)
 
-        # Filter the last 6 months of data
-        last_six_months = df_wide[df_wide['date'] > pd.Timestamp.now() - pd.DateOffset(months=6)]
+        # Define a function to process the columns
+        def process_column(column):
+            non_null_indices = df[column].dropna().index
+            start_idx = df.index.min()
 
-        # Iterate through columns to process
-        for column_name in self.cities_col:
+            # Iterate through the non-null indices
+            for idx in non_null_indices:
+                # Fill missing values between start_idx and idx (inclusive) with the value at idx divided by the number of missing values + 1
+                df.loc[start_idx:idx, column] = df.loc[idx, column] / (idx - start_idx + 1)
+                start_idx = idx + 1
 
-            # Check if the column is daily updated
-            non_zero_count = last_six_months[column_name].notna().astype(int).sum()
-            total_count = len(last_six_months)
-            daily_updated = (non_zero_count / total_count) > 0.9
+            # Fill remaining missing values after the last non-null index
+            if start_idx < len(df):
+                df.loc[start_idx:, column] = 0
 
-            if not daily_updated:
-                # Calculate the average number of days between non-zero data points
-                non_zero_dates = last_six_months.loc[last_six_months[column_name].notna(), 'date']
-                days_between_non_zero = (non_zero_dates.diff().dropna() / pd.Timedelta(days=1)).mean()
+        # Process estate_new_xiamen and estate_new_wuxi
+        for column in ['estate_new_xiamen', 'estate_new_wuxi']:
+            process_column(column)
 
-                # Calculate the moving average
-                df_wide[column_name] = calculate_moving_average(df_wide[column_name], math.ceil(days_between_non_zero))
+        # Fill remaining NaNs with 0
+        # Fill remaining NaNs with 0, excluding 'estate_new_xiamen' and 'estate_new_wuxi'
+        cols_to_fill = [col for col in df.columns if col not in ['estate_new_xiamen', 'estate_new_wuxi']]
+        df.loc[:, cols_to_fill] = df.loc[:, cols_to_fill].fillna(0)
 
-        # Write the results back to the database
-        df_wide = df_wide.melt(id_vars=['date'], var_name='metric_name', value_name='value')
-        df_wide = df_wide.sort_values(by='date', ascending=False)
-        df_wide.to_sql('high_freq_long', self.alch_engine, if_exists='replace', index=False)
+        # Create a new table for processed data in the processed_data schema
+        df.to_sql('estate_new_processed', self.alch_engine, if_exists='replace', index=False, schema='processed_data')
+
+        # Compute the 7-day moving average for all columns except 'estate_new_xiamen' and 'estate_new_wuxi'
+        ma_columns = [col for col in df.columns if col not in ['date', 'estate_new_xiamen', 'estate_new_wuxi']]
+        ma_df = df[ma_columns].rolling(window=7, min_periods=1).mean()
+
+        # Combine the moving average columns with the original date, estate_new_xiamen, and estate_new_wuxi columns
+        estate_new_processed_ma7 = pd.concat([df[['date', 'estate_new_xiamen', 'estate_new_wuxi']], ma_df], axis=1)
+
+        # Create a new table for processed data in the processed_data schema
+        estate_new_processed_ma7.to_sql('estate_new_processed_ma7', self.alch_engine, if_exists='replace', index=False,
+                                        schema='processed_data')
