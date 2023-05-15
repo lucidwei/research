@@ -10,7 +10,7 @@ from WindPy import w
 from base_config import BaseConfig
 from pgdb_manager import PgDbManager
 from utils import check_wind, timeit
-from sqlalchemy import text
+from sqlalchemy import text, ARRAY
 
 
 class PgDbUpdaterBase(PgDbManager):
@@ -249,11 +249,7 @@ class PgDbUpdaterBase(PgDbManager):
     @timeit
     def update_low_freq_from_excel_meta(self, excel_file: str, name_mapping: dict, if_rename=False):
         """
-        先获取缺失的月末日期列表,需要更新的两段日期是：
-        - all_dates的最早一天到数据库存在数据的最早一天
-        - 数据库存在数据的最后一天到all_dates的最后一天，也就是今天
-        wind fetch缺失日期的EDB数据
-        整理好格式传入数据库
+        根据excel文件中的metadata更新数据
         """
         def get_start_month_end(s):
             start_date_str = s.split(':')[0]  # 提取开始日期字符串
@@ -265,23 +261,26 @@ class PgDbUpdaterBase(PgDbManager):
         self.metadata = self.base_config.process_wind_metadata(excel_file)
         self.metadata = self.metadata[self.metadata['指标ID'].apply(lambda x: len(str(x)) >= 5)]
 
+        # excel中可能有多余的列。故Select the rows where '指标ID' is in keys
+        filtered_metadata = self.metadata[self.metadata['指标名称'].isin(name_mapping.keys())]
+
         # 定义 DataFrame 中列名和表中列名的对应关系
-        col_indicator_id = self.metadata.loc[:, '指标ID']
-        col_indicator_name = self.metadata.loc[:, '指标名称']
-        col_unit = self.metadata.loc[:, '单位']
-        col_earlist_date = self.metadata['时间区间'].apply(get_start_month_end)
+        col_indicator_id = filtered_metadata.loc[:, '指标ID']
+        col_indicator_name = filtered_metadata.loc[:, '指标名称']
+        col_unit = filtered_metadata.loc[:, '单位']
+        col_earlist_date = filtered_metadata['时间区间'].apply(get_start_month_end)
         # maps
-        map_id_to_name = dict(zip(col_indicator_id, col_indicator_name))
+        map_id_to_chinese = dict(zip(col_indicator_id, col_indicator_name))
         map_id_to_unit = dict(zip(col_indicator_id, col_unit))
-        map_id_to_english = {id: name_mapping[name] for id, name in map_id_to_name.items()}
+        map_id_to_english = {id: name_mapping[name] for id, name in map_id_to_chinese.items()}
         map_id_to_earlist_date = dict(zip(col_indicator_id, col_earlist_date))
         # renaming中会用到,其实是删除了excel_file对应的所有列，没有进行筛选。但因为很少需要rename，因此不做优化
-        names_to_delete = list(map_id_to_name.values())
+        names_to_delete = list(map_id_to_chinese.values())
 
         if if_rename:
             self.delete_for_renaming(names_to_delete)
 
-        maps_tuple = (map_id_to_name, map_id_to_unit, map_id_to_english)
+        maps_tuple = (map_id_to_chinese, map_id_to_unit, map_id_to_english)
         # 更新数据
         for id in col_indicator_id:
             self.update_low_freq_by_edb_id(map_id_to_earlist_date[id], id, maps_tuple)
@@ -308,6 +307,20 @@ class PgDbUpdaterBase(PgDbManager):
                 """
                 conn.execute(text(query))
                 conn.commit()
+
+    def execute_pgsql_function(self, function_name, table_name, view_name, chinese_names):
+        query = f"""
+        SELECT {function_name}(:table_name, :view_name, ARRAY{chinese_names})
+        """
+
+        self.alch_conn.execute(
+            text(query),
+            {
+                'table_name': table_name,
+                'view_name': view_name,
+            }
+        )
+        self.alch_conn.commit()
 
     def read_from_high_freq_view(self, code_list: List[str]) -> pd.DataFrame:
         """
