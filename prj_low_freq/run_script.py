@@ -7,4 +7,4 @@ from base_config import BaseConfig
 from prj_low_freq.db_updater import DatabaseUpdater
 
 base_config = BaseConfig('low_freq')
-data_updater = DatabaseUpdater(base_config)
+data_updater = DatabaseUpdater(base_config, if_rename=False)

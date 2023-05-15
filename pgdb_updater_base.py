@@ -131,7 +131,7 @@ class PgDbUpdaterBase(PgDbManager):
         six_months_ago = datetime.date.today() - datetime.timedelta(days=6 * 30)
         # 计算近半年的数据点个数并计算更新频率
         existing_dates_series = pd.Series(existing_dates, dtype='datetime64[D]').dt.date
-        combined_dates = pd.concat([existing_dates_series, downloaded_df['date']])
+        combined_dates = pd.to_datetime(pd.concat([existing_dates_series, downloaded_df['date']])).dt.date
 
         # 选择六个月前之后的日期
         recent_dates = combined_dates[combined_dates >= six_months_ago]
@@ -275,7 +275,7 @@ class PgDbUpdaterBase(PgDbManager):
         map_id_to_unit = dict(zip(col_indicator_id, col_unit))
         map_id_to_english = {id: name_mapping[name] for id, name in map_id_to_name.items()}
         map_id_to_earlist_date = dict(zip(col_indicator_id, col_earlist_date))
-        # renaming中会用到
+        # renaming中会用到,其实是删除了excel_file对应的所有列，没有进行筛选。但因为很少需要rename，因此不做优化
         names_to_delete = list(map_id_to_name.values())
 
         if if_rename:
