@@ -34,8 +34,10 @@ class DatabaseUpdater(PgDbUpdaterBase):
         self.update_low_freq_from_excel_meta('中信出口模板.xlsx', self.export_map_name_to_english,
                                              if_rename=self.if_rename)
         self.calculate_yoy()
+        # useful to check if next line reports error.
+        missing_metrics = self.get_missing_metrics('metric_static_info', 'chinese_name', self.export_chinese_names_for_view)
         self.execute_pgsql_function('processed_data.create_wide_view_from_chinese', 'low_freq_long', 'export_wide',
-                                    self.export_chinese_names_to_display)
+                                    self.export_chinese_names_for_view)
 
     @timeit
     def calculate_yoy(self):
@@ -76,26 +78,32 @@ class DatabaseUpdater(PgDbUpdaterBase):
 
             # Step 4.1: Get the source_code of the corresponding Value variable
             query = f"""
-            SELECT source_code
+            SELECT source_code, chinese_name
             FROM metric_static_info
             WHERE english_name = '{metric_name_value}'
             """
             df = pd.read_sql_query(text(query), self.alch_conn)
             source_code_value = df.loc[0, 'source_code']
+            chinese_name_value = df.loc[0, 'chinese_name']
 
             # Step 4.2: Update source_code in metric_static_info
             new_source_code = f'calculated from {source_code_value}'
+            chinese_name_yoy = chinese_name_value.replace("当月值", "当月同比")
             query = f"""
-            UPDATE metric_static_info
-            SET source_code = '{new_source_code}'
-            WHERE english_name = '{metric_name_yoy}'
+            INSERT INTO metric_static_info (english_name, source_code, chinese_name, unit)
+            VALUES ('{metric_name_yoy}', '{new_source_code}', '{chinese_name_yoy}', '%')
+            ON CONFLICT (english_name, source_code) DO UPDATE
+            SET source_code = EXCLUDED.source_code, chinese_name = EXCLUDED.chinese_name, unit = EXCLUDED.unit
             """
+
             self.alch_conn.execute(text(query))
             self.alch_conn.commit()
 
     def get_stored_metrics(self):
         """
         目的是把数据处理逻辑和变量名记录分开，代码更简洁清晰
+        字典map有两个用途：从excel获取对应的元数据，然后据此从wind下载。
+        列表有一个用途：生成包含这些数据的宽格式表，方便在metabase展示。
         """
         # 创建一个字典，键为指标 ID，值为手动映射的英文列名 (利用translate_script.py得到)
         self.pmi_map_name_to_english = {
@@ -119,95 +127,87 @@ class DatabaseUpdater(PgDbUpdaterBase):
             "中国:出口金额:当月同比": "China_ExportValue_CurrentMonthYoy",
             "中国:进口金额:当月同比": "China_ImportValue_CurrentMonthYoy",
             "中国:贸易差额:当月同比": "China_BalanceOfTrade_CurrentMonthYoy",
-            # "中国:出口金额:机电产品:当月同比": "China_ExportValue_MechanicalAndElectrical_CurrentMonthYoy",
             "中国:出口金额:机电产品:当月值": "China_ExportValue_MechanicalAndElectrical_CurrentMonthValue",
-            # "中国:出口金额:高新技术产品:当月同比": "China_ExportValue_High_techProducts_CurrentMonthYoy",
             "中国:出口金额:高新技术产品:当月值": "China_ExportValue_High_techProducts_CurrentMonthValue",
-            # "中国:出口金额:服装及衣着附件:当月同比": "China_ExportValue_ClothingAndAccessories_CurrentMonthYoy",
             "中国:出口金额:服装及衣着附件:当月值": "China_ExportValue_ClothingAndAccessories_CurrentMonthValue",
-            # "中国:出口金额:纺织纱线织物及其制品:当月同比": "China_ExportValue_TextileYarnFabrics_CurrentMonthYoy",
             "中国:出口金额:纺织纱线、织物及制品:当月值": "China_ExportValue_TextileYarnFabrics_CurrentMonthValue",
-            # "中国:出口金额:塑料制品:当月同比": "China_ExportValue_PlasticProducts_CurrentMonthYoy",
             "中国:出口金额:集成电路:当月值": "China_ExportValue_Ic_CurrentMonthValue",
-            # "中国:出口金额:集成电路:当月同比": "China_ExportValue_Ic_CurrentMonthYoy",
             "中国:出口数量:集成电路:当月值": "China_ExportQuantity_Ic_CurrentMonthValue",
             "中国:出口金额:塑料制品:当月值": "China_ExportValue_PlasticProducts_CurrentMonthValue",
             "中国:出口金额:医疗仪器及器械:当月值": "China_ExportValue_MedicalInstruments_CurrentMonthValue",
-            # "中国:出口金额:医疗仪器及器械:当月同比": "China_ExportValue_MedicalInstruments_CurrentMonthYoy",
             "中国:出口数量:汽车包括底盘:当月值": "China_ExportQuantity_AutomobilesInclChassis_CurrentMonthValue",
-            # "中国:出口数量:汽车包括底盘:当月同比": "China_ExportQuantity_AutomobilesInclChassis_CurrentMonthYoy",
             "中国:出口金额:汽车包括底盘:当月值": "China_ExportValue_AutomobileInclChassis_CurrentMonthValue",
-            # "中国:出口金额:汽车包括底盘:当月同比": "China_ExportValue_AutomobileInclChassis_CurrentMonthYoy",
             "中国:出口金额:汽车零配件:当月值": "China_ExportValue_AutoParts_CurrentMonthValue",
-            # "中国:出口金额:汽车零配件:当月同比": "China_ExportValue_AutoParts_CurrentMonthYoy",
             "中国:进口金额:农产品:当月值": "China_ImportValue_AgriculturalProducts_CurrentMonthValue",
-            # "中国:进口金额:农产品:当月同比": "China_ImportValue_AgriculturalProducts_CurrentMonthYoy",
-            "中国:进口数量:大豆:当月值": "China_ImportedQuantity_Soybean_CurrentMonthYoy",
-            # "中国:进口数量:大豆:当月同比": "China_ImportedQuantity_Soybean_CurrentMonthYoy",
+            "中国:进口数量:大豆:当月值": "China_ImportedQuantity_Soybean_CurrentMonthValue",
             "中国:进口金额:铁矿砂及其精矿:当月值": "China_ImportValue_IronOreAndConcentrate_CurrentMonthValue",
-            # "中国:进口金额:铁矿砂及其精矿:当月同比": "China_ImportValue_IronOreAndItsConcentrate_CurrentMonthYoy",
             "中国:进口金额:铜矿砂及其精矿:当月值": "China_ImportValue_CopperOreAndItsConcentrate_CurrentMonthValue",
-            # "中国:进口金额:铜矿砂及其精矿:当月同比": "China_ImportValue_CopperOreAndItsConcentrate_CurrentMonthYoy",
             "中国:进口金额:原油:当月值": "China_ImportValue_CrudeOil_CurrentMonthValue",
-            # "中国:进口金额:原油:当月同比": "China_ImportValue_CrudeOil_CurrentMonthYoy",
             "中国:进口金额:煤及褐煤:当月值": "China_ImportValue_CoalAndLignite_CurrentMonthValue",
-            # "中国:进口金额:煤及褐煤:当月同比": "China_ImportValue_CoalAndLignite_CurrentMonthYoy",
             "中国:进口金额:天然气:当月值": "China_ImportValue_NaturalGas_CurrentMonthValue",
-            # "中国:进口金额:天然气:当月同比": "China_ImportValue_NaturalGas_CurrentMonthYoy",
             "中国:进口金额:机电产品:当月值": "China_ImportValue_MechanicalAndElectrical_CurrentMonthValue",
-            # "中国:进口金额:机电产品:当月同比": "China_ImportValue_MechanicalAndElectrical_CurrentMonthYoy",
             "中国:进口金额:集成电路:当月值": "China_ImportValue_Ic_CurrentMonthValue",
-            # "中国:进口金额:集成电路:当月同比": "China_ImportValue_Ic_CurrentMonthYoy",
             "中国:进口金额:高新技术产品:当月值": "China_ImportValue_High_techProducts_CurrentMonthValue",
-            # "中国:进口金额:高新技术产品:当月同比": "China_ImportValue_High_techProducts_CurrentMonthYoy",
             "中国:出口金额:东南亚国家联盟:当月值": "China_ExportValue_ASEAN_CurrentMonthValue",
             "中国:进口金额:东南亚国家联盟:当月值": "China_ImportValue_ASEAN_CurrentMonthValue",
-            # "中国:出口金额:东南亚国家联盟:当月同比": "China_ExportValue_ASEAN_CurrentMonthYoy",
-            # "中国:进口金额:东南亚国家联盟:当月同比": "China_ImportValue_ASEAN_CurrentMonthYoy",
             "中国:出口金额:欧盟:当月值": "China_ExportValue_Eu_CurrentMonthValue",
             "中国:进口金额:欧盟:当月值": "China_ImportValue_Eu_CurrentMonthValue",
-            # "中国:出口金额:欧盟:当月同比": "China_ExportValue_Eu_CurrentMonthYoy",
-            # "中国:进口金额:欧盟:当月同比": "China_ImportValue_Eu_CurrentMonthYoy",
             "中国:出口金额:美国:当月值": "China_ExportValue_Us_CurrentMonthValue",
             "中国:进口金额:美国:当月值": "China_ImportValue_Us_CurrentMonthValue",
-            # "中国:出口金额:美国:当月同比": "China_ExportValue_Us_CurrentMonthYoy",
-            # "中国:进口金额:美国:当月同比": "China_ImportValue_Us_CurrentMonthYoy",
             "中国:出口金额:中国香港:当月值": "China_ExportValue_Hongkong_CurrentMonthValue",
             "中国:进口金额:中国香港:当月值": "China_ImportValue_Hongkong_CurrentMonthValue",
-            # "中国:出口金额:中国香港:当月同比": "China_ExportValue_Hongkong_CurrentMonthYoy",
-            # "中国:进口金额:中国香港:当月同比": "China_ImportValue_Hongkong_CurrentMonthYoy",
             "中国:出口金额:日本:当月值": "China_ExportValue_Japan_CurrentMonthValue",
             "中国:进口金额:日本:当月值": "China_ImportValue_Japan_CurrentMonthValue",
-            # "中国:出口金额:日本:当月同比": "China_ExportValue_Japan_CurrentMonthYoy",
-            # "中国:进口金额:日本:当月同比": "China_ImportValue_Japan_CurrentMonthYoy",
             "中国:出口金额:韩国:当月值": "China_ExportValue_SouthKorea_CurrentMonthValue",
             "中国:进口金额:韩国:当月值": "China_ImportValue_SouthKorea_CurrentMonthValue",
-            # "中国:出口金额:韩国:当月同比": "China_ExportValue_SouthKorea_CurrentMonthYoy",
-            # "中国:进口金额:韩国:当月同比": "China_ImportValue_SouthKorea_CurrentMonthYoy",
             "中国:出口金额:中国台湾:当月值": "China_ExportValue_Taiwan_CurrentMonthValue",
             "中国:进口金额:中国台湾:当月值": "China_ImportValue_Taiwan_CurrentMonthValue",
-            # "中国:出口金额:中国台湾:当月同比": "China_ExportValue_Taiwan_CurrentMonthYoy",
-            # "中国:进口金额:中国台湾:当月同比": "China_ImportValue_Taiwan_CurrentMonthYoy"
+            "中国:出口金额:拉丁美洲:当月值": "China_ExportValue_LatinAmerica_CurrentMonthValue",
+            "中国:进口金额:拉丁美洲:当月值": "China_ImportValue_LatinAmerica_CurrentMonthValue",
+            "中国:出口金额:非洲:当月值": "China_ExportValue_Africa_CurrentMonthValue",
+            "中国:进口金额:非洲:当月值": "China_ImportValue_Africa_CurrentMonthValue"
         }
 
         # 更新宽数据view，用来展示的数据
-        self.export_chinese_names_to_display = ['中国:出口金额:当月同比', '中国:进口金额:当月同比',
-                                                '中国:贸易差额:当月同比',
-                                                '中国:出口金额:机电产品:当月同比',
-                                                '中国:出口金额:高新技术产品:当月同比',
-                                                '中国:出口金额:服装及衣着附件:当月同比',
-                                                '中国:出口金额:纺织纱线织物及其制品:当月同比',
-                                                '中国:出口金额:集成电路:当月同比', '中国:出口金额:塑料制品:当月同比',
-                                                '中国:出口金额:医疗仪器及器械:当月同比',
-                                                '中国:出口金额:汽车包括底盘:当月同比',
-                                                '中国:出口金额:汽车零配件:当月同比', '中国:出口金额:机电产品:当月值',
-                                                '中国:出口金额:高新技术产品:当月值',
-                                                '中国:出口金额:服装及衣着附件:当月值',
-                                                '中国:出口金额:纺织纱线、织物及制品:当月值',
-                                                '中国:出口金额:集成电路:当月值',
-                                                '中国:出口金额:塑料制品:当月值', '中国:出口金额:医疗仪器及器械:当月值',
-                                                '中国:出口金额:汽车包括底盘:当月值', '中国:出口金额:汽车零配件:当月值']
+        self.export_chinese_names_for_view = [
+            '中国:出口金额:当月同比', '中国:进口金额:当月同比', '中国:贸易差额:当月同比',
+            ###
+            '中国:出口金额:机电产品:当月同比', '中国:出口金额:高新技术产品:当月同比',
+            '中国:出口金额:服装及衣着附件:当月同比', '中国:出口金额:纺织纱线、织物及制品:当月同比',
+            '中国:出口金额:集成电路:当月同比', '中国:出口金额:塑料制品:当月同比',
+            '中国:出口金额:医疗仪器及器械:当月同比', '中国:出口金额:汽车包括底盘:当月同比',
+            '中国:出口金额:汽车零配件:当月同比', '中国:出口金额:机电产品:当月值', '中国:出口金额:高新技术产品:当月值',
+            '中国:出口金额:服装及衣着附件:当月值', '中国:出口金额:纺织纱线、织物及制品:当月值',
+            '中国:出口金额:集成电路:当月值', '中国:出口金额:塑料制品:当月值', '中国:出口金额:医疗仪器及器械:当月值',
+            '中国:出口金额:汽车包括底盘:当月值', '中国:出口金额:汽车零配件:当月值',
+            ###
+            '中国:进口金额:农产品:当月值',
+            '中国:进口数量:大豆:当月值', '中国:进口金额:铁矿砂及其精矿:当月值', '中国:进口金额:铜矿砂及其精矿:当月值',
+            '中国:进口金额:原油:当月值', '中国:进口金额:煤及褐煤:当月值', '中国:进口金额:天然气:当月值',
+            '中国:进口金额:机电产品:当月值', '中国:进口金额:集成电路:当月值', '中国:进口金额:高新技术产品:当月值',
+            ###
+            '中国:出口金额:东南亚国家联盟:当月值', '中国:进口金额:东南亚国家联盟:当月值', '中国:出口金额:欧盟:当月值',
+            '中国:进口金额:欧盟:当月值', '中国:出口金额:美国:当月值', '中国:进口金额:美国:当月值',
+            '中国:出口金额:中国香港:当月值', '中国:进口金额:中国香港:当月值', '中国:出口金额:日本:当月值',
+            '中国:进口金额:日本:当月值', '中国:出口金额:韩国:当月值', '中国:进口金额:韩国:当月值',
+            '中国:出口金额:中国台湾:当月值', '中国:进口金额:中国台湾:当月值', '中国:出口金额:拉丁美洲:当月值',
+            '中国:进口金额:拉丁美洲:当月值', '中国:出口金额:非洲:当月值', '中国:进口金额:非洲:当月值',
+            ####
+            '中国:进口金额:农产品:当月同比', '中国:进口数量:大豆:当月同比', '中国:进口金额:铁矿砂及其精矿:当月同比',
+            '中国:进口金额:铜矿砂及其精矿:当月同比', '中国:进口金额:原油:当月同比', '中国:进口金额:煤及褐煤:当月同比',
+            '中国:进口金额:天然气:当月同比', '中国:进口金额:机电产品:当月同比', '中国:进口金额:集成电路:当月同比',
+            '中国:进口金额:高新技术产品:当月同比',
+            ###
+            '中国:出口金额:东南亚国家联盟:当月同比',
+            '中国:进口金额:东南亚国家联盟:当月同比', '中国:出口金额:欧盟:当月同比', '中国:进口金额:欧盟:当月同比',
+            '中国:出口金额:美国:当月同比', '中国:进口金额:美国:当月同比', '中国:出口金额:中国香港:当月同比',
+            '中国:进口金额:中国香港:当月同比', '中国:出口金额:日本:当月同比', '中国:进口金额:日本:当月同比',
+            '中国:出口金额:韩国:当月同比', '中国:进口金额:韩国:当月同比', '中国:出口金额:中国台湾:当月同比',
+            '中国:进口金额:中国台湾:当月同比', '中国:出口金额:拉丁美洲:当月同比', '中国:进口金额:拉丁美洲:当月同比',
+            '中国:出口金额:非洲:当月同比', '中国:进口金额:非洲:当月同比'
+        ]
 
+    # 库存代码
     # def calculate_yet_updated(self):
     #     # Step 1: Find the columns with null values in the latest row of export_wide
     #     query = "SELECT * FROM export_wide ORDER BY date DESC LIMIT 1"

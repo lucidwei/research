@@ -10,7 +10,10 @@ from WindPy import w
 from base_config import BaseConfig
 from pgdb_manager import PgDbManager
 from utils import check_wind, timeit
-from sqlalchemy import text, ARRAY
+from sqlalchemy import text
+from sqlalchemy import Table, MetaData
+from sqlalchemy.orm import Session
+from sqlalchemy import select
 
 
 class PgDbUpdaterBase(PgDbManager):
@@ -96,6 +99,67 @@ class PgDbUpdaterBase(PgDbManager):
             # 将新行插入数据库中
             downloaded_df = downloaded_df.melt(id_vars=['date'], var_name='metric_name', value_name='value')
             downloaded_df.to_sql('high_freq_long', self.alch_engine, if_exists='append', index=False)
+
+    @timeit
+    def update_markets_daily_by_wsd_id_fields(self, code: str, fields: str):
+        """
+        code和field根据代码生成器CG获取。
+        先获取缺失的日期列表,需要更新的两段日期是：
+        - all_dates的最早一天到数据库存在数据的最早一天
+        - 数据库存在数据的最后一天到all_dates的最后一天，也就是今天
+        wind fetch缺失日期的日度数据，写入DB；
+        """
+        fields_list = fields.split(',')
+
+        for field in fields_list:
+            dates_missing = self.get_missing_dates(self.tradedays, "markets_daily_long",
+                                                   english_id=self.conversion_dicts['id_to_english'][code],
+                                                   field=field.lower())
+            if len(dates_missing) == 0:
+                print(f'No missing data for {code} {field} in markets_daily_long, skipping download')
+                return
+
+            print(
+                f'Wind downloading {code} {field} for markets_daily_long between {str(dates_missing[0])} and {str(dates_missing[-1])}')
+            # 这里Days=Weekdays简化设置，为所有product设定交易所有点难度。
+            downloaded_df = \
+            w.wsd(code, field, str(dates_missing[0]), str(dates_missing[-1]), "Days=Weekdays", usedf=True)[1]
+            # 转换下载的数据框为长格式
+            downloaded_df.index.name = 'date'
+            downloaded_df.reset_index(inplace=True)
+            downloaded_df.columns = [col.lower() for col in downloaded_df.columns]
+            downloaded_df = downloaded_df.melt(id_vars=['date'], var_name='field', value_name='value')
+            downloaded_df.dropna(subset=['value'], inplace=True)
+
+            # 添加其他所需列
+            product_name = self.conversion_dicts['id_to_english'][code]
+            source_code = f"wind_{code}"
+            chinese_name = self.conversion_dicts['english_to_chinese'][product_name]
+
+            # 确保metric_static_info表中存在对应的source_code和chinese_name
+            with self.alch_engine.connect() as conn:
+                query = f"""
+                INSERT INTO metric_static_info (source_code, chinese_name)
+                VALUES ('{source_code}', '{chinese_name}')
+                ON CONFLICT (source_code) DO UPDATE
+                SET chinese_name = EXCLUDED.chinese_name;
+                """
+                conn.execute(text(query))
+
+                # 获取metric_static_info表中对应记录的internal_id
+                query = f"""
+                SELECT internal_id
+                FROM metric_static_info
+                WHERE source_code = '{source_code}' AND chinese_name = '{chinese_name}';
+                """
+                internal_id = conn.execute(text(query)).fetchone()[0]
+
+            # 将新行插入数据库中, df要非空
+            if downloaded_df.iloc[0, 0] != 0:
+                print('Uploading data to database...')
+                downloaded_df['product_name'] = product_name
+                downloaded_df['metric_static_info_id'] = internal_id
+                downloaded_df.to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
 
     def update_low_freq_by_edb_id(self, earliest_available_date, code, maps: tuple):
         map_id_to_name, map_id_to_unit, map_id_to_english = maps
@@ -185,66 +249,6 @@ class PgDbUpdaterBase(PgDbManager):
 
         df_upload.to_sql('low_freq_long', self.alch_engine, if_exists='append', index=False)
 
-    @timeit
-    def update_markets_daily_by_wsd_id_fields(self, code: str, fields: str):
-        """
-        code和field根据代码生成器CG获取。
-        先获取缺失的日期列表,需要更新的两段日期是：
-        - all_dates的最早一天到数据库存在数据的最早一天
-        - 数据库存在数据的最后一天到all_dates的最后一天，也就是今天
-        wind fetch缺失日期的日度数据，写入DB；
-        """
-        fields_list = fields.split(',')
-
-        for field in fields_list:
-            dates_missing = self.get_missing_dates(self.tradedays, "markets_daily_long",
-                                                   english_id=self.conversion_dicts['id_to_english'][code],
-                                                   field=field.lower())
-            if len(dates_missing) == 0:
-                print(f'No missing data for {code} {field} in markets_daily_long, skipping download')
-                return
-
-            print(
-                f'Wind downloading {code} {field} for markets_daily_long between {str(dates_missing[0])} and {str(dates_missing[-1])}')
-            # 这里Days=Weekdays简化设置，为所有product设定交易所有点难度。
-            downloaded_df = \
-            w.wsd(code, field, str(dates_missing[0]), str(dates_missing[-1]), "Days=Weekdays", usedf=True)[1]
-            # 转换下载的数据框为长格式
-            downloaded_df.index.name = 'date'
-            downloaded_df.reset_index(inplace=True)
-            downloaded_df.columns = [col.lower() for col in downloaded_df.columns]
-            downloaded_df = downloaded_df.melt(id_vars=['date'], var_name='field', value_name='value')
-            downloaded_df.dropna(subset=['value'], inplace=True)
-
-            # 添加其他所需列
-            product_name = self.conversion_dicts['id_to_english'][code]
-            source_code = f"wind_{code}"
-            chinese_name = self.conversion_dicts['english_to_chinese'][product_name]
-
-            # 确保metric_static_info表中存在对应的source_code和chinese_name
-            with self.alch_engine.connect() as conn:
-                query = f"""
-                INSERT INTO metric_static_info (source_code, chinese_name)
-                VALUES ('{source_code}', '{chinese_name}')
-                ON CONFLICT (source_code) DO UPDATE
-                SET chinese_name = EXCLUDED.chinese_name;
-                """
-                conn.execute(text(query))
-
-                # 获取metric_static_info表中对应记录的internal_id
-                query = f"""
-                SELECT internal_id
-                FROM metric_static_info
-                WHERE source_code = '{source_code}' AND chinese_name = '{chinese_name}';
-                """
-                internal_id = conn.execute(text(query)).fetchone()[0]
-
-            # 将新行插入数据库中, df要非空
-            if downloaded_df.iloc[0, 0] != 0:
-                print('Uploading data to database...')
-                downloaded_df['product_name'] = product_name
-                downloaded_df['metric_static_info_id'] = internal_id
-                downloaded_df.to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
 
     @timeit
     def update_low_freq_from_excel_meta(self, excel_file: str, name_mapping: dict, if_rename=False):
@@ -365,3 +369,25 @@ class PgDbUpdaterBase(PgDbManager):
         result_df = result_df.pivot_table(index='date', columns='field', values='value')
 
         return result_df
+
+    def get_missing_metrics(self, target_table: str, target_column: str, metrics_at_hand: list):
+        # 创建session
+        session = Session(self.alch_engine)
+
+        # 获取目标表的元数据
+        metadata = MetaData()
+        target_table = Table(target_table, metadata, autoload_with=self.alch_engine)
+
+        # 查询目标表中的值
+        stmt = select(target_table.c[target_column])
+        result = session.execute(stmt)
+
+        existing_values = {row[0] for row in result}
+
+        # 将输入的metrics列表转换为集合
+        input_set = set(metrics_at_hand)
+
+        # 找出存在于输入列表中，但不存在于目标表中的值
+        missing_values = input_set - existing_values
+
+        return list(missing_values)
