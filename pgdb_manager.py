@@ -201,3 +201,18 @@ class PgDbManager:
         missing_dates = missing_dates[missing_dates >= earliest_available]
         return sorted(missing_dates)
 
+    def adjust_seq_val(self, seq_name='metric_static_info_internal_id_seq'):
+        """
+        避免metric_static_info中internal_id列在执行INSERT ... ON CONFLICT时导致的断续
+        :param seq_name:创建一个带有自增主键的表时，PostgreSQL 通常会自动为该表创建一个名为 '表名_列名_seq' 的序列。
+        可以使用下面的查询来自动获取 'metric_static_info' 表的 'internal_id' 列的序列名：
+        SELECT pg_get_serial_sequence('metric_static_info', 'internal_id');
+        """
+        # 使用最大的 internal_id 作为新的序列值
+        query_max = text("SELECT MAX(internal_id) FROM metric_static_info")
+        result = self.alch_conn.execute(query_max)
+        max_id = result.scalar()+1 or 1  # 如果表为空，则使用1作为默认值
+
+        # 调整序列值
+        query_setval = text(f"SELECT setval('{seq_name}', {max_id}, false)")
+        self.alch_conn.execute(query_setval)

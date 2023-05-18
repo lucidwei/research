@@ -28,26 +28,41 @@ class DatabaseUpdater(PgDbUpdaterBase):
         self.close()
 
     def update_pmi(self):
-        self.update_low_freq_from_excel_meta('博士PMI.xlsx', self.pmi_map_name_to_english)
+        self.update_low_freq_from_excel_meta('博士PMI.xlsx', self.pmi_map_windname_to_english)
 
     def update_export(self):
-        self.update_low_freq_from_excel_meta('中信出口模板.xlsx', self.export_map_name_to_english,
+        self.update_low_freq_from_excel_meta('中信出口模板.xlsx', self.export_required_windname_to_english,
                                              if_rename=self.if_rename)
-        self.calculate_yoy()
+        self.calculate_yoy(value_str='CurrentMonthValue', yoy_str='CurrentMonthYoy', cn_value_str='当月值', cn_yoy_str='当月同比')
+        self.calculate_yoy(value_str='AddIndex', yoy_str='IndexYoy', cn_value_str='总指数', cn_yoy_str='同比')
         # useful to check if next line reports error.
         missing_metrics = self.get_missing_metrics('metric_static_info', 'chinese_name', self.export_chinese_names_for_view)
         self.execute_pgsql_function('processed_data.create_wide_view_from_chinese', 'low_freq_long', 'export_wide',
                                     self.export_chinese_names_for_view)
 
     @timeit
-    def calculate_yoy(self):
-        # Step 1: Select all "*CurrentMonthValue" data from low_freq_long
-        query = "SELECT * FROM low_freq_long WHERE metric_name LIKE '%CurrentMonthValue'"
-        df = pd.read_sql_query(text(query), self.alch_conn)
+    def calculate_yoy(self, value_str, yoy_str, cn_value_str, cn_yoy_str):
+        # Step 1: Select all "*CurrentMonthValue" data from low_freq_long, bypass already-calculated rows
+        # Step 1.1: Get the two dataframes
+        query_value = f"SELECT * FROM low_freq_long WHERE metric_name LIKE '%{value_str}'"
+        df_value = pd.read_sql_query(text(query_value), self.alch_conn)
+
+        query_yoy = f"SELECT * FROM low_freq_long WHERE metric_name LIKE '%{yoy_str}'"
+        df_yoy = pd.read_sql_query(text(query_yoy), self.alch_conn)
+
+        # Step 1.2: Create new columns for matching
+        df_value['metric_base'] = df_value['metric_name'].str.replace(value_str, '')
+        df_yoy['metric_base'] = df_yoy['metric_name'].str.replace(yoy_str, '')
+
+        # Step 1.3: Find the rows in df_value that have a match in df_yoy
+        mask = df_value['metric_base'].isin(df_yoy['metric_base']) & df_value['date'].isin(df_yoy['date'])
+
+        # Step 1.4: Remove the matching rows from df_value
+        df = df_value[~mask]
 
         for _, row in df.iterrows():
             metric_name_value = row['metric_name']
-            metric_name_yoy = metric_name_value.replace("CurrentMonthValue", "CurrentMonthYoy")
+            metric_name_yoy = metric_name_value.replace(value_str, yoy_str)
 
             # Step 2: Find the value from the same period last year
             query = f"""
@@ -83,12 +98,20 @@ class DatabaseUpdater(PgDbUpdaterBase):
             WHERE english_name = '{metric_name_value}'
             """
             df = pd.read_sql_query(text(query), self.alch_conn)
+            if df.empty:
+                # 数据库中存在一些老旧的不需要的数据，它们在metric_static_info没有记录
+                continue
+
             source_code_value = df.loc[0, 'source_code']
             chinese_name_value = df.loc[0, 'chinese_name']
+            if chinese_name_value not in self.export_chinese_names_for_view:
+                # 跳过不需展示的metric
+                continue
 
             # Step 4.2: Update source_code in metric_static_info
+            self.adjust_seq_val()
             new_source_code = f'calculated from {source_code_value}'
-            chinese_name_yoy = chinese_name_value.replace("当月值", "当月同比")
+            chinese_name_yoy = chinese_name_value.replace(cn_value_str, cn_yoy_str)
             query = f"""
             INSERT INTO metric_static_info (english_name, source_code, chinese_name, unit)
             VALUES ('{metric_name_yoy}', '{new_source_code}', '{chinese_name_yoy}', '%')
@@ -106,7 +129,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
         列表有一个用途：生成包含这些数据的宽格式表，方便在metabase展示。
         """
         # 创建一个字典，键为指标 ID，值为手动映射的英文列名 (利用translate_script.py得到)
-        self.pmi_map_name_to_english = {
+        self.pmi_map_windname_to_english = {
             "欧元区:综合PMI": "Eurozone_CompositePmi",
             "日本:综合PMI": "Japan_CompositePmi",
             "美国:综合PMI": "US_CompositePmi",
@@ -120,26 +143,21 @@ class DatabaseUpdater(PgDbUpdaterBase):
             "美国:GDP:现价:折年数:季调": "US_Gdp_CurrentPrice_Annualized_SeasonAdj"
         }
         # 利用translate_script.py得到
-        self.export_map_name_to_english = {
+        self.export_required_windname_to_english = {
             "中国:出口金额:当月值": "China_ExportValue_CurrentMonthValue",
             "中国:进口金额:当月值": "China_ImportValue_CurrentMonthValue",
             "中国:贸易差额:当月值": "China_BalanceOfTrade_CurrentMonthValue",
-            "中国:出口金额:当月同比": "China_ExportValue_CurrentMonthYoy",
-            "中国:进口金额:当月同比": "China_ImportValue_CurrentMonthYoy",
-            "中国:贸易差额:当月同比": "China_BalanceOfTrade_CurrentMonthYoy",
             "中国:出口金额:机电产品:当月值": "China_ExportValue_MechanicalAndElectrical_CurrentMonthValue",
             "中国:出口金额:高新技术产品:当月值": "China_ExportValue_High_techProducts_CurrentMonthValue",
             "中国:出口金额:服装及衣着附件:当月值": "China_ExportValue_ClothingAndAccessories_CurrentMonthValue",
             "中国:出口金额:纺织纱线、织物及制品:当月值": "China_ExportValue_TextileYarnFabrics_CurrentMonthValue",
             "中国:出口金额:集成电路:当月值": "China_ExportValue_Ic_CurrentMonthValue",
-            "中国:出口数量:集成电路:当月值": "China_ExportQuantity_Ic_CurrentMonthValue",
             "中国:出口金额:塑料制品:当月值": "China_ExportValue_PlasticProducts_CurrentMonthValue",
             "中国:出口金额:医疗仪器及器械:当月值": "China_ExportValue_MedicalInstruments_CurrentMonthValue",
-            "中国:出口数量:汽车包括底盘:当月值": "China_ExportQuantity_AutomobilesInclChassis_CurrentMonthValue",
             "中国:出口金额:汽车包括底盘:当月值": "China_ExportValue_AutomobileInclChassis_CurrentMonthValue",
             "中国:出口金额:汽车零配件:当月值": "China_ExportValue_AutoParts_CurrentMonthValue",
             "中国:进口金额:农产品:当月值": "China_ImportValue_AgriculturalProducts_CurrentMonthValue",
-            "中国:进口数量:大豆:当月值": "China_ImportedQuantity_Soybean_CurrentMonthValue",
+            "中国:进口金额:大豆:当月值": "China_ImportValue_Soybean_CurrentMonthValue",
             "中国:进口金额:铁矿砂及其精矿:当月值": "China_ImportValue_IronOreAndConcentrate_CurrentMonthValue",
             "中国:进口金额:铜矿砂及其精矿:当月值": "China_ImportValue_CopperOreAndItsConcentrate_CurrentMonthValue",
             "中国:进口金额:原油:当月值": "China_ImportValue_CrudeOil_CurrentMonthValue",
@@ -165,12 +183,15 @@ class DatabaseUpdater(PgDbUpdaterBase):
             "中国:出口金额:拉丁美洲:当月值": "China_ExportValue_LatinAmerica_CurrentMonthValue",
             "中国:进口金额:拉丁美洲:当月值": "China_ImportValue_LatinAmerica_CurrentMonthValue",
             "中国:出口金额:非洲:当月值": "China_ExportValue_Africa_CurrentMonthValue",
-            "中国:进口金额:非洲:当月值": "China_ImportValue_Africa_CurrentMonthValue"
+            "中国:进口金额:非洲:当月值": "China_ImportValue_Africa_CurrentMonthValue",
+            "中国:出口金额:俄罗斯:当月值": "China_ExportValue_Russia_CurrentMonthValue",
+            "中国:进口金额:俄罗斯:当月值": "China_ImportValue_Russia_CurrentMonthValue",
         }
 
         # 更新宽数据view，用来展示的数据
         self.export_chinese_names_for_view = [
             '中国:出口金额:当月同比', '中国:进口金额:当月同比', '中国:贸易差额:当月同比',
+            '中国:出口金额:当月值', '中国:进口金额:当月值', '中国:贸易差额:当月值',
             ###
             '中国:出口金额:机电产品:当月同比', '中国:出口金额:高新技术产品:当月同比',
             '中国:出口金额:服装及衣着附件:当月同比', '中国:出口金额:纺织纱线、织物及制品:当月同比',
@@ -182,7 +203,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
             '中国:出口金额:汽车包括底盘:当月值', '中国:出口金额:汽车零配件:当月值',
             ###
             '中国:进口金额:农产品:当月值',
-            '中国:进口数量:大豆:当月值', '中国:进口金额:铁矿砂及其精矿:当月值', '中国:进口金额:铜矿砂及其精矿:当月值',
+            '中国:进口金额:大豆:当月值', '中国:进口金额:铁矿砂及其精矿:当月值', '中国:进口金额:铜矿砂及其精矿:当月值',
             '中国:进口金额:原油:当月值', '中国:进口金额:煤及褐煤:当月值', '中国:进口金额:天然气:当月值',
             '中国:进口金额:机电产品:当月值', '中国:进口金额:集成电路:当月值', '中国:进口金额:高新技术产品:当月值',
             ###
@@ -192,8 +213,9 @@ class DatabaseUpdater(PgDbUpdaterBase):
             '中国:进口金额:日本:当月值', '中国:出口金额:韩国:当月值', '中国:进口金额:韩国:当月值',
             '中国:出口金额:中国台湾:当月值', '中国:进口金额:中国台湾:当月值', '中国:出口金额:拉丁美洲:当月值',
             '中国:进口金额:拉丁美洲:当月值', '中国:出口金额:非洲:当月值', '中国:进口金额:非洲:当月值',
+            '中国:出口金额:俄罗斯:当月值', '中国:进口金额:俄罗斯:当月值',
             ####
-            '中国:进口金额:农产品:当月同比', '中国:进口数量:大豆:当月同比', '中国:进口金额:铁矿砂及其精矿:当月同比',
+            '中国:进口金额:农产品:当月同比', '中国:进口金额:大豆:当月同比', '中国:进口金额:铁矿砂及其精矿:当月同比',
             '中国:进口金额:铜矿砂及其精矿:当月同比', '中国:进口金额:原油:当月同比', '中国:进口金额:煤及褐煤:当月同比',
             '中国:进口金额:天然气:当月同比', '中国:进口金额:机电产品:当月同比', '中国:进口金额:集成电路:当月同比',
             '中国:进口金额:高新技术产品:当月同比',
@@ -204,7 +226,8 @@ class DatabaseUpdater(PgDbUpdaterBase):
             '中国:进口金额:中国香港:当月同比', '中国:出口金额:日本:当月同比', '中国:进口金额:日本:当月同比',
             '中国:出口金额:韩国:当月同比', '中国:进口金额:韩国:当月同比', '中国:出口金额:中国台湾:当月同比',
             '中国:进口金额:中国台湾:当月同比', '中国:出口金额:拉丁美洲:当月同比', '中国:进口金额:拉丁美洲:当月同比',
-            '中国:出口金额:非洲:当月同比', '中国:进口金额:非洲:当月同比'
+            '中国:出口金额:非洲:当月同比', '中国:进口金额:非洲:当月同比',
+            '中国:出口金额:俄罗斯:当月同比', '中国:进口金额:俄罗斯:当月同比'
         ]
 
     # 库存代码

@@ -18,6 +18,7 @@ manual_translations = {
     '中国台湾': 'Taiwan',
     '出口': 'Export',
     '进口': 'Import',
+    '总指数': 'AggIndex',
 }
 
 if __name__ == "__main__":

@@ -246,9 +246,7 @@ class PgDbUpdaterBase(PgDbManager):
         # Ìí¼Ó additional_info:update_freq ºÍ metric_static_info_id ÁÐ
         df_upload['update_freq'] = update_freq
         df_upload['metric_static_info_id'] = internal_id
-
         df_upload.to_sql('low_freq_long', self.alch_engine, if_exists='append', index=False)
-
 
     @timeit
     def update_low_freq_from_excel_meta(self, excel_file: str, name_mapping: dict, if_rename=False):
