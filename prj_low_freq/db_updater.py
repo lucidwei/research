@@ -34,12 +34,17 @@ class DatabaseUpdater(PgDbUpdaterBase):
         self.update_low_freq_from_excel_meta('中信出口模板.xlsx', self.export_required_windname_to_english,
                                              if_rename=self.if_rename)
         self.calculate_yoy(value_str='CurrentMonthValue', yoy_str='CurrentMonthYoy', cn_value_str='当月值', cn_yoy_str='当月同比')
-        self.calculate_yoy(value_str='AddIndex', yoy_str='IndexYoy', cn_value_str='总指数', cn_yoy_str='同比')
-        self.calculate_custom_metric()
+
         # useful to check if next line reports error.
         missing_metrics = self.get_missing_metrics('metric_static_info', 'chinese_name', self.export_chinese_names_for_view)
         self.execute_pgsql_function('processed_data.create_wide_view_from_chinese', 'low_freq_long', 'export_wide',
                                     self.export_chinese_names_for_view)
+
+    def update_export2(self):
+        self.update_low_freq_from_excel_meta('进出口数据库.xlsx', self.export2_required_windname_to_english,
+                                             sheet_name='总量', if_rename=self.if_rename)
+        self.calculate_yoy(value_str='AggIndex', yoy_str='IndexYoy', cn_value_str='总指数', cn_yoy_str='同比')
+        self.calculate_custom_metric()
 
     def get_stored_metrics(self):
         """

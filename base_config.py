@@ -80,14 +80,14 @@ class BaseConfig:
         self.image_folder = self.config.get('image_config', 'folder')
         self.temp_path = self.config.get('other_paths', 'temp_path')
 
-    def process_wind_metadata(self, excel_file_name:str):
+    def process_wind_metadata(self, excel_file_name:str, sheet_name=None):
         """
         用wind下载下来的格式化excel整理数据的metadata从而避免手工处理，如指标名称、频率、单位、指标ID、时间区间、来源、更新时间
         """
 
         # 读取 Excel 文件，其中包含所需要的数据的metadata
         file_path = os.path.join(self.temp_path, excel_file_name)
-        df = pd.read_excel(file_path, index_col=0, header=None)
+        df = pd.read_excel(file_path, sheet_name=sheet_name, index_col=0, header=None)
 
         # 定位最后一个 metadata 字段（在第一个日期类型值的位置上一个）
         last_metadata_row = None

@@ -205,41 +205,59 @@ class PgDbUpdaterBase(PgDbManager):
         update_freq = 180 / non_null_data_points
 
         # 更新metric_static_info 元数据table
+        # 如果是通过wind计算得到的数值，那么原来的code没有用，使用自增列internal_id
         unit = map_id_to_unit[code]
-        source_code = f'wind_{code}'
+        source_code = f'wind_{code}' if len(code) >= 5 else None
         chinese_name = map_id_to_name[code]
         english_name = map_id_to_english[code]
 
         # Ensure the corresponding source_code and chinese_name exist in the metric_static_info table
+        self.adjust_seq_val()
         with self.alch_engine.connect() as conn:
-            query = text("""
-                        INSERT INTO metric_static_info (source_code, chinese_name, unit, english_name)
-                        VALUES (:source_code, :chinese_name, :unit, :english_name)
-                        ON CONFLICT (source_code) DO UPDATE
-                        SET english_name = EXCLUDED.english_name,
-                            unit = EXCLUDED.unit;
-                        """)
-            conn.execute(query,
-                         {
-                             'source_code': source_code,
-                             'chinese_name': chinese_name,
-                             'unit': unit,
-                             'english_name': english_name
-                         })
+            if source_code:
+                query = text("""
+                            INSERT INTO metric_static_info (source_code, chinese_name, unit, english_name)
+                            VALUES (:source_code, :chinese_name, :unit, :english_name)
+                            ON CONFLICT (source_code) DO UPDATE
+                            SET english_name = EXCLUDED.english_name,
+                                unit = EXCLUDED.unit;
+                            """)
+                conn.execute(query,
+                             {
+                                 'source_code': source_code,
+                                 'chinese_name': chinese_name,
+                                 'unit': unit,
+                                 'english_name': english_name
+                             })
+            else:
+                query = text("""
+                            INSERT INTO metric_static_info (source_code, chinese_name, unit, english_name)
+                            VALUES ('temp_code', :chinese_name, :unit, :english_name)
+                            RETURNING internal_id;
+                            """)
+                result = conn.execute(query,
+                                      {
+                                          'chinese_name': chinese_name,
+                                          'unit': unit,
+                                          'english_name': english_name
+                                      })
+                # Get the internal_id of the corresponding record in the metric_static_info table
+                internal_id = result.fetchone()[0]
+                source_code = f'wind_transformed_{internal_id}'
+                update_query = text("""
+                                    UPDATE metric_static_info
+                                    SET source_code = :source_code
+                                    WHERE internal_id = :internal_id;
+                                    """)
+                conn.execute(update_query,
+                             {
+                                 'source_code': source_code,
+                                 'internal_id': internal_id
+                             })
+
             conn.commit()
 
-            # Get the internal_id of the corresponding record in the metric_static_info table
-            query = f"""
-                    SELECT internal_id
-                    FROM metric_static_info
-                    WHERE source_code = :source_code AND chinese_name = :chinese_name;
-                    """
-            internal_id = conn.execute(text(query), {
-                'source_code': source_code,
-                'chinese_name': chinese_name,
-            }).fetchone()[0]
-
-        # 将新数据插入数据库中
+        # 将新数据插入low_freq_long中
         df_upload = downloaded_df.rename(columns=map_id_to_english)
         df_upload = df_upload.melt(id_vars=['date'], var_name='metric_name', value_name='value')
         df_upload.dropna(subset=['value'], inplace=True)
@@ -249,7 +267,7 @@ class PgDbUpdaterBase(PgDbManager):
         df_upload.to_sql('low_freq_long', self.alch_engine, if_exists='append', index=False)
 
     @timeit
-    def update_low_freq_from_excel_meta(self, excel_file: str, name_mapping: dict, if_rename=False):
+    def update_low_freq_from_excel_meta(self, excel_file: str, name_mapping: dict, sheet_name=None, if_rename=False):
         """
         根据excel文件中的metadata更新数据
         """
@@ -259,9 +277,10 @@ class PgDbUpdaterBase(PgDbManager):
             start_month_end = start_date + pd.offsets.MonthEnd(1)  # 获取月末日期
             return start_month_end
 
-        # 剔除 '指标ID' 列字符串长度小于 5 的行，这些是EDB中计算后数值
-        self.metadata = self.base_config.process_wind_metadata(excel_file)
-        self.metadata = self.metadata[self.metadata['指标ID'].apply(lambda x: len(str(x)) >= 5)]
+        # '指标ID' 列字符串长度小于 5 的行是EDB中计算后数值。因为有些指标的基础处理还是需要靠万得，比如货币转换，所以这些指标
+        # 后续也会用到，但这些指标ID用不到。
+        self.metadata = self.base_config.process_wind_metadata(excel_file, sheet_name)
+        # self.metadata = self.metadata[self.metadata['指标ID'].apply(lambda x: len(str(x)) >= 5)]
 
         # excel中可能有多余的列。故Select the rows where '指标ID' is in keys
         filtered_metadata = self.metadata[self.metadata['指标名称'].isin(name_mapping.keys())]
@@ -472,7 +491,7 @@ class PgDbUpdaterBase(PgDbManager):
             self.alch_conn.commit()
 
     def calculate_custom_metric(self, english_name_a, english_name_b, calculation_function, new_english_name,
-                                new_chinese_name):
+                                new_chinese_name, new_unit):
         """
         只能一条一条计算
         :param english_name_a:
@@ -511,10 +530,10 @@ class PgDbUpdaterBase(PgDbManager):
         # Step 5: Update metric_static_info
         self.adjust_seq_val()
         query = f"""
-        INSERT INTO metric_static_info (english_name, source_code, chinese_name)
-        VALUES ('{new_english_name}', 'calculated from {english_name_a} and {english_name_b} using {function_name}', '{new_chinese_name}')
+        INSERT INTO metric_static_info (english_name, source_code, chinese_name, unit)
+        VALUES ('{new_english_name}', 'calculated from {english_name_a} and {english_name_b} using {function_name}', '{new_chinese_name}', '{new_unit}')
         ON CONFLICT (english_name, source_code) DO UPDATE
-        SET source_code = EXCLUDED.source_code, chinese_name = EXCLUDED.chinese_name
+        SET source_code = EXCLUDED.source_code, chinese_name = EXCLUDED.chinese_name, unit = EXCLUDED.unit
         """
         self.alch_conn.execute(text(query))
         self.alch_conn.commit()
