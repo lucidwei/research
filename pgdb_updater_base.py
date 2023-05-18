@@ -389,3 +389,135 @@ class PgDbUpdaterBase(PgDbManager):
         missing_values = input_set - existing_values
 
         return list(missing_values)
+
+    def calculate_yoy(self, value_str, yoy_str, cn_value_str, cn_yoy_str):
+        # Step 1: Select all "*CurrentMonthValue" data from low_freq_long, bypass already-calculated rows
+        # Step 1.1: Get the two dataframes
+        query_value = f"SELECT * FROM low_freq_long WHERE metric_name LIKE '%{value_str}'"
+        df_value = pd.read_sql_query(text(query_value), self.alch_conn)
+
+        query_yoy = f"SELECT * FROM low_freq_long WHERE metric_name LIKE '%{yoy_str}'"
+        df_yoy = pd.read_sql_query(text(query_yoy), self.alch_conn)
+
+        # Step 1.2: Create new columns for matching
+        df_value['metric_base'] = df_value['metric_name'].str.replace(value_str, '')
+        df_yoy['metric_base'] = df_yoy['metric_name'].str.replace(yoy_str, '')
+
+        # Step 1.3: Find the rows in df_value that have a match in df_yoy
+        mask = df_value['metric_base'].isin(df_yoy['metric_base']) & df_value['date'].isin(df_yoy['date'])
+
+        # Step 1.4: Remove the matching rows from df_value
+        df = df_value[~mask]
+
+        for _, row in df.iterrows():
+            metric_name_value = row['metric_name']
+            metric_name_yoy = metric_name_value.replace(value_str, yoy_str)
+
+            # Step 2: Find the value from the same period last year
+            query = f"""
+            SELECT value
+            FROM low_freq_long
+            WHERE metric_name = '{metric_name_value}'
+            AND EXTRACT(YEAR FROM date) = EXTRACT(YEAR FROM CAST('{row['date']}' AS DATE)) - 1
+            AND EXTRACT(MONTH FROM date) = EXTRACT(MONTH FROM CAST('{row['date']}' AS DATE))
+            """
+            df_last_year = pd.read_sql_query(text(query), self.alch_conn)
+
+            if df_last_year.empty or pd.isnull(df_last_year.loc[0, 'value']):
+                # print(f"No data for {metric_name_value} '{row['date']}' from the same period last year.")
+                continue
+
+            # Calculate YoY change
+            current_value = row['value']
+            last_year_value = df_last_year.loc[0, 'value']
+            yoy_change = (current_value - last_year_value) / last_year_value * 100
+
+            # Step 3: Insert the calculated YoY data into low_freq_long
+            query = f"""
+            INSERT INTO low_freq_long (date, metric_name, value)
+            VALUES ('{row['date']}', '{metric_name_yoy}', {yoy_change})
+            ON CONFLICT (date, metric_name) DO UPDATE SET value = EXCLUDED.value
+            """
+            self.alch_conn.execute(text(query))
+
+            # Step 4.1: Get the source_code of the corresponding Value variable
+            query = f"""
+            SELECT source_code, chinese_name
+            FROM metric_static_info
+            WHERE english_name = '{metric_name_value}'
+            """
+            df = pd.read_sql_query(text(query), self.alch_conn)
+            if df.empty:
+                # 数据库中存在一些老旧的不需要的数据，它们在metric_static_info没有记录
+                continue
+
+            source_code_value = df.loc[0, 'source_code']
+            chinese_name_value = df.loc[0, 'chinese_name']
+            if chinese_name_value not in self.export_chinese_names_for_view:
+                # 跳过不需展示的metric
+                continue
+
+            # Step 4.2: Update source_code in metric_static_info
+            self.adjust_seq_val()
+            new_source_code = f'calculated from {source_code_value}'
+            chinese_name_yoy = chinese_name_value.replace(cn_value_str, cn_yoy_str)
+            query = f"""
+            INSERT INTO metric_static_info (english_name, source_code, chinese_name, unit)
+            VALUES ('{metric_name_yoy}', '{new_source_code}', '{chinese_name_yoy}', '%')
+            ON CONFLICT (english_name, source_code) DO UPDATE
+            SET source_code = EXCLUDED.source_code, chinese_name = EXCLUDED.chinese_name, unit = EXCLUDED.unit
+            """
+
+            self.alch_conn.execute(text(query))
+            self.alch_conn.commit()
+
+    def calculate_custom_metric(self, english_name_a, english_name_b, calculation_function, new_english_name,
+                                new_chinese_name):
+        """
+        只能一条一条计算
+        :param english_name_a:
+        :param english_name_b:
+        :param calculation_function:
+        :param new_english_name:
+        :param new_chinese_name:
+        :return:
+        """
+        # Check if calculation_function has a name
+        function_name = getattr(calculation_function, '__name__', None)
+        if function_name is None:
+            raise ValueError("calculation_function must have a name, use regular function definition.")
+
+        # Step 1: Get data for the specified columns
+        query_a = f"SELECT date, value as value_a FROM low_freq_long WHERE metric_name = '{english_name_a}'"
+        query_b = f"SELECT date, value as value_b FROM low_freq_long WHERE metric_name = '{english_name_b}'"
+        df_a = pd.read_sql_query(text(query_a), self.alch_conn)
+        df_b = pd.read_sql_query(text(query_b), self.alch_conn)
+
+        # Step 2: Merge data on date
+        df = df_a.merge(df_b, on='date')
+
+        # Step 3: Calculate the custom metric using the calculation_function
+        df['calculated_value'] = df.apply(lambda row: calculation_function(row['value_a'], row['value_b']), axis=1)
+
+        # Step 4: Insert calculated values into low_freq_long
+        for _, row in df.iterrows():
+            query = f"""
+            INSERT INTO low_freq_long (date, metric_name, value)
+            VALUES ('{row['date']}', '{new_english_name}', {row['calculated_value']})
+            ON CONFLICT (date, metric_name) DO UPDATE SET value = EXCLUDED.value
+            """
+            self.alch_conn.execute(text(query))
+
+        # Step 5: Update metric_static_info
+        self.adjust_seq_val()
+        query = f"""
+        INSERT INTO metric_static_info (english_name, source_code, chinese_name)
+        VALUES ('{new_english_name}', 'calculated from {english_name_a} and {english_name_b} using {function_name}', '{new_chinese_name}')
+        ON CONFLICT (english_name, source_code) DO UPDATE
+        SET source_code = EXCLUDED.source_code, chinese_name = EXCLUDED.chinese_name
+        """
+        self.alch_conn.execute(text(query))
+        self.alch_conn.commit()
+
+    def divide(self, a, b):
+        return a/b
