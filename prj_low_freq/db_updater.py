@@ -35,7 +35,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
         self.update_low_freq_from_excel_meta('中信出口模板.xlsx', self.export_required_windname_to_english,
                                              if_rename=self.if_rename)
         self.calculate_yoy(value_str='CurrentMonthValue', yoy_str='CurrentMonthYoy', cn_value_str='当月值',
-                           cn_yoy_str='当月同比')
+                           cn_yoy_str='当月同比', cn_names_to_exhibit=self.export_chinese_names_for_view)
 
         # useful to check if next line reports error.
         missing_metrics = self.get_missing_metrics('metric_static_info', 'chinese_name',

@@ -393,9 +393,6 @@ class PgDbUpdaterBase(PgDbManager):
             """
             Calculates the update frequency based on the number of non-null data points in the past six months.
 
-            Args:
-                None
-
             Returns:
                 float: The update frequency.
 
@@ -606,6 +603,28 @@ class PgDbUpdaterBase(PgDbManager):
         return result_df
 
     def get_missing_metrics(self, target_table: str, target_column: str, metrics_at_hand: list):
+        """
+        Retrieves the missing metrics that are present in the input list but not in the specified target table 的 column.
+
+        Args:
+            target_table (str): The name of the target table.
+            target_column (str): The name of the target column in the target table.
+            metrics_at_hand (list): A list of metrics.
+
+        Returns:
+            list: A list of missing metrics.
+
+        Performs the following steps:
+        1. Creates a new session using the SQLAlchemy Session object.
+        2. Retrieves the metadata of the target table.
+        3. Executes a select statement to retrieve the values from the target column in the target table.
+        4. Stores the existing values in a set.
+        5. Converts the input list of metrics to a set.
+        6. Finds the values that are present in the input set but not in the existing values set.
+        7. Returns the missing values as a list.
+
+        Returns a list of missing metrics.
+        """
         # 创建session
         session = Session(self.alch_engine)
 
@@ -627,7 +646,26 @@ class PgDbUpdaterBase(PgDbManager):
 
         return list(missing_values)
 
-    def calculate_yoy(self, value_str, yoy_str, cn_value_str, cn_yoy_str):
+    def calculate_yoy(self, value_str, yoy_str, cn_value_str, cn_yoy_str, cn_names_to_exhibit):
+        """
+        Calculates the year-over-year (YoY) change for specified metrics and inserts the calculated data into the low_freq_long table.
+
+        Args:
+            value_str (str): The string used to identify e.g."*CurrentMonthValue" data in the low_freq_long table.
+            yoy_str (str): The string used to identify the corresponding YoY change data in the low_freq_long table.
+            cn_value_str (str): The Chinese translation string for the value_str.
+            cn_yoy_str (str): The Chinese translation string for the yoy_str.
+
+        Performs the following steps:
+        1. Selects the "*CurrentMonthValue" data from the low_freq_long table, excluding already calculated rows.
+        2. Matches the value data with the corresponding YoY change data based on metric names and dates.
+        3. Calculates the YoY change by comparing the current value with the value from the same period last year.
+        4. Inserts the calculated YoY data into the low_freq_long table, updating the value if a conflict occurs.
+        5. Updates the source_code in the metric_static_info table for the corresponding YoY metric.
+        6. Commits the changes to the database.
+
+        Note: This method assumes that the necessary data is present in the low_freq_long and metric_static_info tables.
+        """
         # Step 1: Select all "*CurrentMonthValue" data from low_freq_long, bypass already-calculated rows
         # Step 1.1: Get the two dataframes
         query_value = f"SELECT * FROM low_freq_long WHERE metric_name LIKE '%{value_str}'"
@@ -690,7 +728,7 @@ class PgDbUpdaterBase(PgDbManager):
 
             source_code_value = df.loc[0, 'source_code']
             chinese_name_value = df.loc[0, 'chinese_name']
-            if chinese_name_value not in self.export_chinese_names_for_view:
+            if chinese_name_value not in cn_names_to_exhibit:
                 # 跳过不需展示的metric
                 continue
 
