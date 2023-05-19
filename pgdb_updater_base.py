@@ -123,7 +123,7 @@ class PgDbUpdaterBase(PgDbManager):
                 f'Wind downloading {code} {field} for markets_daily_long between {str(dates_missing[0])} and {str(dates_missing[-1])}')
             # 这里Days=Weekdays简化设置，为所有product设定交易所有点难度。
             downloaded_df = \
-            w.wsd(code, field, str(dates_missing[0]), str(dates_missing[-1]), "Days=Weekdays", usedf=True)[1]
+                w.wsd(code, field, str(dates_missing[0]), str(dates_missing[-1]), "Days=Weekdays", usedf=True)[1]
             # 转换下载的数据框为长格式
             downloaded_df.index.name = 'date'
             downloaded_df.reset_index(inplace=True)
@@ -197,13 +197,28 @@ class PgDbUpdaterBase(PgDbManager):
 
     def update_low_freq_by_excel_indicator_id(self, earliest_available_date, code, maps: tuple, data):
         map_id_to_name, map_id_to_unit, map_id_to_english = maps
-        # 更新数据
+
+        # Check for missing data
         existing_dates = self.get_existing_dates_from_db('low_freq_long', map_id_to_english[code])
-        dates_missing = self.get_missing_months_ends(self.months_ends, earliest_available_date, 'low_freq_long', map_id_to_english[code])
+        dates_missing = self.get_missing_months_ends(self.months_ends, earliest_available_date, 'low_freq_long',
+                                                     map_id_to_english[code])
         if len(dates_missing) == 0:
             print(f'No missing data for low_freq_long {map_id_to_name[code]}, skipping download')
             return
 
+        # Prepare data for upload
+        df_to_upload = self._prepare_data_for_upload(code, dates_missing, data, map_id_to_name, existing_dates)
+        if df_to_upload is None:
+            return
+
+        # Update metric_static_info table
+        (internal_id, update_freq) = self._update_metric_static_info(df_to_upload, existing_dates, map_id_to_unit, code,
+                                                                     map_id_to_name, map_id_to_english)
+
+        # Insert new data into low_freq_long
+        self._insert_into_low_freq_long(df_to_upload, internal_id, map_id_to_english, update_freq)
+
+    def _prepare_data_for_upload(self, code, dates_missing, data, map_id_to_name, existing_dates):
         if len(code) <= 5:
             loaded_df = data[code]
             loaded_df.index = pd.to_datetime(loaded_df.index)
@@ -218,9 +233,10 @@ class PgDbUpdaterBase(PgDbManager):
                 return
             df_to_upload = loaded_df
         else:
-            print(f'Wind downloading for low_freq_long {map_id_to_name[code]} between {str(dates_missing[0])} and {str(dates_missing[-1])}')
+            print(
+                f'Wind downloading for low_freq_long {map_id_to_name[code]} between {str(dates_missing[0])} and {str(dates_missing[-1])}')
             downloaded_df = w.edb(code, str(dates_missing[0]), str(self.all_dates[-1]), usedf=True)[1]
-            downloaded_df.columns=[code]
+            downloaded_df.columns = [code]
 
             # 删除与 existing_dates 中日期相同的行
             existing_dates_set = set(existing_dates)
@@ -244,10 +260,23 @@ class PgDbUpdaterBase(PgDbManager):
 
             df_to_upload = downloaded_df
 
+        return df_to_upload
+
+    def _insert_into_low_freq_long(self, df_to_upload, internal_id, map_id_to_english, update_freq):
+        # 将新数据插入low_freq_long中
+        df_upload = df_to_upload.rename(columns=map_id_to_english)
+        df_upload = df_upload.melt(id_vars=['date'], var_name='metric_name', value_name='value')
+        df_upload.dropna(subset=['value'], inplace=True)
+        # 添加 additional_info:update_freq 和 metric_static_info_id 列
+        df_upload['update_freq'] = update_freq
+        df_upload['metric_static_info_id'] = internal_id
+        df_upload.to_sql('low_freq_long', self.alch_engine, if_exists='append', index=False)
+
+    def _update_metric_static_info(self, df_to_upload, existing_dates, map_id_to_unit, code, map_id_to_name,
+                                   map_id_to_english):
         # 重命名列为数据库中列
         df_to_upload.index.name = 'date'
         df_to_upload.reset_index(inplace=True)
-        # downloaded_df.rename(columns={'index': 'date'}, inplace=True)
 
         # 计算近半年起始日期
         six_months_ago = datetime.date.today() - datetime.timedelta(days=6 * 30)
@@ -271,14 +300,7 @@ class PgDbUpdaterBase(PgDbManager):
 
         internal_id = self.insert_metric_static_info(source_code, chinese_name, english_name, unit)
 
-        # 将新数据插入low_freq_long中
-        df_upload = df_to_upload.rename(columns=map_id_to_english)
-        df_upload = df_upload.melt(id_vars=['date'], var_name='metric_name', value_name='value')
-        df_upload.dropna(subset=['value'], inplace=True)
-        # 添加 additional_info:update_freq 和 metric_static_info_id 列
-        df_upload['update_freq'] = update_freq
-        df_upload['metric_static_info_id'] = internal_id
-        df_upload.to_sql('low_freq_long', self.alch_engine, if_exists='append', index=False)
+        return (internal_id, update_freq)
 
     def insert_metric_static_info(self, source_code, chinese_name, english_name, unit):
         # Ensure the corresponding source_code and chinese_name exist in the metric_static_info table
@@ -294,12 +316,12 @@ class PgDbUpdaterBase(PgDbManager):
                             RETURNING internal_id;
                             """)
                 result = conn.execute(query,
-                             {
-                                 'source_code': source_code,
-                                 'chinese_name': chinese_name,
-                                 'unit': unit,
-                                 'english_name': english_name
-                             })
+                                      {
+                                          'source_code': source_code,
+                                          'chinese_name': chinese_name,
+                                          'unit': unit,
+                                          'english_name': english_name
+                                      })
                 internal_id = result.fetchone()[0]
             # 对于wind_transformed数据
             else:
@@ -341,9 +363,6 @@ class PgDbUpdaterBase(PgDbManager):
                              })
             conn.commit()
         return internal_id
-
-
-
 
     def delete_for_renaming(self, names_to_delete):
         with self.alch_engine.connect() as conn:
@@ -579,4 +598,4 @@ class PgDbUpdaterBase(PgDbManager):
         self.alch_conn.commit()
 
     def divide(self, a, b):
-        return a/b
+        return a / b
