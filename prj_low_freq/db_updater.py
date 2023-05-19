@@ -3,13 +3,8 @@
 # Author  : Lucid
 # FileName: db_updater.py
 # Software: PyCharm
-import datetime, re, math
-from WindPy import w
-import pandas as pd
 from base_config import BaseConfig
 from pgdb_updater_base import PgDbUpdaterBase
-from sqlalchemy import text
-from utils import timeit
 
 
 class DatabaseUpdater(PgDbUpdaterBase):
@@ -130,6 +125,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
             "PPI:全部工业品:当月同比:+3月": "Ppi_TotalIndustrialGoods_CurrentMonthYoy+3M",
             "全球:摩根大通全球制造业PMI": "Global_JPMorganGlobalManufacturingPmi",
             "OECD综合领先指标": "OecdCompositeLeadingIndicators",
+            "出口金额:当月值:百万": "China_ExportValue_CurrentMonthValue_MillionUSD",
             "印度:出口金额:商品:美元": "India_ExportValue_CurrentMonthValue",
             "越南:出口金额:总金额:当月值": "Vietnam_ExportValue_CurrentMonthValue",
             "韩国:出口总额:百万": "Korea_ExportValue_CurrentMonthValue",
@@ -199,7 +195,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
             '出口价值指数(HS2):同比', '出口数量指数(HS2):同比', '出口价格指数(HS2):同比', '中国:出口金额:当月同比',
             '中国:出口金额:当月值', '工业企业:出口交货值:当月同比', '工业企业:出口交货值:当月值',
             'PPI:全部工业品:当月同比:+3月', '全球:摩根大通全球制造业PMI', 'OECD综合领先指标', '印度:出口金额:商品:美元',
-            '越南:出口金额:总金额:当月值', '韩国:出口总额:百万', '日本:出口金额:当月值:美元', '德国:出口金额:美元:百万',
+            '越南:出口金额:总金额:当月值', '韩国:出口总额:百万', '日本:出口金额:当月值:美元', '德国:出口金额:美元:百万', '出口金额:当月值:百万',
             '投入产出基本流量:最终使用:建筑/合计', '投入产出基本流量:最终使用:其他服务/合计',
             '投入产出基本流量:最终使用:机械设备制造/合计', '投入产出基本流量:最终使用:出口/合计', '最终消费率(消费率)',
             '资本形成率(投资率)', '净出口率', '服务贸易差额:占GDP比重:当季值', '货物贸易差额:占GDP比重:当季值',
@@ -207,44 +203,3 @@ class DatabaseUpdater(PgDbUpdaterBase):
             '对GDP当季同比的拉动:最终消费支出', '对GDP当季同比的拉动:资本形成总额',
             '对GDP当季同比的拉动:货物和服务净出口']
 
-    # 库存代码
-    # def calculate_yet_updated(self):
-    #     # Step 1: Find the columns with null values in the latest row of export_wide
-    #     query = "SELECT * FROM export_wide ORDER BY date DESC LIMIT 1"
-    #     df = pd.read_sql_query(text(query), self.alch_conn)
-    #     null_columns = df.columns[df.isnull().any()].tolist()
-    #
-    #     for col in null_columns:
-    #         # Step 2: Go to low_freq_long and find the corresponding column (replace "Yoy" with "Value")
-    #         metric_name_value = col.replace("Yoy", "Value")
-    #
-    #         # Step 3: Find the latest value for this metric_name_value and the value from the same period last year
-    #         query = f"""
-    #         SELECT l1.value AS current_value, l2.value AS last_year_value, l1.date AS current_date
-    #         FROM low_freq_long l1
-    #         LEFT JOIN low_freq_long l2
-    #         ON EXTRACT(YEAR FROM l1.date) = EXTRACT(YEAR FROM l2.date) + 1
-    #         AND EXTRACT(MONTH FROM l1.date) = EXTRACT(MONTH FROM l2.date)
-    #         WHERE l1.metric_name = '{metric_name_value}'
-    #         ORDER BY l1.date DESC
-    #         LIMIT 1
-    #         """
-    #         df = pd.read_sql_query(text(query), self.alch_conn)
-    #
-    #         if df.empty or pd.isnull(df.loc[0, 'current_value']):
-    #             missing_date = df.loc[0, 'current_date'] if not df.empty else "unknown"
-    #             print(f"The latest value for {metric_name_value} is missing for date: {missing_date}.")
-    #             continue
-    #
-    #         # Calculate YoY change
-    #         current_value = df.loc[0, 'current_value']
-    #         last_year_value = df.loc[0, 'last_year_value']
-    #         yoy_change = (current_value - last_year_value) / last_year_value * 100
-    #
-    #         # Step 4: Write the calculated value into low_freq_long
-    #         query = f"""
-    #         INSERT INTO low_freq_long (date, metric_name, value, data_version)
-    #         VALUES ('{df.loc[0, 'date']}', '{col}', {yoy_change}, 'calculated from CurrentMonthValue')
-    #         """
-    #         self.alch_conn.execute(text(query))
-    #         self.alch_conn.commit()
