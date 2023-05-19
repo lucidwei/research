@@ -158,9 +158,37 @@ class PgDbUpdaterBase(PgDbManager):
     @timeit
     def update_low_freq_from_excel_meta(self, excel_file: str, name_mapping: dict, sheet_name=None, if_rename=False):
         """
-        根据excel文件中的metadata更新数据
+        Updates the data based on the metadata from an Excel file downloaded from Wind.
+
+        Args:
+            excel_file (str): The path to the Excel file containing the metadata and data.
+            name_mapping (dict): A dictionary mapping indicator names from the Excel file to their corresponding names in the database.
+            sheet_name (str, optional): The name of the sheet in the Excel file to read. Defaults to None.
+            if_rename (bool, optional): Whether to rename the columns in the database. Defaults to False.
+
+        Performs the following steps:
+        1. Loads the metadata and data from the Excel file using the base_config's process_wind_excel method.
+        2. Filters the metadata to include only the rows with indicator names present in the name_mapping dictionary.
+        3. Extracts the necessary columns from the filtered metadata, such as indicator ID, name, unit, and start month end.
+        4. Creates dictionaries mapping indicator IDs to their respective Chinese names, units, English names, and start month ends.
+        5. Optionally deletes the columns corresponding to the names in names_to_delete if if_rename is True.
+        6. Updates the data for each indicator by calling the update_low_freq_by_excel_indicator_id method.
+
+        Note:
+        - The update_low_freq_by_excel_indicator_id method is called to update the data for each indicator using the metadata.
+        - The update process involves checking for missing data, preparing the data for upload, updating the metric_static_info table,
+          and inserting the new data into the low_freq_long table.
         """
         def get_start_month_end(s):
+            """
+            Extracts the start month end from a string.
+
+            Args:
+                s (str): The string containing the start date.
+
+            Returns:
+                pd.Timestamp: The start month end as a pandas Timestamp object.
+            """
             start_date_str = s.split(':')[0]  # 提取开始日期字符串
             start_date = pd.to_datetime(start_date_str, format='%Y-%m')  # 转换成日期格式
             start_month_end = start_date + pd.offsets.MonthEnd(1)  # 获取月末日期
@@ -169,7 +197,6 @@ class PgDbUpdaterBase(PgDbManager):
         # '指标ID' 列字符串长度小于 5 的行是EDB中计算后数值。因为有些指标的基础处理还是需要靠万得，比如货币转换，所以这些指标
         # 后续也会用到，但这些指标ID用不到。
         self.metadata, data = self.base_config.process_wind_excel(excel_file, sheet_name)
-        # self.metadata = self.metadata[self.metadata['指标ID'].apply(lambda x: len(str(x)) >= 5)]
 
         # excel中可能有多余的列。故Select the rows where '指标ID' is in keys
         filtered_metadata = self.metadata[self.metadata['指标名称'].isin(name_mapping.keys())]
@@ -184,10 +211,10 @@ class PgDbUpdaterBase(PgDbManager):
         map_id_to_unit = dict(zip(col_indicator_id, col_unit))
         map_id_to_english = {id: name_mapping[name] for id, name in map_id_to_chinese.items()}
         map_id_to_earlist_date = dict(zip(col_indicator_id, col_earlist_date))
-        # renaming中会用到,其实是删除了excel_file对应的所有列，没有进行筛选。但因为很少需要rename，因此不做优化
-        names_to_delete = list(map_id_to_chinese.values())
 
         if if_rename:
+            # renaming中会用到,其实是删除了excel_file对应的所有列，没有进行筛选。但因为很少需要rename，因此不做优化
+            names_to_delete = list(map_id_to_chinese.values())
             self.delete_for_renaming(names_to_delete)
 
         maps_tuple = (map_id_to_chinese, map_id_to_unit, map_id_to_english)
@@ -196,6 +223,21 @@ class PgDbUpdaterBase(PgDbManager):
             self.update_low_freq_by_excel_indicator_id(map_id_to_earlist_date[id], id, maps_tuple, data)
 
     def update_low_freq_by_excel_indicator_id(self, earliest_available_date, code, maps: tuple, data):
+        """
+        Updates the low_freq_long table with data from an Excel file based on the indicator ID.
+
+        Args:
+            earliest_available_date (datetime.date): The earliest date for which data is available *from wind data source*, read from wind excel file.
+            code (str): The indicator ID code.
+            maps (tuple): A tuple containing dictionaries that map indicator IDs to their respective names, units, and English names.
+            data (pd.DataFrame): The data from the Excel file.
+
+        Performs the following steps:
+        1. Checks for missing data by comparing existing dates in the low_freq_long table with the available dates.
+        2. Prepares the data for upload by filtering out zero values and selecting only the missing dates.
+        3. Updates the metric_static_info table by inserting or updating the metadata for the indicator.
+        4. Inserts the new data into the low_freq_long table with the corresponding metadata.
+        """
         map_id_to_name, map_id_to_unit, map_id_to_english = maps
 
         # Check for missing data
@@ -219,6 +261,39 @@ class PgDbUpdaterBase(PgDbManager):
         self._insert_into_low_freq_long(df_to_upload, internal_id, map_id_to_english, update_freq)
 
     def _prepare_data_for_upload(self, code, dates_missing, data, map_id_to_name, existing_dates):
+        """
+        Prepares the data for upload to the low_freq_long table.
+
+        Args:
+            code (str): The indicator code.
+            dates_missing (list): The list of missing dates.
+            data (DataFrame): The data to be uploaded.
+            map_id_to_name (dict): A dictionary mapping indicator IDs to names.
+            existing_dates (list): The list of existing dates in the database.
+
+        Returns:
+            DataFrame: The prepared data to be uploaded.
+
+        Performs the following steps:
+        1. If the code length is less than or equal to 5:
+            - Load the data for the code from the 'data' DataFrame.
+            - Set the index of the loaded DataFrame to datetime format.
+            - Remove the rows with 0 values from the loaded DataFrame.
+            - Keep only the new data for the missing dates.
+            - If the loaded DataFrame is empty, print a message and return None.
+            - Assign the loaded DataFrame to 'df_to_upload'.
+        2. If the code length is greater than 5:
+            - Print a message indicating wind downloading for the code and the missing dates range.
+            - Download the data for the code using the Wind API.
+            - Remove the rows with dates that already exist in the database.
+            - If the downloaded DataFrame is empty, print a message and return None.
+            - If only one row is returned by Wind API, print a message and return None.
+            - If only one date is requested, transpose the downloaded DataFrame, assign the missing date as the index,
+              and assign the transposed DataFrame to 'df_to_upload'.
+            - Assign the downloaded DataFrame to 'df_to_upload'.
+
+        Returns the prepared data to be uploaded as a DataFrame.
+        """
         if len(code) <= 5:
             loaded_df = data[code]
             loaded_df.index = pd.to_datetime(loaded_df.index)
@@ -263,6 +338,23 @@ class PgDbUpdaterBase(PgDbManager):
         return df_to_upload
 
     def _insert_into_low_freq_long(self, df_to_upload, internal_id, map_id_to_english, update_freq):
+        """
+        Inserts the new data into the low_freq_long table.
+
+        Args:
+            df_to_upload (DataFrame): The prepared data to be uploaded.
+            internal_id (int): The internal ID of the metric in the metric_static_info table.
+            map_id_to_english (dict): A dictionary mapping indicator IDs to English column names.
+            update_freq (float): The update frequency of the data.
+
+        Performs the following steps:
+        1. Rename the columns of 'df_to_upload' using the 'map_id_to_english' dictionary.
+        2. Melt the DataFrame to transform it from wide to long format, using 'date' as the id variable, 'metric_name' as
+           the variable name, and 'value' as the value name.
+        3. Drop rows with missing values in the 'value' column.
+        4. Add the 'update_freq' and 'metric_static_info_id' columns to the DataFrame.
+        5. Insert the DataFrame into the 'low_freq_long' table in the database using the SQLAlchemy 'to_sql' method.
+        """
         # 将新数据插入low_freq_long中
         df_upload = df_to_upload.rename(columns=map_id_to_english)
         df_upload = df_upload.melt(id_vars=['date'], var_name='metric_name', value_name='value')
@@ -274,22 +366,67 @@ class PgDbUpdaterBase(PgDbManager):
 
     def _update_metric_static_info(self, df_to_upload, existing_dates, map_id_to_unit, code, map_id_to_name,
                                    map_id_to_english):
-        # 重命名列为数据库中列
+        """
+        Updates the metric_static_info table with the metadata for the uploaded data.
+
+        Args:
+            df_to_upload (pandas.DataFrame): The DataFrame containing the data to be uploaded.
+            existing_dates (list): The list of existing dates in the database for the metric.
+            map_id_to_unit (dict): A dictionary mapping metric IDs to their units of measurement.
+            code (str): The code of the metric, excel_indicator_id code.
+            map_id_to_name (dict): A dictionary mapping metric IDs to their Chinese names.
+            map_id_to_english (dict): A dictionary mapping metric IDs to their English names.
+
+        Returns:
+            tuple: A tuple containing the internal ID and the update frequency.
+
+        Performs the following steps:
+        1. Defines a nested function `get_update_freq()` to calculate the update frequency based on the number of non-null data points in the past six months.
+        2. 将日期index作为一列.
+        3. Calls `get_update_freq()` to calculate the update frequency.
+        4. Updates the metric_static_info table with the metadata.
+           - If the metric is wind-calculated, the code is not used, and the internal ID is auto-incremented.
+           - If the metric is wind-transformed, the code is used to identify the metric, and the internal ID is obtained from the insert_metric_static_info method.
+        5. Returns the internal ID and the update frequency as a tuple.
+        """
+        def get_update_freq():
+            """
+            Calculates the update frequency based on the number of non-null data points in the past six months.
+
+            Args:
+                None
+
+            Returns:
+                float: The update frequency.
+
+            Performs the following steps:
+            1. Calculates the start date as six months ago from the current date.
+            2. Combines the existing dates and the dates from the DataFrame.
+            3. Selects the dates from the past six months.
+            4. Counts the number of non-null data points in the selected dates.
+            5. Calculates the update frequency as 180 divided by the number of non-null data points.
+            6. Returns the update frequency as a float.
+            """
+            # 计算近半年起始日期
+            six_months_ago = datetime.date.today() - datetime.timedelta(days=6 * 30)
+            # 计算近半年的数据点个数并计算更新频率
+            existing_dates_series = pd.Series(existing_dates, dtype='datetime64[D]').dt.date
+            combined_dates = pd.to_datetime(pd.concat([existing_dates_series, df_to_upload['date']])).dt.date
+
+            # 计算更新频率=近半年的天数/非空数据点个数
+            # 选择六个月前之后的日期
+            recent_dates = combined_dates[combined_dates >= six_months_ago]
+            # 计算近半年的数据点个数并计算更新频率
+            non_null_data_points = recent_dates.count()
+            update_freq = 180 / non_null_data_points
+
+            return update_freq
+
+        # 将日期index作为一列
         df_to_upload.index.name = 'date'
         df_to_upload.reset_index(inplace=True)
 
-        # 计算近半年起始日期
-        six_months_ago = datetime.date.today() - datetime.timedelta(days=6 * 30)
-        # 计算近半年的数据点个数并计算更新频率
-        existing_dates_series = pd.Series(existing_dates, dtype='datetime64[D]').dt.date
-        combined_dates = pd.to_datetime(pd.concat([existing_dates_series, df_to_upload['date']])).dt.date
-
-        # 计算更新频率=近半年的天数/非空数据点个数
-        # 选择六个月前之后的日期
-        recent_dates = combined_dates[combined_dates >= six_months_ago]
-        # 计算近半年的数据点个数并计算更新频率
-        non_null_data_points = recent_dates.count()
-        update_freq = 180 / non_null_data_points
+        update_freq = get_update_freq()
 
         # 更新metric_static_info 元数据table
         # 如果是通过wind计算得到的数值，那么原来的code没有用，使用自增列internal_id
@@ -303,6 +440,28 @@ class PgDbUpdaterBase(PgDbManager):
         return (internal_id, update_freq)
 
     def insert_metric_static_info(self, source_code, chinese_name, english_name, unit):
+
+        """
+        Inserts or updates the metadata of a metric in the metric_static_info table.
+
+        Args:
+            source_code (str): The source code of the metric.
+            chinese_name (str): The Chinese name of the metric.
+            english_name (str): The English name of the metric.
+            unit (str): The unit of measurement for the metric.
+
+        Returns:
+            int: The internal ID of the inserted or updated record in the metric_static_info table.
+
+        Performs the following steps:
+        1. Adjusts the sequence value to ensure unique and consecutive internal IDs.
+        2. Inserts or updates the metadata in the metric_static_info table based on the source code and Chinese name.
+           - If the source code is provided, the metric is assumed to be not wind_transformed and is inserted or updated based on the source code.
+           - If the source code is not provided, the metric is assumed to be wind_transformed. The Chinese name is checked for existence in the table.
+             - If the Chinese name already exists, the method returns without performing any insert operation.
+             - If the Chinese name is new, a temporary record is inserted and updated with the corresponding source code.
+        3. Commits the transaction and returns the internal ID of the inserted or updated record.
+        """
         # Ensure the corresponding source_code and chinese_name exist in the metric_static_info table
         self.adjust_seq_val()
         with self.alch_engine.connect() as conn:

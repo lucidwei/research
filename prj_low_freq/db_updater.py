@@ -44,7 +44,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
                                     self.export_chinese_names_for_view)
 
     def update_export2(self):
-        self.update_low_freq_from_excel_meta('进出口数据库.xlsx', self.export2_required_windname_to_english,
+        self.update_low_freq_from_excel_meta('need_update进出口数据库.xlsx', self.export2_required_windname_to_english,
                                              sheet_name='总量', if_rename=self.if_rename)
         # useful to check if next line reports error.
         missing_metrics = self.get_missing_metrics('metric_static_info', 'chinese_name',
