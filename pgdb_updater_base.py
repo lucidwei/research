@@ -137,20 +137,14 @@ class PgDbUpdaterBase(PgDbManager):
             chinese_name = self.conversion_dicts['english_to_chinese'][product_name]
 
             # 确保metric_static_info表中存在对应的source_code和chinese_name
+            # 获取metric_static_info表中对应记录的internal_id
             with self.alch_engine.connect() as conn:
                 query = f"""
                 INSERT INTO metric_static_info (source_code, chinese_name)
                 VALUES ('{source_code}', '{chinese_name}')
                 ON CONFLICT (source_code) DO UPDATE
-                SET chinese_name = EXCLUDED.chinese_name;
-                """
-                conn.execute(text(query))
-
-                # 获取metric_static_info表中对应记录的internal_id
-                query = f"""
-                SELECT internal_id
-                FROM metric_static_info
-                WHERE source_code = '{source_code}' AND chinese_name = '{chinese_name}';
+                SET chinese_name = EXCLUDED.chinese_name
+                RETURNING internal_id;
                 """
                 internal_id = conn.execute(text(query)).fetchone()[0]
 
@@ -160,111 +154,6 @@ class PgDbUpdaterBase(PgDbManager):
                 downloaded_df['product_name'] = product_name
                 downloaded_df['metric_static_info_id'] = internal_id
                 downloaded_df.to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
-
-    def update_low_freq_by_edb_id(self, earliest_available_date, code, maps: tuple):
-        map_id_to_name, map_id_to_unit, map_id_to_english = maps
-        # 更新数据
-        existing_dates = self.get_existing_dates_from_db('low_freq_long', map_id_to_english[code])
-        dates_missing = self.get_missing_months_ends(self.months_ends, earliest_available_date, 'low_freq_long', map_id_to_english[code])
-        if len(dates_missing) == 0:
-            print(f'No missing data for low_freq_long {map_id_to_name[code]}, skipping download')
-            return
-
-        print(f'Wind downloading for low_freq_long {map_id_to_name[code]} between {str(dates_missing[0])} and {str(dates_missing[-1])}')
-        downloaded_df = w.edb(code, str(dates_missing[0]), str(self.all_dates[-1]), usedf=True)[1]
-        downloaded_df.columns=[code]
-
-        # 删除与 existing_dates 中日期相同的行
-        existing_dates_set = set(existing_dates)
-        downloaded_df = downloaded_df.loc[~downloaded_df.index.isin(existing_dates_set)]
-
-        if downloaded_df.empty:
-            print(f'No missing data for low_freq_long的{map_id_to_name[code]}, downloaded but will not upload')
-            return
-
-        # wind返回的df，日期为一天和多天的格式不一样
-        if dates_missing[0] == dates_missing[-1]:
-            downloaded_df = downloaded_df.T
-            downloaded_df.index = dates_missing
-
-        # 重命名列为数据库中列
-        downloaded_df.reset_index(inplace=True)
-        downloaded_df.rename(columns={'index': 'date'}, inplace=True)
-
-        # 计算近半年起始日期
-        six_months_ago = datetime.date.today() - datetime.timedelta(days=6 * 30)
-        # 计算近半年的数据点个数并计算更新频率
-        existing_dates_series = pd.Series(existing_dates, dtype='datetime64[D]').dt.date
-        combined_dates = pd.to_datetime(pd.concat([existing_dates_series, downloaded_df['date']])).dt.date
-
-        # 选择六个月前之后的日期
-        recent_dates = combined_dates[combined_dates >= six_months_ago]
-        # 计算近半年的数据点个数并计算更新频率
-        non_null_data_points = recent_dates.count()
-        # 计算更新频率=近半年的天数/非空数据点个数
-        update_freq = 180 / non_null_data_points
-
-        # 更新metric_static_info 元数据table
-        # 如果是通过wind计算得到的数值，那么原来的code没有用，使用自增列internal_id
-        unit = map_id_to_unit[code]
-        source_code = f'wind_{code}' if len(code) >= 5 else None
-        chinese_name = map_id_to_name[code]
-        english_name = map_id_to_english[code]
-
-        # Ensure the corresponding source_code and chinese_name exist in the metric_static_info table
-        self.adjust_seq_val()
-        with self.alch_engine.connect() as conn:
-            if source_code:
-                query = text("""
-                            INSERT INTO metric_static_info (source_code, chinese_name, unit, english_name)
-                            VALUES (:source_code, :chinese_name, :unit, :english_name)
-                            ON CONFLICT (source_code) DO UPDATE
-                            SET english_name = EXCLUDED.english_name,
-                                unit = EXCLUDED.unit;
-                            """)
-                conn.execute(query,
-                             {
-                                 'source_code': source_code,
-                                 'chinese_name': chinese_name,
-                                 'unit': unit,
-                                 'english_name': english_name
-                             })
-            else:
-                query = text("""
-                            INSERT INTO metric_static_info (source_code, chinese_name, unit, english_name)
-                            VALUES ('temp_code', :chinese_name, :unit, :english_name)
-                            RETURNING internal_id;
-                            """)
-                result = conn.execute(query,
-                                      {
-                                          'chinese_name': chinese_name,
-                                          'unit': unit,
-                                          'english_name': english_name
-                                      })
-                # Get the internal_id of the corresponding record in the metric_static_info table
-                internal_id = result.fetchone()[0]
-                source_code = f'wind_transformed_{internal_id}'
-                update_query = text("""
-                                    UPDATE metric_static_info
-                                    SET source_code = :source_code
-                                    WHERE internal_id = :internal_id;
-                                    """)
-                conn.execute(update_query,
-                             {
-                                 'source_code': source_code,
-                                 'internal_id': internal_id
-                             })
-
-            conn.commit()
-
-        # 将新数据插入low_freq_long中
-        df_upload = downloaded_df.rename(columns=map_id_to_english)
-        df_upload = df_upload.melt(id_vars=['date'], var_name='metric_name', value_name='value')
-        df_upload.dropna(subset=['value'], inplace=True)
-        # 添加 additional_info:update_freq 和 metric_static_info_id 列
-        df_upload['update_freq'] = update_freq
-        df_upload['metric_static_info_id'] = internal_id
-        df_upload.to_sql('low_freq_long', self.alch_engine, if_exists='append', index=False)
 
     @timeit
     def update_low_freq_from_excel_meta(self, excel_file: str, name_mapping: dict, sheet_name=None, if_rename=False):
@@ -279,7 +168,7 @@ class PgDbUpdaterBase(PgDbManager):
 
         # '指标ID' 列字符串长度小于 5 的行是EDB中计算后数值。因为有些指标的基础处理还是需要靠万得，比如货币转换，所以这些指标
         # 后续也会用到，但这些指标ID用不到。
-        self.metadata = self.base_config.process_wind_metadata(excel_file, sheet_name)
+        self.metadata, data = self.base_config.process_wind_excel(excel_file, sheet_name)
         # self.metadata = self.metadata[self.metadata['指标ID'].apply(lambda x: len(str(x)) >= 5)]
 
         # excel中可能有多余的列。故Select the rows where '指标ID' is in keys
@@ -304,7 +193,157 @@ class PgDbUpdaterBase(PgDbManager):
         maps_tuple = (map_id_to_chinese, map_id_to_unit, map_id_to_english)
         # 更新数据
         for id in col_indicator_id:
-            self.update_low_freq_by_edb_id(map_id_to_earlist_date[id], id, maps_tuple)
+            self.update_low_freq_by_excel_indicator_id(map_id_to_earlist_date[id], id, maps_tuple, data)
+
+    def update_low_freq_by_excel_indicator_id(self, earliest_available_date, code, maps: tuple, data):
+        map_id_to_name, map_id_to_unit, map_id_to_english = maps
+        # 更新数据
+        existing_dates = self.get_existing_dates_from_db('low_freq_long', map_id_to_english[code])
+        dates_missing = self.get_missing_months_ends(self.months_ends, earliest_available_date, 'low_freq_long', map_id_to_english[code])
+        if len(dates_missing) == 0:
+            print(f'No missing data for low_freq_long {map_id_to_name[code]}, skipping download')
+            return
+
+        if len(code) <= 5:
+            loaded_df = data[code]
+            loaded_df.index = pd.to_datetime(loaded_df.index)
+            # excel中许多0值要去掉
+            loaded_df = loaded_df[loaded_df != 0]
+            # 只保留新数据
+            loaded_df = pd.DataFrame(loaded_df)
+            loaded_df = loaded_df.reindex(dates_missing).dropna()
+
+            if loaded_df.empty:
+                print(f'No missing data for low_freq_long的{map_id_to_name[code]}, will not upload')
+                return
+            df_to_upload = loaded_df
+        else:
+            print(f'Wind downloading for low_freq_long {map_id_to_name[code]} between {str(dates_missing[0])} and {str(dates_missing[-1])}')
+            downloaded_df = w.edb(code, str(dates_missing[0]), str(self.all_dates[-1]), usedf=True)[1]
+            downloaded_df.columns=[code]
+
+            # 删除与 existing_dates 中日期相同的行
+            existing_dates_set = set(existing_dates)
+            downloaded_df = downloaded_df.loc[~downloaded_df.index.isin(existing_dates_set)]
+
+            if downloaded_df.empty:
+                print(f'No missing data for low_freq_long的{map_id_to_name[code]}, downloaded but will not upload')
+                return
+
+            # wind返回的df如果只有一行数据，index会被设为wind_id，我们要转换回日期。
+            ## 第一种情况，我们只请求了一个日期
+            if dates_missing[0] == dates_missing[-1]:
+                downloaded_df = downloaded_df.T
+                downloaded_df.index = dates_missing
+            ## 第二种情况，我们请求了多个日期，但wind只返回一个日期，这种直接丢弃掉，因为不知道是哪个日期的数据
+            elif downloaded_df.shape[0] == 1:
+                print(f'''
+                We asked for low_freq_long {map_id_to_name[code]} between {str(dates_missing[0])} and {str(dates_missing[-1])}, 
+                but wind return only one data point, wind is actively updating this metric. Skipping...''')
+                return
+
+            df_to_upload = downloaded_df
+
+        # 重命名列为数据库中列
+        df_to_upload.index.name = 'date'
+        df_to_upload.reset_index(inplace=True)
+        # downloaded_df.rename(columns={'index': 'date'}, inplace=True)
+
+        # 计算近半年起始日期
+        six_months_ago = datetime.date.today() - datetime.timedelta(days=6 * 30)
+        # 计算近半年的数据点个数并计算更新频率
+        existing_dates_series = pd.Series(existing_dates, dtype='datetime64[D]').dt.date
+        combined_dates = pd.to_datetime(pd.concat([existing_dates_series, df_to_upload['date']])).dt.date
+
+        # 计算更新频率=近半年的天数/非空数据点个数
+        # 选择六个月前之后的日期
+        recent_dates = combined_dates[combined_dates >= six_months_ago]
+        # 计算近半年的数据点个数并计算更新频率
+        non_null_data_points = recent_dates.count()
+        update_freq = 180 / non_null_data_points
+
+        # 更新metric_static_info 元数据table
+        # 如果是通过wind计算得到的数值，那么原来的code没有用，使用自增列internal_id
+        unit = map_id_to_unit[code]
+        source_code = f'wind_{code}' if len(code) >= 5 else None
+        chinese_name = map_id_to_name[code]
+        english_name = map_id_to_english[code]
+
+        internal_id = self.insert_metric_static_info(source_code, chinese_name, english_name, unit)
+
+        # 将新数据插入low_freq_long中
+        df_upload = df_to_upload.rename(columns=map_id_to_english)
+        df_upload = df_upload.melt(id_vars=['date'], var_name='metric_name', value_name='value')
+        df_upload.dropna(subset=['value'], inplace=True)
+        # 添加 additional_info:update_freq 和 metric_static_info_id 列
+        df_upload['update_freq'] = update_freq
+        df_upload['metric_static_info_id'] = internal_id
+        df_upload.to_sql('low_freq_long', self.alch_engine, if_exists='append', index=False)
+
+    def insert_metric_static_info(self, source_code, chinese_name, english_name, unit):
+        # Ensure the corresponding source_code and chinese_name exist in the metric_static_info table
+        self.adjust_seq_val()
+        with self.alch_engine.connect() as conn:
+            if source_code:
+                query = text("""
+                            INSERT INTO metric_static_info (source_code, chinese_name, unit, english_name)
+                            VALUES (:source_code, :chinese_name, :unit, :english_name)
+                            ON CONFLICT (source_code) DO UPDATE
+                            SET english_name = EXCLUDED.english_name,
+                                unit = EXCLUDED.unit
+                            RETURNING internal_id;
+                            """)
+                result = conn.execute(query,
+                             {
+                                 'source_code': source_code,
+                                 'chinese_name': chinese_name,
+                                 'unit': unit,
+                                 'english_name': english_name
+                             })
+                internal_id = result.fetchone()[0]
+            # 对于wind_transformed数据
+            else:
+                # 首先查询 chinese_name 是否已经存在
+                query = text("""
+                            SELECT 1
+                            FROM metric_static_info
+                            WHERE chinese_name = :chinese_name
+                            """)
+                result = conn.execute(query, {'chinese_name': chinese_name})
+                if result.fetchone() is not None:
+                    # 如果 chinese_name 已经存在，则直接返回，不执行插入操作
+                    return
+
+                # 插入新的记录
+                query = text("""
+                            INSERT INTO metric_static_info (source_code, chinese_name, unit, english_name)
+                            VALUES ('temp_code', :chinese_name, :unit, :english_name)
+                            RETURNING internal_id;
+                            """)
+                result = conn.execute(query,
+                                      {
+                                          'chinese_name': chinese_name,
+                                          'unit': unit,
+                                          'english_name': english_name
+                                      })
+                # Get the internal_id of the corresponding record in the metric_static_info table
+                internal_id = result.fetchone()[0]
+                source_code = f'wind_transformed_{internal_id}'
+                update_query = text("""
+                                    UPDATE metric_static_info
+                                    SET source_code = :source_code
+                                    WHERE internal_id = :internal_id;
+                                    """)
+                conn.execute(update_query,
+                             {
+                                 'source_code': source_code,
+                                 'internal_id': internal_id
+                             })
+            conn.commit()
+        return internal_id
+
+
+
 
     def delete_for_renaming(self, names_to_delete):
         with self.alch_engine.connect() as conn:
@@ -331,7 +370,7 @@ class PgDbUpdaterBase(PgDbManager):
 
     def execute_pgsql_function(self, function_name, table_name, view_name, chinese_names):
         query = f"""
-        SELECT {function_name}(:table_name, :view_name, ARRAY{chinese_names})
+        SELECT {function_name}(:table_name, :view_name, ARRAY[:chinese_names])
         """
 
         self.alch_conn.execute(
@@ -339,6 +378,7 @@ class PgDbUpdaterBase(PgDbManager):
             {
                 'table_name': table_name,
                 'view_name': view_name,
+                'chinese_names': chinese_names
             }
         )
         self.alch_conn.commit()

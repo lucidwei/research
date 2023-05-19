@@ -37,7 +37,7 @@ class DatabaseUpdater(PgDbManager):
         - 数据库存在数据的最后一天到all_dates的最后一天，也就是今天
         """
         # 定义DataFrame中列名和表中列名的对应关系
-        self.metadata = self.base_config.process_wind_metadata('30城metadata.xlsx')
+        self.metadata = self.base_config.process_wind_excel('30城metadata.xlsx')
         indicator_id_col = self.metadata.loc[:, '指标ID']
         indicator_name_col = self.metadata.loc[:, '指标名称']
 

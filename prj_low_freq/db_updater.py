@@ -22,7 +22,8 @@ class DatabaseUpdater(PgDbUpdaterBase):
         self.if_rename = if_rename
         self.get_stored_metrics()
         # self.update_pmi()
-        self.update_export()
+        # self.update_export()
+        self.update_export2()
 
         self.set_all_nan_to_null()
         self.close()
@@ -33,18 +34,23 @@ class DatabaseUpdater(PgDbUpdaterBase):
     def update_export(self):
         self.update_low_freq_from_excel_meta('中信出口模板.xlsx', self.export_required_windname_to_english,
                                              if_rename=self.if_rename)
-        self.calculate_yoy(value_str='CurrentMonthValue', yoy_str='CurrentMonthYoy', cn_value_str='当月值', cn_yoy_str='当月同比')
+        self.calculate_yoy(value_str='CurrentMonthValue', yoy_str='CurrentMonthYoy', cn_value_str='当月值',
+                           cn_yoy_str='当月同比')
 
         # useful to check if next line reports error.
-        missing_metrics = self.get_missing_metrics('metric_static_info', 'chinese_name', self.export_chinese_names_for_view)
+        missing_metrics = self.get_missing_metrics('metric_static_info', 'chinese_name',
+                                                   self.export_chinese_names_for_view)
         self.execute_pgsql_function('processed_data.create_wide_view_from_chinese', 'low_freq_long', 'export_wide',
                                     self.export_chinese_names_for_view)
 
     def update_export2(self):
         self.update_low_freq_from_excel_meta('进出口数据库.xlsx', self.export2_required_windname_to_english,
                                              sheet_name='总量', if_rename=self.if_rename)
-        self.calculate_yoy(value_str='AggIndex', yoy_str='IndexYoy', cn_value_str='总指数', cn_yoy_str='同比')
-        self.calculate_custom_metric()
+        # useful to check if next line reports error.
+        missing_metrics = self.get_missing_metrics('metric_static_info', 'chinese_name',
+                                                   self.export2_chinese_names_for_view)
+        self.execute_pgsql_function('processed_data.create_wide_view_from_chinese', 'low_freq_long', 'export2_wide',
+                                    self.export2_chinese_names_for_view)
 
     def get_stored_metrics(self):
         """
@@ -112,6 +118,40 @@ class DatabaseUpdater(PgDbUpdaterBase):
             "中国:进口金额:俄罗斯:当月值": "China_ImportValue_Russia_CurrentMonthValue",
         }
 
+        self.export2_required_windname_to_english = {
+            "出口价值指数(HS2):总指数": "ExportValueIndex(hs2)_Aggindex",
+            "出口数量指数(HS2):总指数": "ExportQuantityIndex(hs2)_Aggindex",
+            "出口价格指数(HS2):总指数": "ExportPriceIndex(hs2)_Aggindex",
+            "出口价值指数(HS2):同比": "ExportValueIndex(hs2)_Yoy",
+            "出口数量指数(HS2):同比": "ExportquantityIndex(hs2))_Yoy",
+            "出口价格指数(HS2):同比": "ExportPriceIndex(hs2)_Yoy",
+            "工业企业:出口交货值:当月同比": "IndustrialEnterprises_ExportDeliveryValue_CurrentMonthYoy",
+            "工业企业:出口交货值:当月值": "IndustrialEnterprises_ExportDeliveryValue_CurrentMonthValue",
+            "PPI:全部工业品:当月同比:+3月": "Ppi_TotalIndustrialGoods_CurrentMonthYoy+3M",
+            "全球:摩根大通全球制造业PMI": "Global_JPMorganGlobalManufacturingPmi",
+            "OECD综合领先指标": "OecdCompositeLeadingIndicators",
+            "印度:出口金额:商品:美元": "India_ExportValue_CurrentMonthValue",
+            "越南:出口金额:总金额:当月值": "Vietnam_ExportValue_CurrentMonthValue",
+            "韩国:出口总额:百万": "Korea_ExportValue_CurrentMonthValue",
+            "日本:出口金额:当月值:美元": "Japan_ExportValue_CurrentMonthValue",
+            "德国:出口金额:美元:百万": "Germany_ExportValue_CurrentMonthValue",
+            "投入产出基本流量:最终使用:建筑/合计": "Input-outputBasicTraffic_FinalUse_Construction/Total",
+            "投入产出基本流量:最终使用:其他服务/合计": "Input-outputBasicTraffic_FinalUse_OtherServices/Total",
+            "投入产出基本流量:最终使用:机械设备制造/合计": "Input-outputBasicTraffic_FinalUse_Manufacturing/Total",
+            "投入产出基本流量:最终使用:出口/合计": "Input-outputBasicTraffic_FinalUse_Export/Total",
+            "最终消费率(消费率)": "FinalConsumptionRate",
+            "资本形成率(投资率)": "CapitalFormationRate",
+            "净出口率": "NetExportRate",
+            "服务贸易差额:占GDP比重:当季值": "ServiceTradeBalance_ShareOfGdp_CurrentQuarterValue",
+            "货物贸易差额:占GDP比重:当季值": "GoodsTradeBalance_ShareOfGdp_CurrentQuarterValue",
+            "经常账户差额:占GDP比重:当季值": "CurrentAccountBalance_ShareOfGdp_CurrentQuarterValue",
+            "投资收益差额:占GDP比重:当季值": "InvestmentIncomeBalance_ShareOfGdp_CurrentQuarterValue",
+            "GDP当季同比贡献率:货物和服务净出口": "YoyQuarterlyContributionToGdp_GoodsAndServicesNetExport",
+            "对GDP当季同比的拉动:最终消费支出": "YoyQuarterlyGdpBoost_FinalConsumptionExpenditure",
+            "对GDP当季同比的拉动:资本形成总额": "YoyQuarterlyGdpBoost_GrossCapitalFormation",
+            "对GDP当季同比的拉动:货物和服务净出口": "YoyQuarterlyGdpBoost_GoodsAndServicesNetExport"
+        }
+
         # 更新宽数据view，用来展示的数据
         self.export_chinese_names_for_view = [
             '中国:出口金额:当月同比', '中国:进口金额:当月同比', '中国:贸易差额:当月同比',
@@ -153,6 +193,19 @@ class DatabaseUpdater(PgDbUpdaterBase):
             '中国:出口金额:非洲:当月同比', '中国:进口金额:非洲:当月同比',
             '中国:出口金额:俄罗斯:当月同比', '中国:进口金额:俄罗斯:当月同比'
         ]
+
+        self.export2_chinese_names_for_view = [
+            '出口价值指数(HS2):总指数', '出口数量指数(HS2):总指数', '出口价格指数(HS2):总指数',
+            '出口价值指数(HS2):同比', '出口数量指数(HS2):同比', '出口价格指数(HS2):同比', '中国:出口金额:当月同比',
+            '中国:出口金额:当月值', '工业企业:出口交货值:当月同比', '工业企业:出口交货值:当月值',
+            'PPI:全部工业品:当月同比:+3月', '全球:摩根大通全球制造业PMI', 'OECD综合领先指标', '印度:出口金额:商品:美元',
+            '越南:出口金额:总金额:当月值', '韩国:出口总额:百万', '日本:出口金额:当月值:美元', '德国:出口金额:美元:百万',
+            '投入产出基本流量:最终使用:建筑/合计', '投入产出基本流量:最终使用:其他服务/合计',
+            '投入产出基本流量:最终使用:机械设备制造/合计', '投入产出基本流量:最终使用:出口/合计', '最终消费率(消费率)',
+            '资本形成率(投资率)', '净出口率', '服务贸易差额:占GDP比重:当季值', '货物贸易差额:占GDP比重:当季值',
+            '经常账户差额:占GDP比重:当季值', '投资收益差额:占GDP比重:当季值', 'GDP当季同比贡献率:货物和服务净出口',
+            '对GDP当季同比的拉动:最终消费支出', '对GDP当季同比的拉动:资本形成总额',
+            '对GDP当季同比的拉动:货物和服务净出口']
 
     # 库存代码
     # def calculate_yet_updated(self):
