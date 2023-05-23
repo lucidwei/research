@@ -172,9 +172,14 @@ def translate_and_convert_to_camel(column_names, manual_translations: dict):
         for original, translation in manual_translations.items():
             joined = joined.replace(original, translation)
 
+        # Remove the Chinese comma (顿号) 来避免翻译后出现逗号被误识为分隔符
+        joined = joined.replace('、', '')
+
         # Translate the entire string
         translated = ts.translate_text(joined, translator='youdao')
 
+        # Remove the spaces around colons
+        translated = translated.replace(': ', ':').replace(' :', ':')
         # Split the translated string by the separator
         translated_parts = translated.split(',')
 
