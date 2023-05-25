@@ -69,8 +69,8 @@ class PgDbUpdaterBase(PgDbManager):
         - all_dates的最早一天到数据库存在数据的最早一天
         - 数据库存在数据的最后一天到all_dates的最后一天，也就是今天
         """
-        dates_missing = self.get_missing_dates(self.tradedays, 'high_freq_long',
-                                               english_id=self.conversion_dicts['id_to_english'][code])
+        existing_dates = self.get_existing_dates_from_db('high_freq_long', metric_name=self.conversion_dicts['id_to_english'][code])
+        dates_missing = self.get_missing_dates(self.tradedays, existing_dates=existing_dates)
         if len(dates_missing) == 0:
             return
         old_dates = [date for date in dates_missing if date.year < 2023]
@@ -112,9 +112,10 @@ class PgDbUpdaterBase(PgDbManager):
         fields_list = fields.split(',')
 
         for field in fields_list:
-            dates_missing = self.get_missing_dates(self.tradedays, "markets_daily_long",
-                                                   english_id=self.conversion_dicts['id_to_english'][code],
-                                                   field=field.lower())
+            existing_dates = self.get_existing_dates_from_db("markets_daily_long",
+                                                             metric_name=self.conversion_dicts['id_to_english'][code],
+                                                             field=field.lower())
+            dates_missing = self.get_missing_dates(self.tradedays, existing_dates)
             if len(dates_missing) == 0:
                 print(f'No missing data for {code} {field} in markets_daily_long, skipping download')
                 return

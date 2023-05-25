@@ -3,7 +3,6 @@
 # Author  : Lucid
 # FileName: db_updater.py
 # Software: PyCharm
-import datetime, re, math
 from WindPy import w
 import pandas as pd
 from utils import timeit, get_nearest_dates_from_contract, check_wind
@@ -75,7 +74,8 @@ class DatabaseUpdater(PgDbManager):
         self.cities_col = id_to_new_string.values()
 
         # 更新数据
-        dates_missing = self.get_missing_dates(self.all_dates, "estate_new_wide")
+        existing_dates = self.get_existing_dates_from_db("estate_new_wide")
+        dates_missing = self.get_missing_dates(self.all_dates, existing_dates=existing_dates)
         ids = self.metadata['指标ID'].str.cat(sep=',')
         if len(dates_missing) != 0:
             print('Wind downloading for high_freq 房地产销售数据')

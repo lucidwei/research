@@ -152,6 +152,21 @@ class PgDbManager:
                     connection.execute(update_stmt)
 
     def get_existing_dates_from_db(self, table_name, metric_name=None, field=None):
+        """
+        从数据库中获取现有的日期列表。
+
+        参数：
+        - table_name：表名，要从中获取日期列表的表格名称。
+        - metric_name：度量名称，要筛选的度量名称（可选）。对于记录金融产品的table，会自动转换为搜索product_name
+        - field：字段名称，要筛选的字段名称（可选）。
+
+        返回：
+        - existing_dates：日期列表，从数据库中检索到的现有日期。
+
+        异常：
+        - ValueError：如果在表格中既没有'metric_name'列也没有'product_name'列。
+
+        """
         columns = self.alch_conn.execute(text(f"SELECT * FROM {table_name} LIMIT 0")).keys()
 
         conditions = []
@@ -174,9 +189,17 @@ class PgDbManager:
 
         return existing_dates
 
-    def get_missing_dates(self, all_dates, table_name, english_id, field=None):
-        existing_dates = self.get_existing_dates_from_db(table_name, english_id, field)
+    def get_missing_dates(self, all_dates, existing_dates):
+        """
+        Get the missing dates between before and after existing_dates.
 
+        Args:
+            all_dates (list): List of all dates to consider.
+            existing_dates (list): List of existing dates in the database.
+
+        Returns:
+            list: Sorted list of missing dates.
+        """
         # 如果表是空的，没有数据，则全部missing
         if not existing_dates:
             return all_dates
@@ -194,7 +217,8 @@ class PgDbManager:
         return sorted(missing_dates)
 
     def get_missing_months_ends(self, all_month_ends, earliest_available, table_name, column_name):
-        missing_dates = self.get_missing_dates(all_month_ends, table_name, column_name)
+        existing_dates = self.get_existing_dates_from_db(table_name, metric_name=column_name)
+        missing_dates = self.get_missing_dates(all_month_ends, existing_dates=existing_dates)
         # 将 missing_dates 转换为 pandas 的 DatetimeIndex
         missing_dates = pd.DatetimeIndex(missing_dates)
         # 过滤出 earliest_available 之后的日期
