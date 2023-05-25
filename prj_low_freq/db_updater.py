@@ -19,6 +19,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
         # self.update_pmi()
         # self.update_export()
         self.update_export2()
+        self.update_export3()
 
         self.set_all_nan_to_null()
         self.close()
@@ -46,6 +47,15 @@ class DatabaseUpdater(PgDbUpdaterBase):
                                                    self.export2_chinese_names_for_view)
         self.execute_pgsql_function('processed_data.create_wide_view_from_chinese', 'low_freq_long', 'export2_wide',
                                     self.export2_chinese_names_for_view)
+
+    def update_export3(self):
+        self.update_low_freq_from_excel_meta('need_update进出口数据库.xlsx', self.export3_required_windname_to_english,
+                                             sheet_name='结构', if_rename=self.if_rename)
+        # useful to check if next line reports error.
+        missing_metrics = self.get_missing_metrics('metric_static_info', 'chinese_name',
+                                                   self.export3_chinese_names_for_view)
+        self.execute_pgsql_function('processed_data.create_wide_view_from_chinese', 'low_freq_long', 'export3_wide',
+                                    self.export3_chinese_names_for_view)
 
     def get_stored_metrics(self):
         """
@@ -148,6 +158,41 @@ class DatabaseUpdater(PgDbUpdaterBase):
             "对GDP当季同比的拉动:货物和服务净出口": "YoyQuarterlyGdpBoost_GoodsAndServicesNetExport"
         }
 
+        self.export3_required_windname_to_english = {
+            "国际服务贸易差额:当月值": "BalanceOfTradeInServices_CurrentMonthValue",
+            "国际服务贸易差额:加工服务:当月值": "BalanceOfTradeInServices_ProcessingServices_CurrentMonthValue",
+            "国际服务贸易差额:运输:当月值": "BalanceOfTradeInServices_Transportation_CurrentMonthValue",
+            "国际服务贸易差额:旅行:当月值": "BalanceOfTradeInServices_Travel_CurrentMonthValue",
+            "国际服务贸易差额:知识产权使用费:当月值": "BalanceOfTradeInServices_IntellectualProperty_CurrentMonthValue",
+            "国际服务贸易差额:电信、计算机和信息服务:当月值": "BalanceOfTradeInServices_Telecommunications_CurrentMonthValue",
+            "国际服务贸易差额:其他商业服务:当月值": "BalanceOfTradeInServices_OtherBusinessServices_CurrentMonthValue_TheValue",
+            "SITC:出口金额:当月值:一、初级产品": "Sitc_Exportvalue_CurrentMonthValue_PrimaryProducts",
+            "SITC:贸易差额:当月值:一、初级产品": "Sitc_BalanceOfTrade_CurrentMonthValue_PrimaryProducts",
+            "SITC:出口金额:当月值:二、工业制品": "Sitc_Exportvalue_CurrentMonthValue_IndustrialProducts",
+            "SITC:贸易差额:当月值:二、工业制品": "Sitc_BalanceOfTrade_CurrentMonthValue_IndustrialProducts",
+            ###
+            "出口金额:食品及主要供食用的活动物": "Exportvalue_FoodAndLiveAnimalsMainlyForConsumption",
+            "出口金额:饮料及烟类": "Exportvalue_BeveragesAndTobacco",
+            "出口金额:非食用原料": "Exportvalue_Non-edibleRawMaterials",
+            "出口金额:矿物燃料、润滑油及有关原料": "Exportvalue_FossilFuelLubricantsAndRelatedRawMaterials",
+            "出口金额:动、植物油脂及蜡": "Exportvalue_AnimalAndPlantOilsAndWaxes",
+            "出口金额:化学品及有关产品": "Exportvalue_ChemistryProductsAndRelatedProducts",
+            "出口金额:轻纺产品、橡胶制品矿冶产品及其制品": "Exportvalue_TextileRubberMiningAndMetal",
+            "出口金额:机械及运输设备": "Exportvalue_MachineryAndTransportEquipment",
+            "出口金额:杂项制品": "Exportvalue_MiscellaneousProducts",
+            "出口金额:未分类的其他商品": "Exportvalue_OtherGoodsNotClassified",
+            "进口金额:食品及主要供食用的活动物": "Importvalue_FoodstuffsAndLiveAnimalsMainlyForConsumption",
+            "进口金额:饮料及烟类": "IMportvalue_BeveragesAndTobacco",
+            "进口金额:非食用原料": "Importvalue_Non-edibleRawMaterials",
+            "进口金额:矿物燃料、润滑油及有关原料": "Importvalue_FossilFuelLubricantsAndRelatedRawMaterials",
+            "进口金额:动、植物油脂及蜡": "Importvalue_AnimalAndPlantOilsAndWaxes",
+            "进口金额:化学品及有关产品": "Importvalue_ChemicalsAndRelatedProducts",
+            "进口金额:轻纺产品、橡胶制品矿冶产品及其制品": "Importvalue_TextileRubberMiningAndMetal",
+            "进口金额:机械及运输设备": "Importvalue_MachineryAndTransportationEquipment",
+            "进口金额:杂项制品": "Importvalue_MiscellaneousProducts",
+            "进口金额:未分类的其他商品": "Importvalue_OtherGoodsNotClassified"
+        }
+
         # 更新宽数据view，用来展示的数据
         self.export_chinese_names_for_view = [
             '中国:出口金额:当月同比', '中国:进口金额:当月同比', '中国:贸易差额:当月同比',
@@ -195,7 +240,8 @@ class DatabaseUpdater(PgDbUpdaterBase):
             '出口价值指数(HS2):同比', '出口数量指数(HS2):同比', '出口价格指数(HS2):同比', '中国:出口金额:当月同比',
             '中国:出口金额:当月值', '工业企业:出口交货值:当月同比', '工业企业:出口交货值:当月值',
             'PPI:全部工业品:当月同比:+3月', '全球:摩根大通全球制造业PMI', 'OECD综合领先指标', '印度:出口金额:商品:美元',
-            '越南:出口金额:总金额:当月值', '韩国:出口总额:百万', '日本:出口金额:当月值:美元', '德国:出口金额:美元:百万', '出口金额:当月值:百万',
+            '越南:出口金额:总金额:当月值', '韩国:出口总额:百万', '日本:出口金额:当月值:美元', '德国:出口金额:美元:百万',
+            '出口金额:当月值:百万',
             '投入产出基本流量:最终使用:建筑/合计', '投入产出基本流量:最终使用:其他服务/合计',
             '投入产出基本流量:最终使用:机械设备制造/合计', '投入产出基本流量:最终使用:出口/合计', '最终消费率(消费率)',
             '资本形成率(投资率)', '净出口率', '服务贸易差额:占GDP比重:当季值', '货物贸易差额:占GDP比重:当季值',
@@ -203,3 +249,4 @@ class DatabaseUpdater(PgDbUpdaterBase):
             '对GDP当季同比的拉动:最终消费支出', '对GDP当季同比的拉动:资本形成总额',
             '对GDP当季同比的拉动:货物和服务净出口']
 
+        self.export3_chinese_names_for_view = list(self.export3_required_windname_to_english.keys())
