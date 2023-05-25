@@ -32,7 +32,7 @@ class BaseConfig:
                            'equity_liquidity':datetime.date(2019, 1, 1),
                            }
         date_start = start_date_dict[self.project]
-        date_end = datetime.date.today()  # - datetime.timedelta(days=1) #开发调试时wind quota受限、节省quota时用
+        date_end = datetime.date.today() # - datetime.timedelta(weeks=100) # - datetime.timedelta(days=1) #开发调试时wind quota受限、节省quota时用
         self.tradedays = get_tradedays(date_start, date_end)
         self.tradedays_str = [str(x) for x in self.tradedays]
 

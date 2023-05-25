@@ -5,8 +5,9 @@
 # Software: PyCharm
 from base_config import BaseConfig
 import psycopg2, sqlalchemy, subprocess
-from sqlalchemy import create_engine, text, select, case, String, cast
+from sqlalchemy import create_engine, text, select, case, String, cast, and_, literal_column
 from sqlalchemy.schema import MetaData, Table
+from sqlalchemy.orm import Session
 from utils import timeit
 import pandas as pd
 
@@ -151,7 +152,7 @@ class PgDbManager:
                 with self.alch_engine.begin() as connection:
                     connection.execute(update_stmt)
 
-    def get_existing_dates_from_db(self, table_name, metric_name=None, field=None):
+    def select_existing_dates_from_table(self, table_name, metric_name=None, field=None, return_df=False):
         """
         从数据库中获取现有的日期列表。
 
@@ -184,10 +185,62 @@ class PgDbManager:
 
         condition = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
-        existing_dates = self.alch_conn.execute(text(f"SELECT date FROM {table_name} {condition}")).fetchall()
-        existing_dates = [row[0] for row in existing_dates]
+        existing_dates_df = self.alch_conn.execute(text(f"SELECT date FROM {table_name} {condition}")).fetchall()
+        existing_dates = [row[0] for row in existing_dates_df]
 
-        return existing_dates
+        if return_df:
+            return existing_dates_df
+        else:
+            return existing_dates
+
+    def select_column_from_joined_table(self, target_table_name: str, target_join_column: str, join_table_name: str,
+                                        join_column: str, selected_column: str, filter_condition: str = ""):
+        """
+        获取连接表中的日期列表
+
+        Args:
+            target_table_name (str): 目标表名称
+            target_join_column (str): 目标表的连接列名
+            join_table_name (str): 连接表名称
+            join_column (str): 连接的列名
+            filter_condition (str, optional): 过滤条件. Defaults to "".
+
+        Returns:
+            list: 连接表中的日期列表
+        """
+        # 创建session
+        session = Session(self.alch_engine)
+
+        try:
+            # 创建表对象
+            metadata = MetaData()
+            target_table = Table(target_table_name, metadata, autoload_with=self.alch_engine)
+            join_table = Table(join_table_name, metadata, autoload_with=self.alch_engine)
+
+            # 构建查询语句
+            join_condition = target_table.c[target_join_column] == join_table.c[join_column]
+            if selected_column in join_table.c:
+                query = select(join_table.c[selected_column]).where(
+                    and_(
+                        join_condition,
+                        text(filter_condition)
+                    )
+                ).select_from(target_table.join(join_table, join_condition))
+            elif selected_column in target_table.c:
+                query = select(target_table.c[selected_column]).where(
+                    and_(
+                        join_condition,
+                        text(filter_condition)
+                    )
+                ).select_from(target_table.join(join_table, join_condition))
+            else:
+                raise ValueError("The selected column does not exist in either join_table or target_table.")
+
+            # 执行查询并返回结果
+            result = session.execute(query).fetchall()
+            return [row[0] for row in result]
+        finally:
+            session.close()
 
     def get_missing_dates(self, all_dates, existing_dates):
         """
@@ -217,7 +270,7 @@ class PgDbManager:
         return sorted(missing_dates)
 
     def get_missing_months_ends(self, all_month_ends, earliest_available, table_name, column_name):
-        existing_dates = self.get_existing_dates_from_db(table_name, metric_name=column_name)
+        existing_dates = self.select_existing_dates_from_table(table_name, metric_name=column_name)
         missing_dates = self.get_missing_dates(all_month_ends, existing_dates=existing_dates)
         # 将 missing_dates 转换为 pandas 的 DatetimeIndex
         missing_dates = pd.DatetimeIndex(missing_dates)

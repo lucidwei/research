@@ -4,7 +4,7 @@
 # FileName: run_script.py
 # Software: PyCharm
 from base_config import BaseConfig
-from prj_high_freq.db_updater import DatabaseUpdater
+from prj_equity_liquidity.db_updater import DatabaseUpdater
 
 base_config = BaseConfig('equity_liquidity')
 data_updater = DatabaseUpdater(base_config)

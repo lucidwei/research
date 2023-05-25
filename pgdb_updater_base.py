@@ -69,7 +69,7 @@ class PgDbUpdaterBase(PgDbManager):
         - all_dates的最早一天到数据库存在数据的最早一天
         - 数据库存在数据的最后一天到all_dates的最后一天，也就是今天
         """
-        existing_dates = self.get_existing_dates_from_db('high_freq_long', metric_name=self.conversion_dicts['id_to_english'][code])
+        existing_dates = self.select_existing_dates_from_table('high_freq_long', metric_name=self.conversion_dicts['id_to_english'][code])
         dates_missing = self.get_missing_dates(self.tradedays, existing_dates=existing_dates)
         if len(dates_missing) == 0:
             return
@@ -103,18 +103,13 @@ class PgDbUpdaterBase(PgDbManager):
     @timeit
     def update_markets_daily_by_wsd_id_fields(self, code: str, fields: str):
         """
-        code和field根据代码生成器CG获取。
-        先获取缺失的日期列表,需要更新的两段日期是：
-        - all_dates的最早一天到数据库存在数据的最早一天
-        - 数据库存在数据的最后一天到all_dates的最后一天，也就是今天
-        wind fetch缺失日期的日度数据，写入DB；
         """
         fields_list = fields.split(',')
 
         for field in fields_list:
-            existing_dates = self.get_existing_dates_from_db("markets_daily_long",
-                                                             metric_name=self.conversion_dicts['id_to_english'][code],
-                                                             field=field.lower())
+            existing_dates = self.select_existing_dates_from_table("markets_daily_long",
+                                                                   metric_name=self.conversion_dicts['id_to_english'][code],
+                                                                   field=field.lower())
             dates_missing = self.get_missing_dates(self.tradedays, existing_dates)
             if len(dates_missing) == 0:
                 print(f'No missing data for {code} {field} in markets_daily_long, skipping download')
@@ -242,7 +237,7 @@ class PgDbUpdaterBase(PgDbManager):
         map_id_to_name, map_id_to_unit, map_id_to_english = maps
 
         # Check for missing data
-        existing_dates = self.get_existing_dates_from_db('low_freq_long', map_id_to_english[code])
+        existing_dates = self.select_existing_dates_from_table('low_freq_long', map_id_to_english[code])
         dates_missing = self.get_missing_months_ends(self.months_ends, earliest_available_date, 'low_freq_long',
                                                      map_id_to_english[code])
         if len(dates_missing) == 0:
@@ -521,6 +516,36 @@ class PgDbUpdaterBase(PgDbManager):
             conn.commit()
         return internal_id
 
+    def insert_product_static_info(self, row: pd.Series):
+        """
+        """
+        self.adjust_seq_val()
+        if row['type'] == 'fund':
+            with self.alch_engine.connect() as conn:
+                query = text("""
+                            INSERT INTO product_static_info (code, chinese_name, english_name, source, type, issueshare, buystartdate, fundfounddate)
+                            VALUES (:code, :chinese_name, :english_name, :source, :type, :issueshare, :buystartdate, :fundfounddate)
+                            ON CONFLICT (code) DO UPDATE 
+                            SET buystartdate = EXCLUDED.buystartdate,
+                                fundfounddate = EXCLUDED.fundfounddate,
+                                issueshare = EXCLUDED.issueshare
+                            RETURNING internal_id;
+                            """)
+                result = conn.execute(query,
+                                      {
+                                          'code': row['code'],
+                                          'chinese_name': row['chinese_name'],
+                                          'english_name': row['english_name'],
+                                          'source': row['source'],
+                                          'type': row['type'],
+                                          'issueshare': row['issueshare'],
+                                          'buystartdate': None if pd.isnull(row['buystartdate']) else row['buystartdate'],
+                                          'fundfounddate': None if pd.isnull(row['fundfounddate']) else row['fundfounddate'],
+                                      })
+                internal_id = result.fetchone()[0]
+                conn.commit()
+        return internal_id
+
     def delete_for_renaming(self, names_to_delete):
         with self.alch_engine.connect() as conn:
             # 通过metric_static_info获取所有可能冲突的metric_name
@@ -603,6 +628,44 @@ class PgDbUpdaterBase(PgDbManager):
 
         return result_df
 
+    def select_existing_values_in_target_column(self, target_table: str, target_column: str, where_column: str = None,
+                                                where_value: str = None):
+        """
+        Get the existing values in the specified column of the target table.
+
+        Parameters:
+            - target_table (str): The name of the target table.
+            - target_column (str): The name of the target column.
+            - where_column (str, optional): The name of the column to filter on (default is None).
+            - where_value (str, optional): The value to filter on in the where_column (default is None).
+
+        Returns:
+            set: The set of existing values in the target column.
+
+        """
+        # Create session
+        session = Session(self.alch_engine)
+
+        try:
+            # Get metadata of the target table
+            metadata = MetaData()
+            target_table = Table(target_table, metadata, autoload_with=self.alch_engine)
+
+            # Build the select statement
+            if where_column and where_value:
+                stmt = select(target_table.c[target_column]).where(target_table.c[where_column] == where_value)
+            else:
+                stmt = select(target_table.c[target_column])
+
+            # Execute the select statement
+            result = session.execute(stmt)
+
+            existing_values = {row[0] for row in result}
+
+            return existing_values
+        finally:
+            session.close()
+
     def get_missing_metrics(self, target_table: str, target_column: str, metrics_at_hand: list):
         """
         Retrieves the missing metrics that are present in the input list but not in the specified target table 的 column.
@@ -626,18 +689,8 @@ class PgDbUpdaterBase(PgDbManager):
 
         Returns a list of missing metrics.
         """
-        # 创建session
-        session = Session(self.alch_engine)
 
-        # 获取目标表的元数据
-        metadata = MetaData()
-        target_table = Table(target_table, metadata, autoload_with=self.alch_engine)
-
-        # 查询目标表中的值
-        stmt = select(target_table.c[target_column])
-        result = session.execute(stmt)
-
-        existing_values = {row[0] for row in result}
+        existing_values = self.select_existing_values_in_target_column(target_table, target_column)
 
         # 将输入的metrics列表转换为集合
         input_set = set(metrics_at_hand)
