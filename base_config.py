@@ -28,7 +28,9 @@ class BaseConfig:
         start_date_dict = {'T_basis': datetime.date(2020, 1, 1),
                            'high_freq': datetime.date(2010, 1, 1),
                            'risk_parity': datetime.date(2012, 1, 1),
-                           'low_freq':datetime.date(2004, 1, 1)}
+                           'low_freq':datetime.date(2004, 1, 1),
+                           'equity_liquidity':datetime.date(2019, 1, 1),
+                           }
         date_start = start_date_dict[self.project]
         date_end = datetime.date.today()  # - datetime.timedelta(days=1) #开发调试时wind quota受限、节省quota时用
         self.tradedays = get_tradedays(date_start, date_end)
@@ -52,6 +54,7 @@ class BaseConfig:
                         'high_freq': 'wgz_db',
                         'risk_parity': 'wgz_db',
                         'low_freq': 'wgz_db',
+                        'equity_liquidity': 'wgz_db',
                         }
 
         self.db_config = {
@@ -79,32 +82,6 @@ class BaseConfig:
         # 保存图片
         self.image_folder = self.config.get('image_config', 'folder')
         self.temp_path = self.config.get('other_paths', 'temp_path')
-
-    # def process_wind_metadata(self, excel_file_name:str, sheet_name=None):
-    #     """
-    #     用wind下载下来的格式化excel整理数据的metadata从而避免手工处理，如指标名称、频率、单位、指标ID、时间区间、来源、更新时间
-    #     """
-    #
-    #     # 读取 Excel 文件，其中包含所需要的数据的metadata
-    #     file_path = os.path.join(self.temp_path, excel_file_name)
-    #     df = pd.read_excel(file_path, sheet_name=sheet_name, index_col=0, header=None)
-    #
-    #     # 定位最后一个 metadata 字段（在第一个日期类型值的位置上一个）
-    #     last_metadata_row = None
-    #     for idx, value in df.index.to_series().items():
-    #         if is_date(value):
-    #             last_metadata_row = idx
-    #             break
-    #
-    #     last_metadata_row = df.index.get_loc(last_metadata_row) - 1
-    #     last_metadata_index = df.index[last_metadata_row]
-    #
-    #     # 提取 metadata
-    #     metadata = df.loc[:last_metadata_index].copy(deep=True)
-    #     metadata.dropna(inplace=True, how='all')
-    #
-    #     # 转置 metadata
-    #     return(metadata.transpose())
 
     def process_wind_excel(self, excel_file_name:str, sheet_name=None):
         """
