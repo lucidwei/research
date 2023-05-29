@@ -10,10 +10,8 @@ from WindPy import w
 from base_config import BaseConfig
 from pgdb_manager import PgDbManager
 from utils import check_wind, timeit
-from sqlalchemy import text
-from sqlalchemy import Table, MetaData
+from sqlalchemy import Table, MetaData, text, select, and_
 from sqlalchemy.orm import Session
-from sqlalchemy import select
 
 
 class PgDbUpdaterBase(PgDbManager):
@@ -69,7 +67,8 @@ class PgDbUpdaterBase(PgDbManager):
         - all_dates的最早一天到数据库存在数据的最早一天
         - 数据库存在数据的最后一天到all_dates的最后一天，也就是今天
         """
-        existing_dates = self.select_existing_dates_from_table('high_freq_long', metric_name=self.conversion_dicts['id_to_english'][code])
+        existing_dates = self.select_existing_dates_from_table('high_freq_long',
+                                                               metric_name=self.conversion_dicts['id_to_english'][code])
         dates_missing = self.get_missing_dates(self.tradedays, existing_dates=existing_dates)
         if len(dates_missing) == 0:
             return
@@ -108,7 +107,8 @@ class PgDbUpdaterBase(PgDbManager):
 
         for field in fields_list:
             existing_dates = self.select_existing_dates_from_table("markets_daily_long",
-                                                                   metric_name=self.conversion_dicts['id_to_english'][code],
+                                                                   metric_name=self.conversion_dicts['id_to_english'][
+                                                                       code],
                                                                    field=field.lower())
             dates_missing = self.get_missing_dates(self.tradedays, existing_dates)
             if len(dates_missing) == 0:
@@ -175,6 +175,7 @@ class PgDbUpdaterBase(PgDbManager):
         - The update process involves checking for missing data, preparing the data for upload, updating the metric_static_info table,
           and inserting the new data into the low_freq_long table.
         """
+
         def get_start_month_end(s):
             """
             Extracts the start month end from a string.
@@ -385,6 +386,7 @@ class PgDbUpdaterBase(PgDbManager):
            - If the metric is wind-transformed, the code is used to identify the metric, and the internal ID is obtained from the insert_metric_static_info method.
         5. Returns the internal ID and the update frequency as a tuple.
         """
+
         def get_update_freq():
             """
             Calculates the update frequency based on the number of non-null data points in the past six months.
@@ -538,13 +540,29 @@ class PgDbUpdaterBase(PgDbManager):
                                           'english_name': row['english_name'],
                                           'source': row['source'],
                                           'type': row['type'],
-                                          'issueshare': row['issueshare'],
+                                          'issueshare': None if pd.isnull(row['issueshare']) else row['issueshare'],
                                           'buystartdate': None if pd.isnull(row['buystartdate']) else row['buystartdate'],
                                           'fundfounddate': None if pd.isnull(row['fundfounddate']) else row['fundfounddate'],
                                       })
                 internal_id = result.fetchone()[0]
                 conn.commit()
         return internal_id
+
+    def update_product_static_info(self, row, task: str):
+        if task == 'fund_name':
+            with self.alch_engine.connect() as conn:
+                query = text("""
+                            UPDATE product_static_info
+                            SET fund_fullname = :fund_fullname, english_name = :english_name
+                            WHERE code = :code
+                            """)
+                conn.execute(query,
+                             {
+                                 'code': row['code'],
+                                 'fund_fullname': None if pd.isnull(row['fund_fullname']) else row['fund_fullname'],
+                                 'english_name': None if pd.isnull(row['english_name']) else row['english_name'],
+                             })
+                conn.commit()
 
     def delete_for_renaming(self, names_to_delete):
         with self.alch_engine.connect() as conn:
@@ -628,20 +646,17 @@ class PgDbUpdaterBase(PgDbManager):
 
         return result_df
 
-    def select_existing_values_in_target_column(self, target_table: str, target_column: str, where_column: str = None,
-                                                where_value: str = None):
+    def select_existing_values_in_target_column(self, target_table: str, target_column: str, *where_conditions):
         """
-        Get the existing values in the specified column of the target table.
+        获取目标表中指定列的现有值集合。
 
         Parameters:
-            - target_table (str): The name of the target table.
-            - target_column (str): The name of the target column.
-            - where_column (str, optional): The name of the column to filter on (default is None).
-            - where_value (str, optional): The value to filter on in the where_column (default is None).
+            - target_table (str): 目标表的名称。
+            - target_column (str): 目标列的名称。
+            - *where_conditions (tuple): 可变长度参数，每个参数是一个元组 (where_column, where_value) 表示筛选条件。
 
         Returns:
-            set: The set of existing values in the target column.
-
+            set: 目标列的现有值集合。
         """
         # Create session
         session = Session(self.alch_engine)
@@ -652,8 +667,15 @@ class PgDbUpdaterBase(PgDbManager):
             target_table = Table(target_table, metadata, autoload_with=self.alch_engine)
 
             # Build the select statement
-            if where_column and where_value:
-                stmt = select(target_table.c[target_column]).where(target_table.c[where_column] == where_value)
+            where_clauses = []
+            for where_column, where_value in where_conditions:
+                if where_value is not None:
+                    where_clauses.append(target_table.c[where_column] == where_value)
+                else:
+                    where_clauses.append(target_table.c[where_column].is_(None))
+
+            if where_clauses:
+                stmt = select(target_table.c[target_column]).where(and_(*where_clauses))
             else:
                 stmt = select(target_table.c[target_column])
 
@@ -665,6 +687,90 @@ class PgDbUpdaterBase(PgDbManager):
             return existing_values
         finally:
             session.close()
+
+    def select_rows_by_column_strvalue(self, table_name: str, column_name: str, search_value: str,
+                                       selected_columns: list = None, filter_condition: str = None):
+        """
+        选取某个表的某个列中包含指定字段的所有行，并根据指定的列名筛选出 DataFrame。
+
+        Parameters:
+            - table_name (str): 表的名称。
+            - column_name (str): 列的名称。
+            - search_value (str): 要搜索的字段。
+            - selected_columns (list): 可选参数，要筛选的列名列表，默认为 None，表示选取所有列。
+            - filter_condition (str): 可选参数，额外的筛选条件字符串，默认为 None。
+
+        Returns:
+            pd.DataFrame: 筛选后的 DataFrame。
+        """
+        # 创建元数据
+        metadata = MetaData()
+        table = Table(table_name, metadata, autoload_with=self.alch_engine)
+
+        # 构建查询语句
+        if selected_columns is None:
+            stmt = select(table)
+        else:
+            selected_columns = [table.c[col] for col in selected_columns]
+            stmt = select(*selected_columns)
+
+        stmt = stmt.where(table.c[column_name].ilike(f'%{search_value}%'))
+
+        # 添加额外的筛选条件
+        if filter_condition is not None:
+            stmt = stmt.where(text(filter_condition))
+
+        # 执行查询并返回结果
+        with self.alch_engine.connect() as conn:
+            result = conn.execute(stmt)
+            data = result.fetchall()
+
+        # 将查询结果转为 DataFrame
+        if data:
+            df = pd.DataFrame(data, columns=result.keys())
+        else:
+            df = pd.DataFrame(columns=result.keys())
+
+        return df
+
+    def upload_joined_products_wide_table(self, full_name_keyword: str):
+        # 使用SQLAlchemy执行SQL查询
+        sql_query = f"""
+        SELECT public.markets_daily_long.date AS date, public.markets_daily_long.product_name AS product_name, 
+        public.markets_daily_long.field AS field, public.markets_daily_long.value AS value, 
+        public.markets_daily_long.date_value AS date_value, 
+        product_static_info."code" AS "code", 
+        product_static_info."chinese_name" AS "chinese_name", 
+        product_static_info."type" AS "type", 
+        product_static_info."fundfounddate" AS "fundfounddate", 
+        product_static_info."issueshare" AS "issueshare", 
+        product_static_info."fund_fullname" AS "fund_fullname"
+        FROM "public"."markets_daily_long"
+        LEFT JOIN "public"."product_static_info" AS product_static_info 
+        ON "public"."markets_daily_long"."product_static_info_id" = product_static_info."internal_id"
+        WHERE product_static_info."type" = 'fund' 
+        AND product_static_info."fund_fullname" LIKE '%{full_name_keyword}%' 
+        AND product_static_info."fund_fullname" NOT LIKE '%债%'
+        """
+        df = pd.read_sql_query(text(sql_query), self.alch_conn)
+
+        if full_name_keyword == '定期开放':
+            # 需要哪些field
+            df1 = df[df['field'].isin(['fund_expectedopenday', 'fund_fundscale'])]
+            df1.loc[:, 'value_or_date_value'] = df1.apply(
+                lambda row: row['date_value'] if pd.isna(row['value']) or row['value']==0 else row['value'], axis=1)
+            df_wide = df1.pivot(index=['date', 'product_name'], columns='field', values='value_or_date_value').reset_index()
+            # 上传到processed_data schema中
+            df_wide.to_sql('funds_dk_nobond_wide', self.alch_engine, schema='processed_data', if_exists='replace', index=False)
+
+        elif full_name_keyword == '持有期':
+            df1 = df[df['field'].isin(['openrepurchasestartdate', 'fund_fundscale'])]
+            df1.loc[:, 'value_or_date_value'] = df1.apply(
+                lambda row: row['date_value'] if pd.isna(row['value']) or row['value']==0 else row['value'], axis=1)
+
+            df_wide = df1.pivot(index=['product_name'], columns='field', values='value_or_date_value').reset_index()
+            # 上传到processed_data schema中
+            df_wide.to_sql('funds_cyq_nobond_wide', self.alch_engine, schema='processed_data', if_exists='replace', index=False)
 
     def get_missing_metrics(self, target_table: str, target_column: str, metrics_at_hand: list):
         """
@@ -699,6 +805,22 @@ class PgDbUpdaterBase(PgDbManager):
         missing_values = input_set - existing_values
 
         return list(missing_values)
+
+    def is_markets_daily_long_updated_today(self, product_name_key_word: str):
+        # 获取今天的日期
+        today = self.all_dates[-1]
+
+        # 构建原始 SQL 查询
+        sql = text(f"SELECT MAX(date) FROM markets_daily_long WHERE field = 'nav_adj' AND product_name LIKE '%{product_name_key_word}%' ")
+
+        # 执行查询并获取结果
+        result = self.alch_conn.execute(sql).scalar()
+
+        # 比较结果与今天的日期
+        if result == today:
+            return True
+        else:
+            return False
 
     def calculate_yoy(self, value_str, yoy_str, cn_value_str, cn_yoy_str, cn_names_to_exhibit):
         """

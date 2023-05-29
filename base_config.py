@@ -28,8 +28,8 @@ class BaseConfig:
         start_date_dict = {'T_basis': datetime.date(2020, 1, 1),
                            'high_freq': datetime.date(2010, 1, 1),
                            'risk_parity': datetime.date(2012, 1, 1),
-                           'low_freq':datetime.date(2004, 1, 1),
-                           'equity_liquidity':datetime.date(2019, 1, 1),
+                           'low_freq': datetime.date(2004, 1, 1),
+                           'equity_liquidity': datetime.date(2019, 1, 2),
                            }
         date_start = start_date_dict[self.project]
         date_end = datetime.date.today() # - datetime.timedelta(weeks=100) # - datetime.timedelta(days=1) #开发调试时wind quota受限、节省quota时用
