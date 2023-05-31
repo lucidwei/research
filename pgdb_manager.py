@@ -5,7 +5,7 @@
 # Software: PyCharm
 from base_config import BaseConfig
 import psycopg2, sqlalchemy, subprocess
-from sqlalchemy import create_engine, text, select, case, String, cast, and_, literal_column
+from sqlalchemy import create_engine, text, select, case, String, cast, and_, column
 from sqlalchemy.schema import MetaData, Table
 from sqlalchemy.orm import Session
 from utils import timeit
@@ -152,7 +152,7 @@ class PgDbManager:
                 with self.alch_engine.begin() as connection:
                     connection.execute(update_stmt)
 
-    def select_existing_dates_from_table(self, table_name, metric_name=None, field=None, return_df=False):
+    def select_existing_dates_from_table(self, table_name, metric_name=None, product_name=None, field=None, return_df=False):
         """
         从数据库中获取现有的日期列表。
 
@@ -173,13 +173,9 @@ class PgDbManager:
         conditions = []
 
         if metric_name:
-            if 'metric_name' in columns:
-                conditions.append(f"metric_name = '{metric_name}'")
-            elif 'product_name' in columns:
-                conditions.append(f"product_name = '{metric_name}'")
-            else:
-                raise ValueError("Neither 'metric_name' nor 'product_name' columns were found in the table.")
-
+            conditions.append(f"metric_name = '{metric_name}'")
+        if product_name:
+            conditions.append(f"product_name = '{product_name}'")
         if field and 'field' in columns:
             conditions.append(f"field = '{field}'")
 
@@ -203,44 +199,46 @@ class PgDbManager:
             target_join_column (str): 目标表的连接列名
             join_table_name (str): 连接表名称
             join_column (str): 连接的列名
-            filter_condition (str, optional): 过滤条件. Defaults to "".
+            filter_condition (str, optional): 过滤条件. Defaults to "". e.g."product_static_info.type_identifier = 'fund'"
 
         Returns:
             list: 连接表中的日期列表
         """
-        # 创建session
-        session = Session(self.alch_engine)
+        # Get the joined table as a DataFrame
+        df = self.get_joined_table_as_dataframe(target_table_name, target_join_column, join_table_name,
+                                                join_column, filter_condition)
+        if selected_column not in df.columns:
+            raise ValueError("The selected column does not exist in either join_table or target_table.")
 
-        try:
-            # 创建表对象
-            metadata = MetaData()
-            target_table = Table(target_table_name, metadata, autoload_with=self.alch_engine)
-            join_table = Table(join_table_name, metadata, autoload_with=self.alch_engine)
+        # Return the selected column values
+        return sorted(df[selected_column].drop_duplicates().tolist())
 
-            # 构建查询语句
-            join_condition = target_table.c[target_join_column] == join_table.c[join_column]
-            if selected_column in join_table.c:
-                query = select(join_table.c[selected_column]).where(
-                    and_(
-                        join_condition,
-                        text(filter_condition)
-                    )
-                ).select_from(target_table.join(join_table, join_condition))
-            elif selected_column in target_table.c:
-                query = select(target_table.c[selected_column]).where(
-                    and_(
-                        join_condition,
-                        text(filter_condition)
-                    )
-                ).select_from(target_table.join(join_table, join_condition))
-            else:
-                raise ValueError("The selected column does not exist in either join_table or target_table.")
+    def get_joined_table_as_dataframe(self, target_table_name: str, target_join_column: str, join_table_name: str,
+                                      join_column: str, filter_condition: str = ""):
+        """
+        Retrieves the joined table data as a DataFrame.
 
-            # 执行查询并返回结果
-            result = session.execute(query).fetchall()
-            return [row[0] for row in result]
-        finally:
-            session.close()
+        Parameters:
+            target_table_name (str): Name of the target table.
+            target_join_column (str): Column in the target table for the join condition.
+            join_table_name (str): Name of the join table.
+            join_column (str): Column in the join table for the join condition.
+            filter_condition (str, optional): Additional filtering condition for the query. Defaults to "".
+
+        Returns:
+            pandas.DataFrame: Joined table data.
+        """
+        # Build query
+        query = f"SELECT * FROM {target_table_name} INNER JOIN {join_table_name} ON {target_table_name}.{target_join_column} = {join_table_name}.{join_column}"
+
+        # Add filter condition
+        if filter_condition:
+            query = f"{query} WHERE {filter_condition}"
+
+        # Execute query and fetch result as pandas DataFrame
+        result_df = pd.read_sql_query(text(query), self.alch_conn)
+
+        return result_df
 
     def get_missing_dates(self, all_dates, existing_dates):
         """

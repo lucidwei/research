@@ -434,7 +434,7 @@ class PgDbUpdaterBase(PgDbManager):
 
         return (internal_id, update_freq)
 
-    def insert_metric_static_info(self, source_code, chinese_name, english_name, unit):
+    def insert_metric_static_info(self, source_code, chinese_name, english_name, unit, type_identifier):
 
         """
         Inserts or updates the metadata of a metric in the metric_static_info table.
@@ -444,6 +444,7 @@ class PgDbUpdaterBase(PgDbManager):
             chinese_name (str): The Chinese name of the metric.
             english_name (str): The English name of the metric.
             unit (str): The unit of measurement for the metric.
+            type_identifier (str): 用于group select，区分不同任务
 
         Returns:
             int: The internal ID of the inserted or updated record in the metric_static_info table.
@@ -462,11 +463,13 @@ class PgDbUpdaterBase(PgDbManager):
         with self.alch_engine.connect() as conn:
             if source_code:
                 query = text("""
-                            INSERT INTO metric_static_info (source_code, chinese_name, unit, english_name)
-                            VALUES (:source_code, :chinese_name, :unit, :english_name)
+                            INSERT INTO metric_static_info (source_code, chinese_name, unit, english_name, type_identifier)
+                            VALUES (:source_code, :chinese_name, :unit, :english_name, :type_identifier)
                             ON CONFLICT (source_code) DO UPDATE
                             SET english_name = EXCLUDED.english_name,
-                                unit = EXCLUDED.unit
+                                chinese_name = EXCLUDED.chinese_name,
+                                unit = EXCLUDED.unit,
+                                type_identifier = EXCLUDED.type_identifier
                             RETURNING internal_id;
                             """)
                 result = conn.execute(query,
@@ -474,7 +477,8 @@ class PgDbUpdaterBase(PgDbManager):
                                           'source_code': source_code,
                                           'chinese_name': chinese_name,
                                           'unit': unit,
-                                          'english_name': english_name
+                                          'english_name': english_name,
+                                          'type_identifier': type_identifier,
                                       })
                 internal_id = result.fetchone()[0]
             # 对于wind_transformed数据
@@ -602,6 +606,104 @@ class PgDbUpdaterBase(PgDbManager):
         )
         self.alch_conn.commit()
 
+    def check_meta_table(self, table_name, check_column, **kwargs):
+        raise NotImplementedError("Subclasses must implement check_meta_table method.")
+
+    def get_missing_metrics(self, target_table: str, target_column: str, metrics_at_hand: list):
+        """
+        Retrieves the missing metrics that are present in the input list but not in the specified target table 的 column.
+
+        Args:
+            target_table (str): The name of the target table.
+            target_column (str): The name of the target column in the target table.
+            metrics_at_hand (list): A list of metrics.
+
+        Returns:
+            list: A list of missing metrics.
+
+        Performs the following steps:
+        1. Creates a new session using the SQLAlchemy Session object.
+        2. Retrieves the metadata of the target table.
+        3. Executes a select statement to retrieve the values from the target column in the target table.
+        4. Stores the existing values in a set.
+        5. Converts the input list of metrics to a set.
+        6. Finds the values that are present in the input set but not in the existing values set.
+        7. Returns the missing values as a list.
+
+        Returns a list of missing metrics.
+        """
+
+        existing_values = self.select_existing_values_in_target_column(target_table, target_column)
+
+        # 将输入的metrics列表转换为集合
+        input_set = set(metrics_at_hand)
+
+        # 找出存在于输入列表中，但不存在于目标表中的值
+        missing_values = input_set - existing_values
+
+        return sorted(list(missing_values))
+
+    def select_existing_values_in_target_column(self, target_table: str, target_column: str, *where_conditions):
+        """
+        获取目标表中指定列的现有值集合。
+
+        Parameters:
+            - target_table (str): 目标表的名称。
+            - target_column (str): 目标列的名称。
+            - *where_conditions (tuple): 可变长度参数，每个参数是一个元组 (where_column, where_value) 表示筛选条件。
+
+        Returns:
+            set: 目标列的现有值集合。
+        """
+        # Create session
+        session = Session(self.alch_engine)
+
+        try:
+            # Get metadata of the target table
+            metadata = MetaData()
+            target_table = Table(target_table, metadata, autoload_with=self.alch_engine)
+
+            # Build the select statement
+            where_clauses = []
+            for where_column, where_value in where_conditions:
+                if where_value is not None:
+                    where_clauses.append(target_table.c[where_column] == where_value)
+                else:
+                    where_clauses.append(target_table.c[where_column].is_(None))
+
+            if where_clauses:
+                stmt = select(target_table.c[target_column]).where(and_(*where_clauses))
+            else:
+                stmt = select(target_table.c[target_column])
+
+            # Execute the select statement
+            result = session.execute(stmt)
+
+            existing_values = {row[0] for row in result}
+
+            return existing_values
+        finally:
+            session.close()
+
+    def check_data_table(self, table_name, type_identifier, **kwargs):
+        raise NotImplementedError("Subclasses must implement check_data_table method.")
+
+    def is_markets_daily_long_updated_today(self, field: str, product_name_key_word: str):
+        # 获取今天的日期
+        today = self.all_dates[-1]
+
+        # 构建原始 SQL 查询
+        sql = text(f"SELECT MAX(date) FROM markets_daily_long WHERE field = '{field}' AND product_name LIKE '%{product_name_key_word}%' ")
+
+        # 执行查询并获取结果
+        result = self.alch_conn.execute(sql).scalar()
+
+        # 比较结果与今天的日期
+        if result == today:
+            return True
+        else:
+            return False
+
     def read_from_high_freq_view(self, code_list: List[str]) -> pd.DataFrame:
         """
         从 high_freq_view (wide format) 读取数据，根据 code_list。
@@ -646,47 +748,7 @@ class PgDbUpdaterBase(PgDbManager):
 
         return result_df
 
-    def select_existing_values_in_target_column(self, target_table: str, target_column: str, *where_conditions):
-        """
-        获取目标表中指定列的现有值集合。
 
-        Parameters:
-            - target_table (str): 目标表的名称。
-            - target_column (str): 目标列的名称。
-            - *where_conditions (tuple): 可变长度参数，每个参数是一个元组 (where_column, where_value) 表示筛选条件。
-
-        Returns:
-            set: 目标列的现有值集合。
-        """
-        # Create session
-        session = Session(self.alch_engine)
-
-        try:
-            # Get metadata of the target table
-            metadata = MetaData()
-            target_table = Table(target_table, metadata, autoload_with=self.alch_engine)
-
-            # Build the select statement
-            where_clauses = []
-            for where_column, where_value in where_conditions:
-                if where_value is not None:
-                    where_clauses.append(target_table.c[where_column] == where_value)
-                else:
-                    where_clauses.append(target_table.c[where_column].is_(None))
-
-            if where_clauses:
-                stmt = select(target_table.c[target_column]).where(and_(*where_clauses))
-            else:
-                stmt = select(target_table.c[target_column])
-
-            # Execute the select statement
-            result = session.execute(stmt)
-
-            existing_values = {row[0] for row in result}
-
-            return existing_values
-        finally:
-            session.close()
 
     def select_rows_by_column_strvalue(self, table_name: str, column_name: str, search_value: str,
                                        selected_columns: list = None, filter_condition: str = None):
@@ -772,55 +834,9 @@ class PgDbUpdaterBase(PgDbManager):
             # 上传到processed_data schema中
             df_wide.to_sql('funds_cyq_nobond_wide', self.alch_engine, schema='processed_data', if_exists='replace', index=False)
 
-    def get_missing_metrics(self, target_table: str, target_column: str, metrics_at_hand: list):
-        """
-        Retrieves the missing metrics that are present in the input list but not in the specified target table 的 column.
 
-        Args:
-            target_table (str): The name of the target table.
-            target_column (str): The name of the target column in the target table.
-            metrics_at_hand (list): A list of metrics.
 
-        Returns:
-            list: A list of missing metrics.
 
-        Performs the following steps:
-        1. Creates a new session using the SQLAlchemy Session object.
-        2. Retrieves the metadata of the target table.
-        3. Executes a select statement to retrieve the values from the target column in the target table.
-        4. Stores the existing values in a set.
-        5. Converts the input list of metrics to a set.
-        6. Finds the values that are present in the input set but not in the existing values set.
-        7. Returns the missing values as a list.
-
-        Returns a list of missing metrics.
-        """
-
-        existing_values = self.select_existing_values_in_target_column(target_table, target_column)
-
-        # 将输入的metrics列表转换为集合
-        input_set = set(metrics_at_hand)
-
-        # 找出存在于输入列表中，但不存在于目标表中的值
-        missing_values = input_set - existing_values
-
-        return list(missing_values)
-
-    def is_markets_daily_long_updated_today(self, product_name_key_word: str):
-        # 获取今天的日期
-        today = self.all_dates[-1]
-
-        # 构建原始 SQL 查询
-        sql = text(f"SELECT MAX(date) FROM markets_daily_long WHERE field = 'nav_adj' AND product_name LIKE '%{product_name_key_word}%' ")
-
-        # 执行查询并获取结果
-        result = self.alch_conn.execute(sql).scalar()
-
-        # 比较结果与今天的日期
-        if result == today:
-            return True
-        else:
-            return False
 
     def calculate_yoy(self, value_str, yoy_str, cn_value_str, cn_yoy_str, cn_names_to_exhibit):
         """

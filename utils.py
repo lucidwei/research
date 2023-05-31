@@ -90,7 +90,8 @@ def get_tradedays(start, end):
         counts += 1
         tradedays.append(start)
         start += timedelta(days=1)
-    return sorted(tradedays, reverse=True)
+    # return sorted(tradedays, reverse=True)
+    return sorted(tradedays)
 
 
 def check_wind():
