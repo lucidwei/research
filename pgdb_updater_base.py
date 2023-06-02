@@ -67,8 +67,8 @@ class PgDbUpdaterBase(PgDbManager):
         - all_dates的最早一天到数据库存在数据的最早一天
         - 数据库存在数据的最后一天到all_dates的最后一天，也就是今天
         """
-        existing_dates = self.select_existing_dates_from_table('high_freq_long',
-                                                               metric_name=self.conversion_dicts['id_to_english'][code])
+        existing_dates = self.select_existing_dates_from_long_table('high_freq_long',
+                                                                    metric_name=self.conversion_dicts['id_to_english'][code])
         dates_missing = self.get_missing_dates(self.tradedays, existing_dates=existing_dates)
         if len(dates_missing) == 0:
             return
@@ -106,10 +106,10 @@ class PgDbUpdaterBase(PgDbManager):
         fields_list = fields.split(',')
 
         for field in fields_list:
-            existing_dates = self.select_existing_dates_from_table("markets_daily_long",
-                                                                   metric_name=self.conversion_dicts['id_to_english'][
+            existing_dates = self.select_existing_dates_from_long_table("markets_daily_long",
+                                                                        metric_name=self.conversion_dicts['id_to_english'][
                                                                        code],
-                                                                   field=field.lower())
+                                                                        field=field.lower())
             dates_missing = self.get_missing_dates(self.tradedays, existing_dates)
             if len(dates_missing) == 0:
                 print(f'No missing data for {code} {field} in markets_daily_long, skipping download')
@@ -238,7 +238,7 @@ class PgDbUpdaterBase(PgDbManager):
         map_id_to_name, map_id_to_unit, map_id_to_english = maps
 
         # Check for missing data
-        existing_dates = self.select_existing_dates_from_table('low_freq_long', map_id_to_english[code])
+        existing_dates = self.select_existing_dates_from_long_table('low_freq_long', map_id_to_english[code])
         dates_missing = self.get_missing_months_ends(self.months_ends, earliest_available_date, 'low_freq_long',
                                                      map_id_to_english[code])
         if len(dates_missing) == 0:
@@ -642,48 +642,6 @@ class PgDbUpdaterBase(PgDbManager):
         missing_values = input_set - existing_values
 
         return sorted(list(missing_values))
-
-    def select_existing_values_in_target_column(self, target_table: str, target_column: str, *where_conditions):
-        """
-        获取目标表中指定列的现有值集合。
-
-        Parameters:
-            - target_table (str): 目标表的名称。
-            - target_column (str): 目标列的名称。
-            - *where_conditions (tuple): 可变长度参数，每个参数是一个元组 (where_column, where_value) 表示筛选条件。
-
-        Returns:
-            set: 目标列的现有值集合。
-        """
-        # Create session
-        session = Session(self.alch_engine)
-
-        try:
-            # Get metadata of the target table
-            metadata = MetaData()
-            target_table = Table(target_table, metadata, autoload_with=self.alch_engine)
-
-            # Build the select statement
-            where_clauses = []
-            for where_column, where_value in where_conditions:
-                if where_value is not None:
-                    where_clauses.append(target_table.c[where_column] == where_value)
-                else:
-                    where_clauses.append(target_table.c[where_column].is_(None))
-
-            if where_clauses:
-                stmt = select(target_table.c[target_column]).where(and_(*where_clauses))
-            else:
-                stmt = select(target_table.c[target_column])
-
-            # Execute the select statement
-            result = session.execute(stmt)
-
-            existing_values = {row[0] for row in result}
-
-            return existing_values
-        finally:
-            session.close()
 
     def check_data_table(self, table_name, type_identifier, **kwargs):
         raise NotImplementedError("Subclasses must implement check_data_table method.")

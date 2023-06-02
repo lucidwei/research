@@ -152,7 +152,53 @@ class PgDbManager:
                 with self.alch_engine.begin() as connection:
                     connection.execute(update_stmt)
 
-    def select_existing_dates_from_table(self, table_name, metric_name=None, product_name=None, field=None, return_df=False):
+    def select_existing_values_in_target_column(self, target_table: str, target_column: str, *where_conditions):
+        """
+        获取目标表中指定列的现有值集合。
+
+        Parameters:
+            - target_table (str): 目标表的名称。
+            - target_column (str): 目标列的名称。
+            - *where_conditions (tuple or str): 可变长度参数，每个参数是一个元组 (where_column, where_value) 表示筛选条件。
+
+        Returns:
+            set: 目标列的现有值集合。
+        """
+        # Create session
+        session = Session(self.alch_engine)
+
+        try:
+            # Get metadata of the target table
+            metadata = MetaData()
+            target_table = Table(target_table, metadata, autoload_with=self.alch_engine)
+
+            # Build the select statement
+            where_clauses = []
+            for where_condition in where_conditions:
+                if isinstance(where_condition, tuple):
+                    where_column, where_value = where_condition
+                    if where_value is not None:
+                        where_clauses.append(target_table.c[where_column] == where_value)
+                    else:
+                        where_clauses.append(target_table.c[where_column].is_(None))
+                else:
+                    where_clauses.append(text(where_condition))
+
+            if where_clauses:
+                stmt = select(target_table.c[target_column]).where(and_(*where_clauses))
+            else:
+                stmt = select(target_table.c[target_column])
+
+            # Execute the select statement
+            result = session.execute(stmt)
+
+            existing_values = {row[0] for row in result}
+
+            return existing_values
+        finally:
+            session.close()
+
+    def select_existing_dates_from_long_table(self, table_name, metric_name=None, product_name=None, field=None, return_df=False):
         """
         从数据库中获取现有的日期列表。
 
@@ -268,7 +314,7 @@ class PgDbManager:
         return sorted(missing_dates)
 
     def get_missing_months_ends(self, all_month_ends, earliest_available, table_name, column_name):
-        existing_dates = self.select_existing_dates_from_table(table_name, metric_name=column_name)
+        existing_dates = self.select_existing_dates_from_long_table(table_name, metric_name=column_name)
         missing_dates = self.get_missing_dates(all_month_ends, existing_dates=existing_dates)
         # 将 missing_dates 转换为 pandas 的 DatetimeIndex
         missing_dates = pd.DatetimeIndex(missing_dates)

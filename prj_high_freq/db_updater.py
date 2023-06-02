@@ -74,7 +74,7 @@ class DatabaseUpdater(PgDbManager):
         self.cities_col = id_to_new_string.values()
 
         # 更新数据
-        existing_dates = self.select_existing_dates_from_table("estate_new_wide")
+        existing_dates = self.select_existing_dates_from_long_table("estate_new_wide")
         dates_missing = self.get_missing_dates(self.all_dates, existing_dates=existing_dates)
         ids = self.metadata['指标ID'].str.cat(sep=',')
         if len(dates_missing) != 0:
