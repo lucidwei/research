@@ -102,8 +102,9 @@ def check_wind():
             raise Exception('WindPy连接失败，请查找原因')
 
     # 检查quota超限
-    if w.wset("sectorconstituent", f"date=2023-02-20;sectorid=1000015510000000;field=sec_name").Data[0][0].__contains__(
-            'quota exceeded'):
+    download_try = w.wsd('600519.SH', "industry_citic", f'2023-02-20', f'2023-02-20',
+                         "unit=1;industryType=1")
+    if download_try.Data[0][0].__contains__('quota exceeded'):
         raise Warning('取数报错，quota超限')
     else:
         print('Wind在本次运行中数据尚未超限，如取数报错请检查其它报错原因（如wind本身缺少数据）')

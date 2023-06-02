@@ -68,7 +68,8 @@ class PgDbUpdaterBase(PgDbManager):
         - 数据库存在数据的最后一天到all_dates的最后一天，也就是今天
         """
         existing_dates = self.select_existing_dates_from_long_table('high_freq_long',
-                                                                    metric_name=self.conversion_dicts['id_to_english'][code])
+                                                                    metric_name=self.conversion_dicts['id_to_english'][
+                                                                        code])
         dates_missing = self.get_missing_dates(self.tradedays, existing_dates=existing_dates)
         if len(dates_missing) == 0:
             return
@@ -526,12 +527,12 @@ class PgDbUpdaterBase(PgDbManager):
         """
         """
         self.adjust_seq_val()
-        if row['type'] == 'fund':
+        if row['product_type'] == 'fund':
             with self.alch_engine.connect() as conn:
                 query = text("""
-                            INSERT INTO product_static_info (code, chinese_name, english_name, source, type, issueshare, buystartdate, fundfounddate)
-                            VALUES (:code, :chinese_name, :english_name, :source, :type, :issueshare, :buystartdate, :fundfounddate)
-                            ON CONFLICT (code) DO UPDATE 
+                            INSERT INTO product_static_info (code, chinese_name, english_name, source, product_type, issueshare, buystartdate, fundfounddate)
+                            VALUES (:code, :chinese_name, :english_name, :source, :product_type, :issueshare, :buystartdate, :fundfounddate)
+                            ON CONFLICT (chinese_name, product_type) DO UPDATE 
                             SET buystartdate = EXCLUDED.buystartdate,
                                 fundfounddate = EXCLUDED.fundfounddate,
                                 issueshare = EXCLUDED.issueshare
@@ -543,13 +544,35 @@ class PgDbUpdaterBase(PgDbManager):
                                           'chinese_name': row['chinese_name'],
                                           'english_name': row['english_name'],
                                           'source': row['source'],
-                                          'type': row['type'],
+                                          'product_type': row['product_type'],
                                           'issueshare': None if pd.isnull(row['issueshare']) else row['issueshare'],
-                                          'buystartdate': None if pd.isnull(row['buystartdate']) else row['buystartdate'],
-                                          'fundfounddate': None if pd.isnull(row['fundfounddate']) else row['fundfounddate'],
+                                          'buystartdate': None if pd.isnull(row['buystartdate']) else row[
+                                              'buystartdate'],
+                                          'fundfounddate': None if pd.isnull(row['fundfounddate']) else row[
+                                              'fundfounddate'],
                                       })
                 internal_id = result.fetchone()[0]
                 conn.commit()
+        elif row['product_type'] == 'stock':
+            query = text("""
+                        INSERT INTO product_static_info (code, chinese_name, stk_industry_cs, source, type_identifier, product_type)
+                        VALUES (:code, :chinese_name, :stk_industry_cs, :source, :type_identifier, :product_type)
+                        ON CONFLICT (chinese_name, product_type) DO NOTHING
+                        RETURNING internal_id;
+                        """)
+            self.alch_conn.execute(query,
+                                   {
+                                       'code': row['code'],
+                                       'chinese_name': row['chinese_name'],
+                                       'source': row['source'],
+                                       'product_type': row['product_type'],
+                                       'stk_industry_cs': row['stk_industry_cs'],
+                                       'type_identifier': row['type_identifier'],
+                                   })
+            self.alch_conn.commit()
+            internal_id = None
+        else:
+            raise Exception(f"row['product_type'] = {row['product_type']} not supported.")
         return internal_id
 
     def update_product_static_info(self, row, task: str):
@@ -651,7 +674,8 @@ class PgDbUpdaterBase(PgDbManager):
         today = self.all_dates[-1]
 
         # 构建原始 SQL 查询
-        sql = text(f"SELECT MAX(date) FROM markets_daily_long WHERE field = '{field}' AND product_name LIKE '%{product_name_key_word}%' ")
+        sql = text(
+            f"SELECT MAX(date) FROM markets_daily_long WHERE field = '{field}' AND product_name LIKE '%{product_name_key_word}%' ")
 
         # 执行查询并获取结果
         result = self.alch_conn.execute(sql).scalar()
@@ -705,8 +729,6 @@ class PgDbUpdaterBase(PgDbManager):
         result_df = result_df.pivot_table(index='date', columns='field', values='value')
 
         return result_df
-
-
 
     def select_rows_by_column_strvalue(self, table_name: str, column_name: str, search_value: str,
                                        selected_columns: list = None, filter_condition: str = None):
@@ -778,23 +800,22 @@ class PgDbUpdaterBase(PgDbManager):
             # 需要哪些field
             df1 = df[df['field'].isin(['fund_expectedopenday', 'fund_fundscale'])]
             df1.loc[:, 'value_or_date_value'] = df1.apply(
-                lambda row: row['date_value'] if pd.isna(row['value']) or row['value']==0 else row['value'], axis=1)
-            df_wide = df1.pivot(index=['date', 'product_name'], columns='field', values='value_or_date_value').reset_index()
+                lambda row: row['date_value'] if pd.isna(row['value']) or row['value'] == 0 else row['value'], axis=1)
+            df_wide = df1.pivot(index=['date', 'product_name'], columns='field',
+                                values='value_or_date_value').reset_index()
             # 上传到processed_data schema中
-            df_wide.to_sql('funds_dk_nobond_wide', self.alch_engine, schema='processed_data', if_exists='replace', index=False)
+            df_wide.to_sql('funds_dk_nobond_wide', self.alch_engine, schema='processed_data', if_exists='replace',
+                           index=False)
 
         elif full_name_keyword == '持有期':
             df1 = df[df['field'].isin(['openrepurchasestartdate', 'fund_fundscale'])]
             df1.loc[:, 'value_or_date_value'] = df1.apply(
-                lambda row: row['date_value'] if pd.isna(row['value']) or row['value']==0 else row['value'], axis=1)
+                lambda row: row['date_value'] if pd.isna(row['value']) or row['value'] == 0 else row['value'], axis=1)
 
             df_wide = df1.pivot(index=['product_name'], columns='field', values='value_or_date_value').reset_index()
             # 上传到processed_data schema中
-            df_wide.to_sql('funds_cyq_nobond_wide', self.alch_engine, schema='processed_data', if_exists='replace', index=False)
-
-
-
-
+            df_wide.to_sql('funds_cyq_nobond_wide', self.alch_engine, schema='processed_data', if_exists='replace',
+                           index=False)
 
     def calculate_yoy(self, value_str, yoy_str, cn_value_str, cn_yoy_str, cn_names_to_exhibit):
         """

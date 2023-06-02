@@ -192,9 +192,10 @@ class PgDbManager:
             # Execute the select statement
             result = session.execute(stmt)
 
-            existing_values = {row[0] for row in result}
+            existing_values = {row[0] for row in result if row[0] is not None}
+            sorted_existing_values = sorted(list(existing_values))
 
-            return existing_values
+            return sorted_existing_values
         finally:
             session.close()
 
@@ -257,7 +258,7 @@ class PgDbManager:
             raise ValueError("The selected column does not exist in either join_table or target_table.")
 
         # Return the selected column values
-        return sorted(df[selected_column].drop_duplicates().tolist())
+        return sorted(df[selected_column].dropna().drop_duplicates().tolist())
 
     def get_joined_table_as_dataframe(self, target_table_name: str, target_join_column: str, join_table_name: str,
                                       join_column: str, filter_condition: str = ""):
@@ -330,7 +331,13 @@ class PgDbManager:
         SELECT pg_get_serial_sequence('metric_static_info', 'internal_id');
         """
         # 使用最大的 internal_id 作为新的序列值
-        query_max = text("SELECT MAX(internal_id) FROM metric_static_info")
+        match seq_name:
+            case 'metric_static_info_internal_id_seq':
+                query_max = text("SELECT MAX(internal_id) FROM metric_static_info")
+            case 'product_static_info_internal_id_seq':
+                query_max = text("SELECT MAX(internal_id) FROM product_static_info")
+            case _:
+                raise Exception(f'seq_name={seq_name} not supported.')
         result = self.alch_conn.execute(query_max)
         max_id = result.scalar()+1 or 1  # 如果表为空，则使用1作为默认值
 

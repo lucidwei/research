@@ -39,7 +39,7 @@ class BaseConfig:
         # 获取区间内所有日期
         all_dates = []
         current_date = date_start
-        while current_date < date_end:
+        while current_date <= date_end:
             all_dates.append(current_date)
             current_date += datetime.timedelta(days=1)
         self.all_dates = all_dates
