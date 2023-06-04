@@ -81,7 +81,7 @@ class BaseConfig:
         self.config.read(config_file_path, encoding='utf-8')
         # 保存图片
         self.image_folder = self.config.get('image_config', 'folder')
-        self.temp_path = self.config.get('other_paths', 'temp_path')
+        self.excels_path = self.config.get('excels_path', 'excels_path')
 
     def process_wind_excel(self, excel_file_name:str, sheet_name=None):
         """
@@ -89,7 +89,7 @@ class BaseConfig:
         """
 
         # 读取 Excel 文件，其中包含所需要的数据的metadata
-        file_path = os.path.join(self.temp_path, excel_file_name)
+        file_path = os.path.join(self.excels_path, excel_file_name)
         df = pd.read_excel(file_path, sheet_name=sheet_name, index_col=0, header=None)
 
         # 定位最后一个 metadata 字段（在第一个日期类型值的位置上一个）

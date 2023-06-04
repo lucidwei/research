@@ -108,8 +108,9 @@ class PgDbUpdaterBase(PgDbManager):
 
         for field in fields_list:
             existing_dates = self.select_existing_dates_from_long_table("markets_daily_long",
-                                                                        metric_name=self.conversion_dicts['id_to_english'][
-                                                                       code],
+                                                                        metric_name=
+                                                                        self.conversion_dicts['id_to_english'][
+                                                                            code],
                                                                         field=field.lower())
             dates_missing = self.get_missing_dates(self.tradedays, existing_dates)
             if len(dates_missing) == 0:
@@ -530,8 +531,8 @@ class PgDbUpdaterBase(PgDbManager):
         if row['product_type'] == 'fund':
             with self.alch_engine.connect() as conn:
                 query = text("""
-                            INSERT INTO product_static_info (code, chinese_name, english_name, source, product_type, issueshare, buystartdate, fundfounddate)
-                            VALUES (:code, :chinese_name, :english_name, :source, :product_type, :issueshare, :buystartdate, :fundfounddate)
+                            INSERT INTO product_static_info (code, chinese_name, source, product_type, issueshare, buystartdate, fundfounddate)
+                            VALUES (:code, :chinese_name, :source, :product_type, :issueshare, :buystartdate, :fundfounddate)
                             ON CONFLICT (chinese_name, product_type) DO UPDATE 
                             SET buystartdate = EXCLUDED.buystartdate,
                                 fundfounddate = EXCLUDED.fundfounddate,
@@ -542,7 +543,6 @@ class PgDbUpdaterBase(PgDbManager):
                                       {
                                           'code': row['code'],
                                           'chinese_name': row['chinese_name'],
-                                          'english_name': row['english_name'],
                                           'source': row['source'],
                                           'product_type': row['product_type'],
                                           'issueshare': None if pd.isnull(row['issueshare']) else row['issueshare'],
@@ -590,6 +590,19 @@ class PgDbUpdaterBase(PgDbManager):
                                  'english_name': None if pd.isnull(row['english_name']) else row['english_name'],
                              })
                 conn.commit()
+        if task == 'etf_industry_and_type':
+            query = text("""
+                        UPDATE product_static_info
+                        SET stk_industry_cs = :stk_industry_cs, etf_type = :etf_type
+                        WHERE code = :code
+                        """)
+            self.alch_conn.execute(query,
+                         {
+                             'code': row['code'],
+                             'etf_type': row['etf_type'],
+                             'stk_industry_cs': None if pd.isnull(row['stk_industry_cs']) else row['stk_industry_cs'],
+                         })
+            self.alch_conn.commit()
 
     def delete_for_renaming(self, names_to_delete):
         with self.alch_engine.connect() as conn:

@@ -3,6 +3,8 @@
 # Author  : Lucid
 # FileName: db_updater.py
 # Software: PyCharm
+import os
+
 import numpy as np
 import pandas as pd
 from dateutil.relativedelta import relativedelta
@@ -14,12 +16,12 @@ from WindPy import w
 class DatabaseUpdater(PgDbUpdaterBase):
     def __init__(self, base_config: BaseConfig):
         super().__init__(base_config)
-        self.update_all_funds_info()
-        # self.update_reopened_dk_funds()
-        # self.update_reopened_cyq_funds()
-        # self.update_etf_lof_funds()
-        # self.logic_margin_trade_by_industry()
-        # self.logic_north_inflow_by_industry()
+        # self.update_all_funds_info()
+        # self.logic_reopened_dk_funds()
+        # self.logic_reopened_cyq_funds()
+        # self.logic_etf_lof_funds()
+        self.logic_margin_trade_by_industry()
+        self.logic_north_inflow_by_industry()
         self.logic_major_holder()
 
     def logic_margin_trade_by_industry(self):
@@ -28,7 +30,8 @@ class DatabaseUpdater(PgDbUpdaterBase):
         :return:
         """
         # 检查或更新meta_table
-        need_update_meta_table = self._check_meta_table('metric_static_info', 'chinese_name', type_identifier='margin_by_industry')
+        need_update_meta_table = self._check_meta_table('metric_static_info', 'chinese_name',
+                                                        type_identifier='margin_by_industry')
         if need_update_meta_table:
             for industry in self.today_industries_df['industryname'].tolist():
                 self.insert_metric_static_info(source_code=f'wind_tradingstatisticsbyindustry_{industry}',
@@ -51,7 +54,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
                 selected_column=f'date',
                 filter_condition=f"product_static_info.type_identifier = '{type_identifier}'"
             )
-        else:
+        elif type_identifier == 'north_inflow' or type_identifier == 'margin_by_industry':
             existing_dates = self.select_column_from_joined_table(
                 target_table_name='metric_static_info',
                 target_join_column='internal_id',
@@ -60,6 +63,8 @@ class DatabaseUpdater(PgDbUpdaterBase):
                 selected_column=f'date',
                 filter_condition=f"metric_static_info.type_identifier = '{type_identifier}'"
             )
+        else:
+            raise Exception(f'type_identifier: {type_identifier} not supported.')
 
         if len(existing_dates) == 0:
             missing_dates = self.tradedays
@@ -68,7 +73,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
 
         if not missing_dates:
             print(f"No missing dates for check_data_table, type_identifier={type_identifier}")
-            return False
+            return []
         return missing_dates
 
     def _check_meta_table(self, table_name, check_column, type_identifier):
@@ -97,10 +102,6 @@ class DatabaseUpdater(PgDbUpdaterBase):
                                        f"datetype=firstannouncementdate;type=all;field=windcode", usedf=True)[1]
                 required_value = downloaded_df['windcode'].drop_duplicates().tolist()
 
-            case 'dk_funds':
-                # 检查今天
-                pass
-
             case _:
                 raise Exception(f'type_identifier {type_identifier} not supported')
 
@@ -116,7 +117,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
         if len(missing_dates) == 0:
             return
 
-        for date in missing_dates[-100:-1]:
+        for date in missing_dates[:-1]: # 不更新当天数据，以防下载到未更新的昨天数据
             print(f'Wind downloading tradingstatisticsbyindustry for {date}')
             downloaded_df = w.wset("tradingstatisticsbyindustry",
                                    f"exchange=citic;startdate={date};enddate={date};"
@@ -142,7 +143,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
             df_upload['date'] = date
             df_upload['product_name'] = '融资融券行业交易统计_' + downloaded_df['industryname']
             df_upload.drop("industryname", axis=1, inplace=True)
-            df_upload = df_upload.melt(id_vars=['date', 'product_name'], var_name='field', value_name='value')
+            df_upload = df_upload.melt(id_vars=['date', 'product_name'], var_name='field', value_name='value').dropna()
 
             df_upload.to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
 
@@ -156,16 +157,13 @@ class DatabaseUpdater(PgDbUpdaterBase):
         )
         selected_df = joined_df[["date", 'product_name', 'field', "value"]]
         # 不用上传宽数据了，找到pivot方法了
-        df_upload = selected_df.melt(id_vars=['date', 'product_name'], var_name='field',
-                                     value_name='value').sort_values(by="date", ascending=False)
+        # df_upload = selected_df.melt(id_vars=['date', 'product_name'], var_name='field',
+        #                              value_name='value').sort_values(by="date", ascending=False)
 
     def logic_north_inflow_by_industry(self):
-        """
-        1. 检查
-        :return:
-        """
         # 检查或更新meta_table
-        need_update_meta_table = self._check_meta_table('metric_static_info', 'chinese_name', type_identifier='north_inflow')
+        need_update_meta_table = self._check_meta_table('metric_static_info', 'chinese_name',
+                                                        type_identifier='north_inflow')
         if need_update_meta_table:
             for industry in self.today_industries_df['industry'].tolist():
                 self.insert_metric_static_info(source_code=f'wind_shscindustryfundflow_{industry}',
@@ -217,9 +215,8 @@ class DatabaseUpdater(PgDbUpdaterBase):
         if len(missing_dates) == 0:
             return
 
-        for date in missing_dates[-50:-1]:
+        for date in missing_dates[:-1]:
             print(f'Wind downloading shareplanincreasereduce for {date}')
-            # 对于meta这里数据太多
             downloaded_df = w.wset("shareplanincreasereduce",
                                    f"startdate={date};enddate={date};datetype=firstannouncementdate;type=all;"
                                    "field=windcode,name",
@@ -245,7 +242,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
                 code = row['code']
                 print(f'Wind downloading industry_citic for {code} on {date}')
                 info_df = w.wsd(code, "industry_citic", f'{date}', f'{date}', "unit=1;industryType=1",
-                                      usedf=True)[1]
+                                usedf=True)[1]
                 if info_df.empty:
                     print(f"Missing data for {code} on {date}, no data downloaded for industry_citic")
                     continue
@@ -262,7 +259,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
             # df_meta.to_sql('product_static_info', self.alch_engine, if_exists='append', index=False)
 
     def _upload_missing_data_major_holder(self, missing_dates):
-        for date in missing_dates[-50:-1]:
+        for date in missing_dates[:-1]:
             print(f'Wind downloading shareplanincreasereduce for {date}')
             downloaded_df = w.wset("shareplanincreasereduce",
                                    f"startdate={date};enddate={date};datetype=firstannouncementdate;type=all;"
@@ -291,7 +288,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
                 code = row['code']
                 print(f'Wind downloading mkt_cap_ard for {code} on {date}')
                 info_df = w.wsd(code, "mkt_cap_ard", f'{date}', f'{date}', "unit=1;industryType=1",
-                                      usedf=True)[1]
+                                usedf=True)[1]
                 if info_df.empty:
                     print(f"Missing data for {code} on {date}, no data downloaded for mkt_cap_ard")
                     continue
@@ -322,45 +319,36 @@ class DatabaseUpdater(PgDbUpdaterBase):
                     df_calculated.loc[i, f'拟{direction}金额'] = change_money_limit
                 elif not pd.isnull(change_limit_percent_up) and not pd.isnull(change_limit_percent_limit):
                     # 如果 '拟变动数量上限占总股本比' 和 '拟变动数量下限占总股本比' 都非空，则取均值乘以总市值作为 '拟增持金额'
-                    avg_percent = (change_limit_percent_up + change_limit_percent_limit) / 2
+                    avg_percent = (change_limit_percent_up + change_limit_percent_limit) / 200
                     df_calculated.loc[i, f'拟{direction}金额'] = avg_percent * mkt_cap
                 elif not pd.isnull(change_limit_percent_up):
                     # 如果只有 '拟变动数量上限占总股本比' 非空，则将其乘以总市值作为 '拟增持金额'
-                    df_calculated.loc[i, f'拟{direction}金额'] = change_limit_percent_up * mkt_cap
+                    df_calculated.loc[i, f'拟{direction}金额'] = change_limit_percent_up * mkt_cap / 100
                 elif not pd.isnull(change_limit_percent_limit):
                     # 如果只有 '拟变动数量下限占总股本比' 非空，则将其乘以总市值作为 '拟增持金额'
-                    df_calculated.loc[i, f'拟{direction}金额'] = change_limit_percent_limit * mkt_cap
+                    df_calculated.loc[i, f'拟{direction}金额'] = change_limit_percent_limit * mkt_cap / 100
                 else:
                     # 如果所有相关列都为空，则在 '拟增持金额' 和 '拟减持金额' 中标注 'wind missing data need manually update'
                     df_calculated.loc[i, 'item_note_2b_added'] = 0
 
-            df_upload = df_calculated[['product_name', '拟增持金额', '拟减持金额', 'item_note_2b_added']].copy(deep=True)
+            df_upload = df_calculated[['product_name', '拟增持金额', '拟减持金额', 'item_note_2b_added']].copy(
+                deep=True)
             df_upload['date'] = date
             df_upload = df_upload.melt(id_vars=['date', 'product_name'], var_name='field', value_name='value').dropna()
             df_upload_summed = df_upload.groupby(['date', 'product_name', 'field'], as_index=False).sum().dropna()
             df_upload_summed.to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
 
-    def logic_dk_funds(self):
-        # meta_table在update_all_funds_info中统一更新
-        need_update_meta_table = self._check_meta_table('product_static_info', 'code', type_identifier='major_holder')
-        missing_dates = self._check_data_table(table_name='markets_daily_long',
-                                               type_identifier='major_holder')
-        if need_update_meta_table:
-            # 检查或更新data_table
-            self._upload_missing_meta_major_holder(missing_dates)
-        if missing_dates:
-            self._upload_missing_data_major_holder(missing_dates)
-
-    def update_reopened_dk_funds(self):
+    def logic_reopened_dk_funds(self):
         """
         1. 获取full_name中带有'定期开放'、不包含债的全部基金
         2. 需要获取的数据包括：历次开放申赎的日期、申赎前后的份额变动、最新日期的基金规模
         """
         dk_funds_df = self.select_rows_by_column_strvalue(table_name='product_static_info', column_name='fund_fullname',
                                                           search_value='定期开放',
-                                                          selected_columns=['code', 'chinese_name', 'fund_fullname'],
+                                                          selected_columns=['code', 'chinese_name'],
                                                           filter_condition="product_type='fund' AND fund_fullname NOT LIKE '%债%'")
 
+        # 因为定开基金总数不多，因此对这些定开基金统一更新
         today_updated = self.is_markets_daily_long_updated_today(field='nav_adj', product_name_key_word='定开')
         if not today_updated:
             for _, row in dk_funds_df.iterrows():
@@ -370,8 +358,8 @@ class DatabaseUpdater(PgDbUpdaterBase):
                 downloaded = downloaded.reset_index().rename(columns={'index': 'code', 'NAV_ADJ': 'nav_adj',
                                                                       'FUND_EXPECTEDOPENDAY': 'fund_expectedopenday',
                                                                       'FUND_FUNDSCALE': 'fund_fundscale',
-                                                                      'NETASSET_TOTAL': 'netasset_total',
-                                                                      'FUND_INFO_NAME': 'product_name'})
+                                                                      'NETASSET_TOTAL': 'netasset_total'})
+                downloaded['product_name'] = row['chinese_name']
                 upload_date_value = downloaded[['product_name', 'fund_expectedopenday']].melt(id_vars=['product_name'],
                                                                                               var_name='field',
                                                                                               value_name='date_value')
@@ -379,12 +367,13 @@ class DatabaseUpdater(PgDbUpdaterBase):
                     id_vars=['product_name'], var_name='field', value_name='value')
                 upload_date_value['date'] = self.all_dates[-1]
                 upload_value['date'] = self.all_dates[-1]
-                upload_date_value.dropna().to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
+                upload_date_value.dropna().to_sql('markets_daily_long', self.alch_engine, if_exists='append',
+                                                  index=False)
                 upload_value.dropna().to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
 
-        self.upload_joined_products_wide_table(full_name_keyword='定期开放')
+        # self.upload_joined_products_wide_table(full_name_keyword='定期开放')
 
-    def update_reopened_cyq_funds(self):
+    def logic_reopened_cyq_funds(self):
         """
         1. 获取full_name中带有'持有期'、不包含债的全部基金
         2. 需要获取的数据包括：历次开放申赎的日期、申赎前后的份额变动、最新日期的基金规模
@@ -393,7 +382,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
             table_name='product_static_info', column_name='fund_fullname',
             search_value='持有期',
             selected_columns=['code', 'chinese_name', 'fund_fullname', 'fundfounddate', 'issueshare'],
-            filter_condition="type='fund' AND fund_fullname NOT LIKE '%债%'")
+            filter_condition="product_type='fund' AND fund_fullname NOT LIKE '%债%'")
 
         today_updated = self.is_markets_daily_long_updated_today(field='nav_adj', product_name_key_word='持有')
         if not today_updated:
@@ -403,16 +392,86 @@ class DatabaseUpdater(PgDbUpdaterBase):
                                    self.all_dates_str[-1], self.all_dates_str[-1], "unit=1", usedf=True)[1]
                 downloaded['fundfounddate'] = row['fundfounddate']
                 downloaded['issueshare'] = row['issueshare']
+                downloaded['product_name'] = row['chinese_name']
                 downloaded = downloaded.reset_index().rename(columns={'index': 'code', 'NAV_ADJ': 'nav_adj',
                                                                       'FUND_FUNDSCALE': 'fund_fundscale',
-                                                                      'FUND_INFO_NAME': 'product_name',
                                                                       'FUND_MINHOLDINGPERIOD': 'fund_minholdingperiod'})
                 upload_value = downloaded[['product_name', 'nav_adj', 'fund_fundscale', 'fund_minholdingperiod']].melt(
                     id_vars=['product_name'], var_name='field', value_name='value')
                 upload_value['date'] = self.all_dates[-1]
                 upload_value.dropna().to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
 
-        self.upload_joined_products_wide_table(full_name_keyword='持有期')
+        # self.upload_joined_products_wide_table(full_name_keyword='持有期')
+
+    def logic_etf_lof_funds(self):
+        etf_funds_df = self.select_rows_by_column_strvalue(
+            table_name='product_static_info', column_name='fund_fullname',
+            search_value='交易型开放式',
+            selected_columns=['code', 'chinese_name', 'fund_fullname', 'fundfounddate', 'issueshare', 'etf_type'],
+            filter_condition="product_type='fund' AND fund_fullname NOT LIKE '%债%' "
+                             "AND fund_fullname NOT LIKE '%联接%'")
+        # 有一些发行时间较早的行业ETF数据库中没有收录，从excel中读取并更新到数据库
+        # 读取行业资金周流入规模文件
+        file_path = os.path.join(self.base_config.excels_path, '行业资金周流入规模（5.8-5.13).xlsx')
+        df_excel = pd.read_excel(file_path, sheet_name='行业ETF当周净流入统计', index_col=None)
+        # 筛选出 df_excel 中存在但 etf_funds_df 中不存在的代码
+        missing_codes = df_excel['代码'][~df_excel['代码'].isin(etf_funds_df['code'])]
+        for code in missing_codes:
+            self.update_specific_funds_meta(code)
+
+        # update ETF所属行业和ETF分类(excel文件里全部为行业ETF)
+        df_excel = df_excel.rename(columns={'代码': 'code', '中信一级行业': 'stk_industry_cs'})
+        df_excel['etf_type'] = '行业ETF'
+        for _, row in df_excel.iterrows():
+            self.update_product_static_info(row, task='etf_industry_and_type')
+
+        # ETF分成3类：行业ETF和主题ETF和指数ETF
+        # 默认分类为指数ETF
+        etf_funds_df.loc[etf_funds_df['etf_type'].isnull(), 'etf_type'] = '指数ETF'
+        # 根据关键字进行分类
+        theme_keywords = ['主题']
+        etf_funds_df.loc[etf_funds_df['fund_fullname'].str.contains('|'.join(theme_keywords)), 'etf_type'] = '主题ETF'
+        # 根据行业资金周流入规模文件进行分类
+        industry_etf_codes = df_excel['code'].tolist()
+        etf_funds_df.loc[etf_funds_df['code'].isin(industry_etf_codes), 'etf_type'] = '行业ETF'
+        etf_funds_df = etf_funds_df.sort_values(by='etf_type')
+
+        # 更新markets_daily_long '净流入额'时间序列
+        today_updated = self.is_markets_daily_long_updated_today(field='净流入额', product_name_key_word='ETF')
+        if not today_updated:
+            for _, row in etf_funds_df.iterrows():
+                # 这个净流入额的变动日期和基金份额-本分级份额变动日期一样，应该就是份额变动乘以净值
+                print(f"Downloading mf_netinflow for {row['code']} b/t {self.tradedays_str[-100]} and {self.tradedays_str[-1]}")
+                downloaded = w.wsd(row['code'],
+                                   "mf_netinflow",
+                                   self.tradedays_str[-100], self.tradedays_str[-1], "unit=1", usedf=True)[1]
+                downloaded_filtered = downloaded[downloaded['MF_NETINFLOW'] != 0]
+                downloaded_filtered = downloaded_filtered.reset_index().rename(columns={'index': 'date', 'MF_NETINFLOW': '净流入额'})
+                # 去除已经存在的日期
+                existing_dates = self.select_existing_dates_from_long_table('markets_daily_long', product_name=row['chinese_name'], field='净流入额')
+                downloaded_filtered = downloaded_filtered[~downloaded_filtered['date'].isin(existing_dates)]
+                downloaded_filtered['product_name'] = row['chinese_name']
+                upload_value = downloaded_filtered[['product_name', 'date', '净流入额']].melt(
+                    id_vars=['product_name', 'date'], var_name='field', value_name='value')
+
+                upload_value.dropna().to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
+
+    def update_specific_funds_meta(self, code: str):
+        info = w.wsd(code,
+                     "fund_fullname,fund_info_name,fund_fullnameen", #,fund_offnetworkbuystartdate,fund_etflisteddate",
+                     self.all_dates_str[-1], self.all_dates_str[-1], "unit=1", usedf=True)[1]
+        row = {
+            'code': code,
+            'fund_fullname': info.iloc[0]['FUND_FULLNAME'],
+            'chinese_name': info.iloc[0]['FUND_INFO_NAME'],
+            'english_name': info.iloc[0]['FUND_FULLNAMEEN'],
+            'product_type': 'fund',
+            'source': 'wind',
+            'fundfounddate': None,
+            'buystartdate': None,
+            'issueshare': None
+        }
+        self.insert_product_static_info(row)
 
     def update_funds_name(self):
         code_set = self.select_existing_values_in_target_column(
@@ -462,7 +521,9 @@ class DatabaseUpdater(PgDbUpdaterBase):
         else:
             missing_buystartdates = self.get_missing_dates(all_dates=self.all_dates, existing_dates=existing_dates)
 
-        buystartdates_for_missing_fundfounddates = self.select_existing_values_in_target_column('product_static_info', 'buystartdate', 'fundfounddate is NULL')
+        buystartdates_for_missing_fundfounddates = self.select_existing_values_in_target_column('product_static_info',
+                                                                                                'buystartdate',
+                                                                                                'fundfounddate is NULL')
         # 筛选出3个月内的日期
         recent_buystartdates_for_missing_fundfounddates = [
             date for date in buystartdates_for_missing_fundfounddates if
@@ -475,7 +536,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
 
         # 执行数据下载
         # 以认购起始日作为筛选条件，选取的数据更完整、更有前瞻性。只选取严格意义上的新发基金。
-        for missing_date in missing_dates:
+        for missing_date in missing_dates[:-1]:
             print(f'Downloading fundissuegeneralview on {missing_date} for update_all_funds_info')
             downloaded_df = w.wset("fundissuegeneralview",
                                    f"startdate={missing_date};enddate={missing_date};datetype=startdate;isvalid=yes;"
@@ -483,15 +544,15 @@ class DatabaseUpdater(PgDbUpdaterBase):
                                    f"openbuystartdate,openrepurchasestartdate",
                                    usedf=True)[1]
             if downloaded_df.empty:
-                print(f"Missing fundissuegeneralview data on {missing_date}, but no data downloaded for update_all_funds_info")
-                return
+                print(
+                    f"Missing fundissuegeneralview data on {missing_date}, but no data downloaded for update_all_funds_info")
+                continue
 
             # 解析下载的数据并上传至product_static_info
             product_metric_upload_df = downloaded_df[
                 ['windcode', 'name', 'buystartdate', 'fundfounddate', 'issueshare']].rename(
                 columns={'windcode': 'code', 'name': 'chinese_name'})
             # 添加source和type列并上传
-            product_metric_upload_df['english_name'] = ''
             product_metric_upload_df['source'] = 'wind'
             product_metric_upload_df['product_type'] = 'fund'
             for _, row in product_metric_upload_df.iterrows():
