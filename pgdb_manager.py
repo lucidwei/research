@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from utils import timeit
 import pandas as pd
 
+
 class PgDbManager:
     """
     定义数据库操作的方法
@@ -47,9 +48,6 @@ class PgDbManager:
                 print(f"Error: {e}")
                 raise Exception("Unable to connect to the PostgreSQL database server.")
 
-    # def execute_query(self, query):
-    #     self.alch_conn.execute(query)
-
     def write_data(self, sql, data=None):
         if self.engine == 'sqlalchemy':
             self.alch_conn.execute(text(sql))
@@ -78,6 +76,7 @@ class PgDbManager:
                 print("Connection and cursor successfully closed.")
             else:
                 print("Connection is not open so close activity is void.")
+
     def check_server_running(self):
         """
         检查 PostgreSQL server 是否在运行
@@ -110,8 +109,6 @@ class PgDbManager:
             print(out.decode('utf-8'))
             print(err.decode('utf-8'))
 
-
-
     @timeit
     def set_all_nan_to_null(self):
         '''
@@ -138,7 +135,8 @@ class PgDbManager:
             if table_name not in excluded:
                 update_stmt = table.update()
                 for column in table.columns:
-                    update_stmt = update_stmt.values({column: case((cast(column, String) == "NaN", None), else_=column)})
+                    update_stmt = update_stmt.values(
+                        {column: case((cast(column, String) == "NaN", None), else_=column)})
                 # 在数据库中执行更新语句
                 with self.alch_engine.begin() as connection:
                     connection.execute(update_stmt)
@@ -147,7 +145,8 @@ class PgDbManager:
                 update_stmt = table.update()
                 for column in table.columns:
                     if column.name not in excluded_columns:
-                        update_stmt = update_stmt.values({column: case((cast(column, String) == "NaN", None), else_=column)})
+                        update_stmt = update_stmt.values(
+                            {column: case((cast(column, String) == "NaN", None), else_=column)})
                 # 在数据库中执行更新语句
                 with self.alch_engine.begin() as connection:
                     connection.execute(update_stmt)
@@ -199,7 +198,8 @@ class PgDbManager:
         finally:
             session.close()
 
-    def select_existing_dates_from_long_table(self, table_name, metric_name=None, product_name=None, field=None, return_df=False):
+    def select_existing_dates_from_long_table(self, table_name, metric_name=None, product_name=None, field=None,
+                                              return_df=False):
         """
         从数据库中获取现有的日期列表。
 
@@ -252,16 +252,16 @@ class PgDbManager:
             list: 连接表中的日期列表
         """
         # Get the joined table as a DataFrame
-        df = self.get_joined_table_as_dataframe(target_table_name, target_join_column, join_table_name,
-                                                join_column, filter_condition)
+        df = self.read_joined_table_as_dataframe(target_table_name, target_join_column, join_table_name,
+                                                 join_column, filter_condition)
         if selected_column not in df.columns:
             raise ValueError("The selected column does not exist in either join_table or target_table.")
 
         # Return the selected column values
         return sorted(df[selected_column].dropna().drop_duplicates().tolist())
 
-    def get_joined_table_as_dataframe(self, target_table_name: str, target_join_column: str, join_table_name: str,
-                                      join_column: str, filter_condition: str = ""):
+    def read_joined_table_as_dataframe(self, target_table_name: str, target_join_column: str, join_table_name: str,
+                                       join_column: str, filter_condition: str = ""):
         """
         Retrieves the joined table data as a DataFrame.
 
@@ -286,6 +286,41 @@ class PgDbManager:
         result_df = pd.read_sql_query(text(query), self.alch_conn)
 
         return result_df
+
+    def read_table_from_schema(self, schema_name, table_name):
+        # 构造SQL查询语句
+        query = f"SELECT * FROM {schema_name}.{table_name}"
+
+        # 执行查询并读取数据到DataFrame
+        df = pd.read_sql_query(text(query), self.alch_conn)
+
+        # 返回DataFrame
+        return df
+
+    # def get_MA_df_upload(self, joined_df, MA_period: int):
+    #     df_long = joined_df[["date", 'chinese_name', 'field', "value"]]
+    #     unique_field = df_long['field'].unique()
+    #     if len(unique_field) > 1:
+    #         raise ValueError("列'field'的值不唯一，无法正确进行长转宽")
+    #
+    #     df_wide = df_long.pivot(index='date', columns='chinese_name', values='value')
+    #     # 对每一列求10日移动平均
+    #     df_ma = df_wide.rolling(window=MA_period).mean()
+    #     df_ma = df_ma.dropna(how='all').reset_index()
+    #     df_upload = df_ma.melt(id_vars=['date'], var_name='chinese_name',
+    #                            value_name='value').sort_values(by="date", ascending=False)
+    #     df_upload['field'] = f'{unique_field[0]}_MA{MA_period}'
+    #     return df_upload
+
+    def get_MA_df_long(self, original_long_df, field_col_name, value_col_name, MA_period: int):
+        df_long = original_long_df.copy()
+        df_long = df_long.groupby(field_col_name).rolling(MA_period, on='date').mean()
+        df_long = df_long.reset_index().drop('level_1', axis=1).sort_values('date', ascending=False).dropna()
+        df_long = df_long.rename(columns={value_col_name: f'{value_col_name}_MA{MA_period}'})
+        # 把original_long_df中的value_col_name列对应地填回到df_long
+        df_long = df_long.merge(original_long_df[['date', field_col_name, value_col_name]], on=['date', field_col_name],
+                                how='left')
+        return df_long
 
     def get_missing_dates(self, all_dates, existing_dates):
         """
@@ -339,7 +374,7 @@ class PgDbManager:
             case _:
                 raise Exception(f'seq_name={seq_name} not supported.')
         result = self.alch_conn.execute(query_max)
-        max_id = result.scalar()+1 or 1  # 如果表为空，则使用1作为默认值
+        max_id = result.scalar() + 1 or 1  # 如果表为空，则使用1作为默认值
 
         # 调整序列值
         query_setval = text(f"SELECT setval('{seq_name}', {max_id}, false)")

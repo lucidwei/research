@@ -571,6 +571,23 @@ class PgDbUpdaterBase(PgDbManager):
                                    })
             self.alch_conn.commit()
             internal_id = None
+        elif row['product_type'] == 'index':
+            query = text("""
+                        INSERT INTO product_static_info (code, chinese_name, source, type_identifier, product_type)
+                        VALUES (:code, :chinese_name, :source, :type_identifier, :product_type)
+                        ON CONFLICT (chinese_name, product_type) DO NOTHING
+                        RETURNING internal_id;
+                        """)
+            self.alch_conn.execute(query,
+                                   {
+                                       'code': row['code'],
+                                       'chinese_name': row['chinese_name'],
+                                       'source': row['source'],
+                                       'product_type': row['product_type'],
+                                       'type_identifier': row['type_identifier'],
+                                   })
+            self.alch_conn.commit()
+            internal_id = None
         else:
             raise Exception(f"row['product_type'] = {row['product_type']} not supported.")
         return internal_id

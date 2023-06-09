@@ -5,6 +5,8 @@
 # Software: PyCharm
 from base_config import BaseConfig
 from prj_equity_liquidity.db_updater import DatabaseUpdater
+from prj_equity_liquidity.plotter import Plotter
 
 base_config = BaseConfig('equity_liquidity')
 data_updater = DatabaseUpdater(base_config)
+plotter = Plotter(base_config)

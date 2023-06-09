@@ -4,13 +4,13 @@
 # FileName: db_updater.py
 # Software: PyCharm
 import os
-
 import numpy as np
 import pandas as pd
 from dateutil.relativedelta import relativedelta
 from base_config import BaseConfig
 from pgdb_updater_base import PgDbUpdaterBase
 from WindPy import w
+from sqlalchemy import text
 
 
 class DatabaseUpdater(PgDbUpdaterBase):
@@ -19,10 +19,12 @@ class DatabaseUpdater(PgDbUpdaterBase):
         # self.update_all_funds_info()
         # self.logic_reopened_dk_funds()
         # self.logic_reopened_cyq_funds()
-        # self.logic_etf_lof_funds()
-        self.logic_margin_trade_by_industry()
-        self.logic_north_inflow_by_industry()
-        self.logic_major_holder()
+        self.logic_etf_lof_funds()
+        # self.logic_margin_trade_by_industry()
+        # self.logic_north_inflow_by_industry()
+        # self.logic_major_holder()
+        # self.logic_price_valuation()
+        # self.update_MA_processed_data(MA_period=10)
 
     def logic_margin_trade_by_industry(self):
         """
@@ -45,7 +47,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
 
     def _check_data_table(self, table_name, type_identifier, **kwargs):
         # 获取需要更新的日期区间
-        if type_identifier == 'major_holder':
+        if type_identifier == 'major_holder' or type_identifier == 'price_valuation':
             existing_dates = self.select_column_from_joined_table(
                 target_table_name='product_static_info',
                 target_join_column='internal_id',
@@ -102,6 +104,14 @@ class DatabaseUpdater(PgDbUpdaterBase):
                                        f"datetype=firstannouncementdate;type=all;field=windcode", usedf=True)[1]
                 required_value = downloaded_df['windcode'].drop_duplicates().tolist()
 
+            case 'price_valuation':
+                # 获取中信一级行业的指数代码和名称
+                print(f'Wind downloading sectorconstituent for {self.tradedays_str[-2]}')
+                downloaded_df = w.wset("sectorconstituent",
+                                       f"date={self.tradedays_str[-2]};sectorid=a39901012e000000", usedf=True)[1]
+                self._price_valuation_required_codes_df = downloaded_df
+                required_value = downloaded_df['wind_code'].drop_duplicates().tolist()
+
             case _:
                 raise Exception(f'type_identifier {type_identifier} not supported')
 
@@ -117,7 +127,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
         if len(missing_dates) == 0:
             return
 
-        for date in missing_dates[:-1]: # 不更新当天数据，以防下载到未更新的昨天数据
+        for date in missing_dates[:-1]:  # 不更新当天数据，以防下载到未更新的昨天数据
             print(f'Wind downloading tradingstatisticsbyindustry for {date}')
             downloaded_df = w.wset("tradingstatisticsbyindustry",
                                    f"exchange=citic;startdate={date};enddate={date};"
@@ -148,7 +158,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
             df_upload.to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
 
     def _upload_wide_data_industry_margin(self):
-        joined_df = self.get_joined_table_as_dataframe(
+        joined_df = self.read_joined_table_as_dataframe(
             target_table_name='metric_static_info',
             target_join_column='internal_id',
             join_table_name='markets_daily_long',
@@ -338,6 +348,155 @@ class DatabaseUpdater(PgDbUpdaterBase):
             df_upload_summed = df_upload.groupby(['date', 'product_name', 'field'], as_index=False).sum().dropna()
             df_upload_summed.to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
 
+    def logic_price_valuation(self):
+        """
+        更新行业和全A的行情与估值，用来与资金流向作对比。
+        """
+        # 检查或更新meta_table
+        need_update_meta_table = self._check_meta_table('product_static_info', 'code',
+                                                        type_identifier='price_valuation')
+        missing_dates = self._check_data_table(table_name='markets_daily_long',
+                                               type_identifier='price_valuation')
+        if need_update_meta_table:
+            # 检查或更新data_table
+            self._upload_missing_meta_price_valuation()
+        if missing_dates:
+            self._upload_missing_data_price_valuation(missing_dates)
+
+    def _upload_missing_meta_price_valuation(self):
+        required_codes_df = self._price_valuation_required_codes_df
+        if required_codes_df.empty:
+            raise Exception(
+                f"Missing data for self._price_valuation_required_codes, no data downloaded for _upload_missing_meta_price_valuation")
+
+        downloaded_df = required_codes_df.rename(
+            columns={'wind_code': 'code',
+                     'sec_name': 'chinese_name',
+                     })
+        downloaded_df = downloaded_df.drop("date", axis=1)
+
+        # 加入万德全A
+        new_row = {'code': '881001.WI', 'chinese_name': '万德全A'}
+        downloaded_df = downloaded_df.append(new_row, ignore_index=True)
+
+        downloaded_df['chinese_name'] = downloaded_df['chinese_name'].str.replace('\(中信\)', '')
+        downloaded_df['source'] = 'wind'
+        downloaded_df['type_identifier'] = 'price_valuation'
+        downloaded_df['product_type'] = 'index'
+        self.adjust_seq_val(seq_name='product_static_info_internal_id_seq')
+        for _, row in downloaded_df.iterrows():
+            self.insert_product_static_info(row)
+
+    def _upload_missing_data_price_valuation(self, missing_dates):
+        industry_codes = self.select_existing_values_in_target_column(
+            'product_static_info',
+            'code',
+            ('type_identifier', 'price_valuation')
+        )
+
+        for date in missing_dates[-50:-1]:
+            for code in industry_codes:
+                print(f'Downloading and uploading close,val_pe_nonnegative,dividendyield2,mkt_cap_ashare for {code} {date}')
+                df = w.wsd(code, "close,val_pe_nonnegative,dividendyield2,mkt_cap_ashare", date,
+                           date, "unit=1", usedf=True)[1]
+                if df.empty:
+                    print(f"Missing data for {date} {code}, no data downloaded for _upload_missing_data_price_valuation")
+                    continue
+                df_upload = df.rename(
+                    columns={'WindCodes': 'code',
+                             'CLOSE': '收盘价',
+                             'VAL_PE_NONNEGATIVE': '市盈率PE(TTM,剔除负值)',
+                             'DIVIDENDYIELD2': '股息率(TTM)',
+                             'MKT_CAP_ASHARE': 'A股市值(不含限售股)',
+                             })
+                df_upload['date'] = date
+                df_upload['product_name'] = code
+                df_upload = df_upload.melt(id_vars=['date', 'product_name'], var_name='field', value_name='value').dropna()
+
+                df_upload.to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
+
+    def update_MA_processed_data(self, MA_period):
+        aggregate_inflow_ts = self.get_metabase_results('aggregate_inflow')
+        df_ma = aggregate_inflow_ts.copy()
+        df_ma[f'四项流入之和_MA{MA_period}'] = aggregate_inflow_ts.rolling(window=MA_period).mean()
+        # df_ma['date'] = aggregate_inflow_ts['date']
+        # df_ma = df_ma.dropna()
+        # MA_aggregate_inflow_long = df_ma.rename(columns={'四项流入之和': f'四项流入之和_MA{MA_period}'})
+        MA_aggregate_inflow_long = df_ma.melt(id_vars=['date'], value_vars=[f'四项流入之和_MA{MA_period}', '四项流入之和'],
+                                              var_name='var_name', value_name=f'value').dropna()
+
+        margin_inflow_long = self.get_metabase_results('margin_inflow')
+        north_inflow_long = self.get_metabase_results('north_inflow')
+        MA_margin_inflow_long = self.get_MA_df_long(margin_inflow_long, '中信一级行业', '两融净买入', MA_period)
+        MA_north_inflow_long = self.get_MA_df_long(north_inflow_long, '中信一级行业', '北向净买入', MA_period)
+
+        MA_aggregate_inflow_long.to_sql(f'ma{MA_period}_aggregate_inflow', con=self.alch_engine, schema='processed_data', if_exists='replace',
+                         index=False)
+        MA_margin_inflow_long.to_sql(f'ma{MA_period}_margin_inflow', con=self.alch_engine, schema='processed_data', if_exists='replace',
+                         index=False)
+        MA_north_inflow_long.to_sql(f'ma{MA_period}_north_inflow', con=self.alch_engine, schema='processed_data', if_exists='replace',
+                         index=False)
+
+        # # 收盘价 市盈率 股息率 市值不用求MA，只需对边际资金求MA
+        # joined_df = self.read_joined_table_as_dataframe(
+        #     target_table_name='product_static_info',
+        #     target_join_column='internal_id',
+        #     join_table_name='markets_daily_long',
+        #     join_column='product_static_info_id',
+        #     filter_condition=f"product_static_info.type_identifier = 'price_valuation' AND field='收盘价'"
+        # )
+        # df_upload = self.get_MA_df_upload(joined_df, MA_period=10)
+        # df_upload.to_sql('price_valuation_MA10', con=self.alch_engine, schema='processed_data', if_exists='replace', index=False)
+
+    def get_metabase_results(self, task):
+        match task:
+            case 'aggregate_inflow':
+                metabase_query = text(
+                    """
+                    SELECT "source"."date" AS "date", SUM("source"."四项流入之和") AS "sum"
+                    FROM (SELECT "source"."date" AS "date", "source"."中信一级行业" AS "中信一级行业", "source"."sum" AS "sum", (COALESCE("Question 153"."sum", 0) + COALESCE("source"."sum", 0) + COALESCE("Question 170"."sum", 0)) - COALESCE("Question 167"."拟净减持金额", 0) AS "四项流入之和", "Question 153"."date" AS "Question 153__date", "Question 153"."中信一级行业" AS "Question 153__中信一级行业", "Question 167"."date" AS "Question 167__date", "Question 167"."Product Static Info__stk_industry_cs" AS "Question 167__Product Static Info__stk_industry_cs", "Question 170"."date" AS "Question 170__date", "Question 170"."Product Static Info_2__stk_industry_cs" AS "Question 170__Product Static Info_2__stk_industry_cs", "Question 167"."拟净减持金额" AS "Question 167__拟净减持金额", "Question 153"."sum" AS "Question 153__sum", "Question 170"."sum" AS "Question 170__sum" FROM (SELECT "source"."date" AS "date", "source"."中信一级行业" AS "中信一级行业", SUM("source"."value") AS "sum" FROM (SELECT "source"."date" AS "date", "source"."field" AS "field", "source"."value" AS "value", "source"."中信一级行业" AS "中信一级行业" FROM (SELECT "public"."markets_daily_long"."date" AS "date", "public"."markets_daily_long"."product_name" AS "product_name", "public"."markets_daily_long"."field" AS "field", "public"."markets_daily_long"."value" AS "value", "public"."markets_daily_long"."metric_static_info_id" AS "metric_static_info_id", substring("public"."markets_daily_long"."product_name" FROM 'CS(.*)') AS "中信一级行业", "Metric Static Info_2"."type_identifier" AS "Metric Static Info_2__type_identifier", "Metric Static Info_2"."internal_id" AS "Metric Static Info_2__internal_id" FROM "public"."markets_daily_long"
+                    LEFT JOIN "public"."metric_static_info" AS "Metric Static Info_2" ON "public"."markets_daily_long"."metric_static_info_id" = "Metric Static Info_2"."internal_id"
+                    WHERE "Metric Static Info_2"."type_identifier" = 'north_inflow') AS "source") AS "source" WHERE "source"."field" = '净买入'
+                    GROUP BY "source"."date", "source"."中信一级行业"
+                    ORDER BY "source"."date" ASC, "source"."中信一级行业" ASC) AS "source" LEFT JOIN (SELECT "source"."date" AS "date", "source"."中信一级行业" AS "中信一级行业", SUM("source"."value") AS "sum" FROM (SELECT "source"."date" AS "date", "source"."field" AS "field", "source"."value" AS "value", "source"."中信一级行业" AS "中信一级行业" FROM (SELECT "source"."date" AS "date", "source"."product_name" AS "product_name", "source"."field" AS "field", "source"."value" AS "value", substring("source"."product_name" FROM 'CS(.*)') AS "中信一级行业" FROM (SELECT "public"."markets_daily_long"."date" AS "date", "public"."markets_daily_long"."product_name" AS "product_name", "public"."markets_daily_long"."field" AS "field", "public"."markets_daily_long"."value" AS "value" FROM "public"."markets_daily_long" LEFT JOIN "public"."metric_static_info" AS "Metric Static Info" ON "public"."markets_daily_long"."metric_static_info_id" = "Metric Static Info"."internal_id" WHERE "Metric Static Info"."type_identifier" = 'margin_by_industry') AS "source") AS "source") AS "source" WHERE "source"."field" = '两融净买入额' GROUP BY "source"."date", "source"."中信一级行业" ORDER BY "source"."date" ASC, "source"."中信一级行业" ASC) AS "Question 153" ON ("source"."date" = "Question 153"."date")
+                       AND ("source"."中信一级行业" = "Question 153"."中信一级行业") LEFT JOIN (SELECT "source"."date" AS "date", "source"."Product Static Info__stk_industry_cs" AS "Product Static Info__stk_industry_cs", MAX(COALESCE(CASE WHEN "source"."field" = '拟减持金额' THEN "source"."value" END, 0)) - MAX(COALESCE(CASE WHEN "source"."field" = '拟增持金额' THEN "source"."value" END, 0)) AS "拟净减持金额" FROM (SELECT "public"."markets_daily_long"."date" AS "date", "public"."markets_daily_long"."product_name" AS "product_name", "public"."markets_daily_long"."field" AS "field", "public"."markets_daily_long"."value" AS "value", "public"."markets_daily_long"."metric_static_info_id" AS "metric_static_info_id", "public"."markets_daily_long"."product_static_info_id" AS "product_static_info_id", "public"."markets_daily_long"."date_value" AS "date_value", "Product Static Info"."internal_id" AS "Product Static Info__internal_id", "Product Static Info"."code" AS "Product Static Info__code", "Product Static Info"."chinese_name" AS "Product Static Info__chinese_name", "Product Static Info"."english_name" AS "Product Static Info__english_name", "Product Static Info"."source" AS "Product Static Info__source", "Product Static Info"."type_identifier" AS "Product Static Info__type_identifier", "Product Static Info"."buystartdate" AS "Product Static Info__buystartdate", "Product Static Info"."fundfounddate" AS "Product Static Info__fundfounddate", "Product Static Info"."issueshare" AS "Product Static Info__issueshare", "Product Static Info"."fund_fullname" AS "Product Static Info__fund_fullname", "Product Static Info"."stk_industry_cs" AS "Product Static Info__stk_industry_cs", "Product Static Info"."product_type" AS "Product Static Info__product_type", "Product Static Info"."etf_type" AS "Product Static Info__etf_type" FROM "public"."markets_daily_long" LEFT JOIN "public"."product_static_info" AS "Product Static Info" ON "public"."markets_daily_long"."product_static_info_id" = "Product Static Info"."internal_id" WHERE "Product Static Info"."type_identifier" = 'major_holder') AS "source" WHERE ("source"."Product Static Info__type_identifier" = 'major_holder') AND "source"."date" BETWEEN timestamp with time zone '2022-07-01 00:00:00.000Z' AND timestamp with time zone '2023-05-30 00:00:00.000Z' GROUP BY "source"."date", "source"."Product Static Info__stk_industry_cs" ORDER BY "source"."date" ASC, "source"."Product Static Info__stk_industry_cs" ASC) AS "Question 167" ON ("source"."date" = "Question 167"."date") AND ("source"."中信一级行业" = "Question 167"."Product Static Info__stk_industry_cs") LEFT JOIN (SELECT "source"."date" AS "date", "source"."Product Static Info_2__stk_industry_cs" AS "Product Static Info_2__stk_industry_cs", SUM("source"."value") AS "sum" FROM (SELECT "public"."markets_daily_long"."date" AS "date", "public"."markets_daily_long"."product_name" AS "product_name", "public"."markets_daily_long"."field" AS "field", "public"."markets_daily_long"."value" AS "value", "Product Static Info_2"."code" AS "Product Static Info_2__code", "Product Static Info_2"."fund_fullname" AS "Product Static Info_2__fund_fullname", "Product Static Info_2"."stk_industry_cs" AS "Product Static Info_2__stk_industry_cs" FROM "public"."markets_daily_long" LEFT JOIN "public"."product_static_info" AS "Product Static Info_2" ON "public"."markets_daily_long"."product_static_info_id" = "Product Static Info_2"."internal_id" WHERE ("public"."markets_daily_long"."field" = '净流入额') AND ("Product Static Info_2"."product_type" = 'fund')) AS "source" GROUP BY "source"."date", "source"."Product Static Info_2__stk_industry_cs" ORDER BY "source"."date" ASC, "source"."Product Static Info_2__stk_industry_cs" ASC) AS "Question 170" ON ("source"."date" = "Question 170"."date") AND ("source"."中信一级行业" = "Question 170"."Product Static Info_2__stk_industry_cs")) AS "source" GROUP BY "source"."date" ORDER BY "source"."date" ASC
+                    """
+                )
+                aggregate_inflows = self.alch_conn.execute(metabase_query)
+                df_result = pd.DataFrame(aggregate_inflows, columns=['date', '四项流入之和'])
+                return df_result
+
+            case 'margin_inflow':
+                metabase_query = text(
+                    """
+                    SELECT "source"."date" AS "date", "source"."中信一级行业" AS "中信一级行业", SUM("source"."value") AS "sum"
+                    FROM (SELECT "source"."date" AS "date", "source"."field" AS "field", "source"."value" AS "value", "source"."中信一级行业" AS "中信一级行业" FROM (SELECT "source"."date" AS "date", "source"."product_name" AS "product_name", "source"."field" AS "field", "source"."value" AS "value", substring("source"."product_name" FROM 'CS(.*)') AS "中信一级行业" FROM (SELECT "public"."markets_daily_long"."date" AS "date", "public"."markets_daily_long"."product_name" AS "product_name", "public"."markets_daily_long"."field" AS "field", "public"."markets_daily_long"."value" AS "value" FROM "public"."markets_daily_long"
+                    LEFT JOIN "public"."metric_static_info" AS "Metric Static Info" ON "public"."markets_daily_long"."metric_static_info_id" = "Metric Static Info"."internal_id"
+                    WHERE "Metric Static Info"."type_identifier" = 'margin_by_industry') AS "source") AS "source") AS "source" WHERE "source"."field" = '两融净买入额'
+                    GROUP BY "source"."date", "source"."中信一级行业"
+                    ORDER BY "source"."date" ASC, "source"."中信一级行业" ASC
+                    """
+                )
+                margin_inflow = self.alch_conn.execute(metabase_query)
+                df_result = pd.DataFrame(margin_inflow, columns=['date', '中信一级行业', '两融净买入'])
+                return df_result
+
+            case 'north_inflow':
+                metabase_query = text(
+                    """
+                    SELECT "source"."date" AS "date", "source"."中信一级行业" AS "中信一级行业", SUM("source"."value") AS "sum"
+                    FROM (SELECT "source"."date" AS "date", "source"."field" AS "field", "source"."value" AS "value", "source"."中信一级行业" AS "中信一级行业" FROM (SELECT "public"."markets_daily_long"."date" AS "date", "public"."markets_daily_long"."product_name" AS "product_name", "public"."markets_daily_long"."field" AS "field", "public"."markets_daily_long"."value" AS "value", "public"."markets_daily_long"."metric_static_info_id" AS "metric_static_info_id", substring("public"."markets_daily_long"."product_name" FROM 'CS(.*)') AS "中信一级行业", "Metric Static Info"."type_identifier" AS "Metric Static Info__type_identifier", "Metric Static Info"."internal_id" AS "Metric Static Info__internal_id" FROM "public"."markets_daily_long"
+                    LEFT JOIN "public"."metric_static_info" AS "Metric Static Info" ON "public"."markets_daily_long"."metric_static_info_id" = "Metric Static Info"."internal_id"
+                    WHERE "Metric Static Info"."type_identifier" = 'north_inflow') AS "source") AS "source" WHERE "source"."field" = '净买入'
+                    GROUP BY "source"."date", "source"."中信一级行业"
+                    ORDER BY "source"."date" ASC, "source"."中信一级行业" ASC
+                    """
+                )
+                north_inflow = self.alch_conn.execute(metabase_query)
+                df_result = pd.DataFrame(north_inflow, columns=['date', '中信一级行业', '北向净买入'])
+                return df_result
+
+
     def logic_reopened_dk_funds(self):
         """
         1. 获取full_name中带有'定期开放'、不包含债的全部基金
@@ -441,14 +600,18 @@ class DatabaseUpdater(PgDbUpdaterBase):
         if not today_updated:
             for _, row in etf_funds_df.iterrows():
                 # 这个净流入额的变动日期和基金份额-本分级份额变动日期一样，应该就是份额变动乘以净值
-                print(f"Downloading mf_netinflow for {row['code']} b/t {self.tradedays_str[-100]} and {self.tradedays_str[-1]}")
+                print(
+                    f"Downloading mf_netinflow for {row['code']} b/t {self.tradedays_str[-100]} and {self.tradedays_str[-1]}")
                 downloaded = w.wsd(row['code'],
                                    "mf_netinflow",
                                    self.tradedays_str[-100], self.tradedays_str[-1], "unit=1", usedf=True)[1]
                 downloaded_filtered = downloaded[downloaded['MF_NETINFLOW'] != 0]
-                downloaded_filtered = downloaded_filtered.reset_index().rename(columns={'index': 'date', 'MF_NETINFLOW': '净流入额'})
+                downloaded_filtered = downloaded_filtered.reset_index().rename(
+                    columns={'index': 'date', 'MF_NETINFLOW': '净流入额'})
                 # 去除已经存在的日期
-                existing_dates = self.select_existing_dates_from_long_table('markets_daily_long', product_name=row['chinese_name'], field='净流入额')
+                existing_dates = self.select_existing_dates_from_long_table('markets_daily_long',
+                                                                            product_name=row['chinese_name'],
+                                                                            field='净流入额')
                 downloaded_filtered = downloaded_filtered[~downloaded_filtered['date'].isin(existing_dates)]
                 downloaded_filtered['product_name'] = row['chinese_name']
                 upload_value = downloaded_filtered[['product_name', 'date', '净流入额']].melt(
@@ -458,7 +621,8 @@ class DatabaseUpdater(PgDbUpdaterBase):
 
     def update_specific_funds_meta(self, code: str):
         info = w.wsd(code,
-                     "fund_fullname,fund_info_name,fund_fullnameen", #,fund_offnetworkbuystartdate,fund_etflisteddate",
+                     "fund_fullname,fund_info_name,fund_fullnameen",
+                     # ,fund_offnetworkbuystartdate,fund_etflisteddate",
                      self.all_dates_str[-1], self.all_dates_str[-1], "unit=1", usedf=True)[1]
         row = {
             'code': code,
