@@ -16,7 +16,7 @@ from sqlalchemy import text
 class DatabaseUpdater(PgDbUpdaterBase):
     def __init__(self, base_config: BaseConfig):
         super().__init__(base_config)
-        # self.update_all_funds_info()
+        self.update_all_funds_info()
         # self.logic_reopened_dk_funds()
         # self.logic_reopened_cyq_funds()
         self.logic_etf_lof_funds()
@@ -46,27 +46,37 @@ class DatabaseUpdater(PgDbUpdaterBase):
         # self._upload_wide_data_industry_margin()
 
     def _check_data_table(self, table_name, type_identifier, **kwargs):
+        # Retrieve the optional filter condition
+        additional_filter = kwargs.get('additional_filter')
+
         # 获取需要更新的日期区间
-        if type_identifier == 'major_holder' or type_identifier == 'price_valuation':
-            existing_dates = self.select_column_from_joined_table(
-                target_table_name='product_static_info',
-                target_join_column='internal_id',
-                join_table_name=table_name,
-                join_column='product_static_info_id',
-                selected_column=f'date',
-                filter_condition=f"product_static_info.type_identifier = '{type_identifier}'"
-            )
-        elif type_identifier == 'north_inflow' or type_identifier == 'margin_by_industry':
-            existing_dates = self.select_column_from_joined_table(
-                target_table_name='metric_static_info',
-                target_join_column='internal_id',
-                join_table_name=table_name,
-                join_column='metric_static_info_id',
-                selected_column=f'date',
-                filter_condition=f"metric_static_info.type_identifier = '{type_identifier}'"
-            )
-        else:
-            raise Exception(f'type_identifier: {type_identifier} not supported.')
+        match type_identifier:
+            case 'major_holder' | 'price_valuation' | 'fund':
+                filter_condition = f"product_static_info.type_identifier = '{type_identifier}'"
+                if additional_filter:
+                    filter_condition += f" AND {additional_filter}"
+                existing_dates = self.select_column_from_joined_table(
+                    target_table_name='product_static_info',
+                    target_join_column='internal_id',
+                    join_table_name=table_name,
+                    join_column='product_static_info_id',
+                    selected_column=f'date',
+                    filter_condition=filter_condition
+                )
+            case 'north_inflow' | 'margin_by_industry':
+                filter_condition = f"metric_static_info.type_identifier = '{type_identifier}'"
+                if additional_filter:
+                    filter_condition += f" AND {additional_filter}"
+                existing_dates = self.select_column_from_joined_table(
+                    target_table_name='metric_static_info',
+                    target_join_column='internal_id',
+                    join_table_name=table_name,
+                    join_column='metric_static_info_id',
+                    selected_column=f'date',
+                    filter_condition=filter_condition
+                )
+            case _:
+                raise Exception(f'type_identifier: {type_identifier} not supported.')
 
         if len(existing_dates) == 0:
             missing_dates = self.tradedays
@@ -576,13 +586,13 @@ class DatabaseUpdater(PgDbUpdaterBase):
         # 筛选出 df_excel 中存在但 etf_funds_df 中不存在的代码
         missing_codes = df_excel['代码'][~df_excel['代码'].isin(etf_funds_df['code'])]
         for code in missing_codes:
-            self.update_specific_funds_meta(code)
+            self._update_specific_funds_meta(code)
 
         # update ETF所属行业和ETF分类(excel文件里全部为行业ETF)
         df_excel = df_excel.rename(columns={'代码': 'code', '中信一级行业': 'stk_industry_cs'})
         df_excel['etf_type'] = '行业ETF'
         for _, row in df_excel.iterrows():
-            self.update_product_static_info(row, task='etf_industry_and_type')
+            self.upload_product_static_info(row, task='etf_industry_and_type')
 
         # ETF分成3类：行业ETF和主题ETF和指数ETF
         # 默认分类为指数ETF
@@ -596,30 +606,44 @@ class DatabaseUpdater(PgDbUpdaterBase):
         etf_funds_df = etf_funds_df.sort_values(by='etf_type')
 
         # 更新markets_daily_long '净流入额'时间序列
-        today_updated = self.is_markets_daily_long_updated_today(field='净流入额', product_name_key_word='ETF')
-        if not today_updated:
-            for _, row in etf_funds_df.iterrows():
-                # 这个净流入额的变动日期和基金份额-本分级份额变动日期一样，应该就是份额变动乘以净值
-                print(
-                    f"Downloading mf_netinflow for {row['code']} b/t {self.tradedays_str[-100]} and {self.tradedays_str[-1]}")
-                downloaded = w.wsd(row['code'],
-                                   "mf_netinflow",
-                                   self.tradedays_str[-100], self.tradedays_str[-1], "unit=1", usedf=True)[1]
-                downloaded_filtered = downloaded[downloaded['MF_NETINFLOW'] != 0]
-                downloaded_filtered = downloaded_filtered.reset_index().rename(
-                    columns={'index': 'date', 'MF_NETINFLOW': '净流入额'})
-                # 去除已经存在的日期
-                existing_dates = self.select_existing_dates_from_long_table('markets_daily_long',
-                                                                            product_name=row['chinese_name'],
-                                                                            field='净流入额')
-                downloaded_filtered = downloaded_filtered[~downloaded_filtered['date'].isin(existing_dates)]
-                downloaded_filtered['product_name'] = row['chinese_name']
-                upload_value = downloaded_filtered[['product_name', 'date', '净流入额']].melt(
-                    id_vars=['product_name', 'date'], var_name='field', value_name='value')
+        for _, row in etf_funds_df.iterrows():
+            self._update_etf_inflow(row)
 
-                upload_value.dropna().to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
+    def _update_etf_inflow(self, etf_info_row):
+        missing_dates = self._check_data_table('markets_daily_long', 'fund', additional_filter=f"code='{etf_info_row['code']}'")
+        fund_found_date = self.select_column_from_joined_table(
+            filter_condition=f"code='{etf_info_row['code']}'",
+            target_table_name='product_static_info',
+            target_join_column='internal_id',
+            join_table_name='markets_daily_long',
+            join_column='product_static_info_id',
+            selected_column=f'fundfounddate',
+        )
+        try:
+            missing_start_date = max(missing_dates[0], fund_found_date[0])
+        except:
+            missing_start_date = missing_dates[0]
 
-    def update_specific_funds_meta(self, code: str):
+        # 这个净流入额的变动日期和基金份额-本分级份额变动日期一样，应该就是份额变动乘以净值
+        print(f"_update_etf_inflow Downloading mf_netinflow for {etf_info_row['code']} "
+              f"b/t {missing_start_date} and {missing_dates[-2]}")
+        downloaded = w.wsd(etf_info_row['code'], "mf_netinflow",
+                           missing_start_date, missing_dates[-2], "unit=1", usedf=True)[1]
+        downloaded_filtered = downloaded[downloaded['MF_NETINFLOW'] != 0]
+        downloaded_filtered = downloaded_filtered.reset_index().rename(
+            columns={'index': 'date', 'MF_NETINFLOW': '净流入额'})
+        # 去除已经存在的日期
+        existing_dates = self.select_existing_dates_from_long_table('markets_daily_long',
+                                                                    product_name=etf_info_row['chinese_name'],
+                                                                    field='净流入额')
+        downloaded_filtered = downloaded_filtered[~downloaded_filtered['date'].isin(existing_dates)]
+        downloaded_filtered['product_name'] = etf_info_row['chinese_name']
+        upload_value = downloaded_filtered[['product_name', 'date', '净流入额']].melt(
+            id_vars=['product_name', 'date'], var_name='field', value_name='value')
+
+        upload_value.dropna().to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
+
+    def _update_specific_funds_meta(self, code: str):
         info = w.wsd(code,
                      "fund_fullname,fund_info_name,fund_fullnameen",
                      # ,fund_offnetworkbuystartdate,fund_etflisteddate",
@@ -637,7 +661,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
         }
         self.insert_product_static_info(row)
 
-    def update_funds_name(self):
+    def _update_funds_name(self):
         code_set = self.select_existing_values_in_target_column(
             'product_static_info',
             'code',
@@ -654,7 +678,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
             downloaded = downloaded.reset_index().rename(columns={'index': 'code', 'FUND_FULLNAME': 'fund_fullname',
                                                                   'FUND_FULLNAMEEN': 'english_name'})
             print(f'Updating {code} name')
-            self.update_product_static_info(downloaded.squeeze(), task='fund_name')
+            self.upload_product_static_info(downloaded.squeeze(), task='fund_name')
 
     def update_all_funds_info(self):
         """
@@ -688,10 +712,10 @@ class DatabaseUpdater(PgDbUpdaterBase):
         buystartdates_for_missing_fundfounddates = self.select_existing_values_in_target_column('product_static_info',
                                                                                                 'buystartdate',
                                                                                                 'fundfounddate is NULL')
-        # 筛选出3个月内的日期
+        # 筛选出2个月内的日期
         recent_buystartdates_for_missing_fundfounddates = [
             date for date in buystartdates_for_missing_fundfounddates if
-            self.all_dates[-1] - relativedelta(months=3) <= date <= self.all_dates[-1]]
+            self.all_dates[-1] - relativedelta(months=2) <= date <= self.all_dates[-1]]
 
         missing_dates = sorted(missing_buystartdates + recent_buystartdates_for_missing_fundfounddates)
         if not missing_dates:
@@ -751,4 +775,4 @@ class DatabaseUpdater(PgDbUpdaterBase):
                 ~markets_daily_long_upload_df['product_name'].isin(existing_products)]
             filtered_df.to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
 
-        self.update_funds_name()
+        self._update_funds_name()

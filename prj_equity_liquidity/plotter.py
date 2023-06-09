@@ -25,9 +25,9 @@ class Plotter(PgDbUpdaterBase):
         # self.plot_inflow_irfs(self.daily_return_ts, self.margin_inflow_ts, '两融各行业逆irf', reverse=True)
         # self.plot_inflow_irfs(self.daily_return_ts, self.north_inflow_ts, '北向各行业逆irf', reverse=True)
         # self.plot_inflow_irfs(self.daily_return_ts, self.margin_inflow_ts, '两融各行业irf', reverse=False)
-        # self.plot_inflow_irfs(self.daily_return_ts, self.north_inflow_ts, '北向各行业irf', reverse=False)
-        self.plot_inflow_irfs(self.daily_return_ts, self.margin_inflow_extreme_ts, '极端两融各行业irf', reverse=False)
-        self.plot_inflow_irfs(self.daily_return_ts, self.north_inflow_extreme_ts, '极端北向各行业irf', reverse=False)
+        self.plot_inflow_irfs(self.daily_return_ts, self.north_inflow_ts, '北向各行业irf', reverse=False)
+        # self.plot_inflow_irfs(self.daily_return_ts, self.margin_inflow_extreme_ts, '极端两融各行业irf', reverse=False)
+        # self.plot_inflow_irfs(self.daily_return_ts, self.north_inflow_extreme_ts, '极端北向各行业irf', reverse=False)
 
     def calculate_ts_extreme(self, ts_df, upper=0.8, lower=0.2):
         processed_df = ts_df.copy()
@@ -142,8 +142,10 @@ class Plotter(PgDbUpdaterBase):
             filename = f"temp_plot_industry_{industry}.png"
             if reverse:
                 irf.plot(impulse=f'{industry}_return', response=f'{industry}_inflow')
+
             else:
                 irf.plot(impulse=f'{industry}_inflow', response=f'{industry}_return')
+                plt.ylim(-0.3, 0.3)
             plt.savefig(filename, dpi=60)
             plt.close()
 

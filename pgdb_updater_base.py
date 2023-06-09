@@ -592,7 +592,7 @@ class PgDbUpdaterBase(PgDbManager):
             raise Exception(f"row['product_type'] = {row['product_type']} not supported.")
         return internal_id
 
-    def update_product_static_info(self, row, task: str):
+    def upload_product_static_info(self, row, task: str):
         if task == 'fund_name':
             with self.alch_engine.connect() as conn:
                 query = text("""
@@ -607,7 +607,7 @@ class PgDbUpdaterBase(PgDbManager):
                                  'english_name': None if pd.isnull(row['english_name']) else row['english_name'],
                              })
                 conn.commit()
-        if task == 'etf_industry_and_type':
+        elif task == 'etf_industry_and_type':
             query = text("""
                         UPDATE product_static_info
                         SET stk_industry_cs = :stk_industry_cs, etf_type = :etf_type
@@ -620,6 +620,8 @@ class PgDbUpdaterBase(PgDbManager):
                              'stk_industry_cs': None if pd.isnull(row['stk_industry_cs']) else row['stk_industry_cs'],
                          })
             self.alch_conn.commit()
+        else:
+            raise Exception(f'task:{task} not supported!')
 
     def delete_for_renaming(self, names_to_delete):
         with self.alch_engine.connect() as conn:
