@@ -20,7 +20,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
         # self.update_all_funds_info()
         # self.logic_reopened_dk_funds()
         # self.logic_reopened_cyq_funds()
-        self.logic_etf_lof_funds()
+        # self.logic_etf_lof_funds()
         self.logic_margin_trade_by_industry()
         self.logic_north_inflow_by_industry()
         self.logic_major_holder()
@@ -138,7 +138,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
         if len(missing_dates) == 0:
             return
 
-        for date in missing_dates[:-1]:  # 不更新当天数据，以防下载到未更新的昨天数据
+        for date in missing_dates:  # 不更新当天数据，以防下载到未更新的昨天数据
             print(f'Wind downloading tradingstatisticsbyindustry for {date}')
             downloaded_df = w.wset("tradingstatisticsbyindustry",
                                    f"exchange=citic;startdate={date};enddate={date};"
@@ -236,7 +236,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
         if len(missing_dates) == 0:
             return
 
-        for date in missing_dates[:-1]:
+        for date in missing_dates:
             print(f'Wind downloading shareplanincreasereduce for {date}')
             downloaded_df = w.wset("shareplanincreasereduce",
                                    f"startdate={date};enddate={date};datetype=firstannouncementdate;type=all;"
@@ -277,10 +277,10 @@ class DatabaseUpdater(PgDbUpdaterBase):
             self.adjust_seq_val(seq_name='product_static_info_internal_id_seq')
             for _, row in df_meta.iterrows():
                 self.insert_product_static_info(row)
-            # df_meta.to_sql('product_static_info', self.alch_engine, if_exists='append', index=False)
 
     def _upload_missing_data_major_holder(self, missing_dates):
-        for date in missing_dates[:-1]:
+        #TODO: quota充裕时要全部重下一遍，之前误筛掉太多了
+        for date in missing_dates:
             print(f'Wind downloading shareplanincreasereduce for {date}')
             downloaded_df = w.wset("shareplanincreasereduce",
                                    f"startdate={date};enddate={date};datetype=firstannouncementdate;type=all;"
@@ -303,7 +303,11 @@ class DatabaseUpdater(PgDbUpdaterBase):
                          'changemoneylimit': '拟变动金额下限',
                          'changelimitpercent': '拟变动数量下限占总股本比',
                          })
+            # 这个避免重复的筛选方法不对
             selected_df = downloaded_df[downloaded_df['首次公告日期'] == downloaded_df['最新公告日期']]
+            # 如果把某些公司篩没了，就恢复原来的
+            if set(selected_df['code'].tolist()) != set(downloaded_df['code'].tolist()):
+                selected_df = downloaded_df.copy()
 
             for i, row in selected_df.iterrows():
                 code = row['code']
@@ -405,7 +409,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
             ('type_identifier', 'price_valuation')
         )
 
-        for date in missing_dates[-50:-1]:
+        for date in missing_dates[-5:]:
             for code in industry_codes:
                 print(f'Downloading and uploading close,val_pe_nonnegative,dividendyield2,mkt_cap_ashare for {code} {date}')
                 df = w.wsd(code, "close,val_pe_nonnegative,dividendyield2,mkt_cap_ashare", date,
@@ -428,32 +432,24 @@ class DatabaseUpdater(PgDbUpdaterBase):
 
     def update_MA_processed_data(self, MA_period):
         df_full = self.get_metabase_full_df()
+        # 收盘价 市盈率 股息率 市值不用求MA，只需对边际资金求MA
+        self.margin_inflow_ts = self.get_metabase_results('margin_inflow', df_full)
+        self.north_inflow_ts = self.get_metabase_results('north_inflow', df_full)
+        self.aggregate_inflow_ts = self.get_metabase_results('aggregate_inflow', df_full)
+        self.etf_inflow_ts = self.get_metabase_results('etf_inflow', df_full)
+        self.holder_change_ts = self.get_metabase_results('holder_change', df_full)
 
-        # aggregate_inflow_ts = self.get_metabase_results('aggregate_inflow')
-        # df_ma = aggregate_inflow_ts.copy()
-        # df_ma[f'四项流入之和_MA{MA_period}'] = aggregate_inflow_ts.rolling(window=MA_period).mean()
-        # # df_ma['date'] = aggregate_inflow_ts['date']
-        # # df_ma = df_ma.dropna()
-        # # MA_aggregate_inflow_long = df_ma.rename(columns={'四项流入之和': f'四项流入之和_MA{MA_period}'})
-        # MA_aggregate_inflow_long = df_ma.melt(id_vars=['date'], value_vars=[f'四项流入之和_MA{MA_period}', '四项流入之和'],
-        #                                       var_name='var_name', value_name=f'value').dropna()
+        # 做VAR分析不需要求MA，MA是用来肉眼观察的
+        # MA_margin_inflow_long = self.get_MA_df_long(margin_inflow_long, '中信一级行业', '两融净买入', MA_period)
+        # MA_north_inflow_long = self.get_MA_df_long(north_inflow_long, '中信一级行业', '北向净买入', MA_period)
+        #
+        # MA_aggregate_inflow_long.to_sql(f'ma{MA_period}_aggregate_inflow', con=self.alch_engine, schema='processed_data', if_exists='replace',
+        #                  index=False)
+        # MA_margin_inflow_long.to_sql(f'ma{MA_period}_margin_inflow', con=self.alch_engine, schema='processed_data', if_exists='replace',
+        #                  index=False)
+        # MA_north_inflow_long.to_sql(f'ma{MA_period}_north_inflow', con=self.alch_engine, schema='processed_data', if_exists='replace',
+        #                  index=False)
 
-        margin_inflow_long = self.get_metabase_results('margin_inflow', df_full)
-        north_inflow_long = self.get_metabase_results('north_inflow', df_full)
-        aggregate_inflow_long = self.get_metabase_results('aggregate_inflow', df_full)
-        etf_inflow_long = self.get_metabase_results('etf_inflow', df_full)
-        holder_change_long = self.get_metabase_results('holder_change', df_full)
-        MA_margin_inflow_long = self.get_MA_df_long(margin_inflow_long, '中信一级行业', '两融净买入', MA_period)
-        MA_north_inflow_long = self.get_MA_df_long(north_inflow_long, '中信一级行业', '北向净买入', MA_period)
-
-        MA_aggregate_inflow_long.to_sql(f'ma{MA_period}_aggregate_inflow', con=self.alch_engine, schema='processed_data', if_exists='replace',
-                         index=False)
-        MA_margin_inflow_long.to_sql(f'ma{MA_period}_margin_inflow', con=self.alch_engine, schema='processed_data', if_exists='replace',
-                         index=False)
-        MA_north_inflow_long.to_sql(f'ma{MA_period}_north_inflow', con=self.alch_engine, schema='processed_data', if_exists='replace',
-                         index=False)
-
-        # # 收盘价 市盈率 股息率 市值不用求MA，只需对边际资金求MA
         # joined_df = self.read_joined_table_as_dataframe(
         #     target_table_name='product_static_info',
         #     target_join_column='internal_id',
@@ -748,7 +744,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
 
         # 执行数据下载
         # 以认购起始日作为筛选条件，选取的数据更完整、更有前瞻性。只选取严格意义上的新发基金。
-        for missing_date in missing_dates[:-1]:
+        for missing_date in missing_dates:
             print(f'Downloading fundissuegeneralview on {missing_date} for update_all_funds_info')
             downloaded_df = w.wset("fundissuegeneralview",
                                    f"startdate={missing_date};enddate={missing_date};datetype=startdate;isvalid=yes;"

@@ -11,21 +11,26 @@ import matplotlib.image as mpimg
 import matplotlib, os
 import matplotlib.gridspec as gridspec
 from base_config import BaseConfig
-from pgdb_updater_base import PgDbUpdaterBase
+from prj_equity_liquidity.db_updater import DatabaseUpdater
 
 
-class Plotter(PgDbUpdaterBase):
+class Plotter(DatabaseUpdater):
     def __init__(self, base_config: BaseConfig):
         super().__init__(base_config)
         plt.rcParams['font.sans-serif'] = ['simhei']
         plt.rcParams['axes.unicode_minus']=False
         self.read_data()
         # self.get_best_order()
-        # self.plot_irf()
-        # self.plot_inflow_irfs(self.daily_return_ts, self.margin_inflow_ts, '两融各行业逆irf', reverse=True)
-        # self.plot_inflow_irfs(self.daily_return_ts, self.north_inflow_ts, '北向各行业逆irf', reverse=True)
-        # self.plot_inflow_irfs(self.daily_return_ts, self.margin_inflow_ts, '两融各行业irf', reverse=False)
+        self.plot_inflow_irfs(self.daily_return_ts, self.margin_inflow_ts, '两融各行业逆irf', reverse=True)
+        self.plot_inflow_irfs(self.daily_return_ts, self.margin_inflow_ts, '两融各行业irf', reverse=False)
+        self.plot_inflow_irfs(self.daily_return_ts, self.north_inflow_ts, '北向各行业逆irf', reverse=True)
         self.plot_inflow_irfs(self.daily_return_ts, self.north_inflow_ts, '北向各行业irf', reverse=False)
+        self.plot_inflow_irfs(self.daily_return_ts, self.aggregate_inflow_ts, '四项总和各行业逆irf', reverse=True)
+        self.plot_inflow_irfs(self.daily_return_ts, self.aggregate_inflow_ts, '四项总和各行业irf', reverse=False)
+        self.plot_inflow_irfs(self.daily_return_ts, self.etf_inflow_ts, 'etf各行业逆irf', reverse=True)
+        self.plot_inflow_irfs(self.daily_return_ts, self.etf_inflow_ts, 'etf各行业irf', reverse=False)
+        self.plot_inflow_irfs(self.daily_return_ts, self.holder_change_ts, '大股东变化各行业逆irf', reverse=True)
+        self.plot_inflow_irfs(self.daily_return_ts, self.holder_change_ts, '大股东变化各行业irf', reverse=False)
         # self.plot_inflow_irfs(self.daily_return_ts, self.margin_inflow_extreme_ts, '极端两融各行业irf', reverse=False)
         # self.plot_inflow_irfs(self.daily_return_ts, self.north_inflow_extreme_ts, '极端北向各行业irf', reverse=False)
 
@@ -43,20 +48,28 @@ class Plotter(PgDbUpdaterBase):
         return processed_df
 
     def read_data(self):
-        MA10_margin_inflow_long = self.read_table_from_schema('processed_data', 'MA10_margin_inflow')
-        self.margin_inflow_ts = MA10_margin_inflow_long.pivot(index='date', columns='中信一级行业', values='两融净买入')/1e8
+        # MA10_margin_inflow_long = self.read_table_from_schema('processed_data', 'MA10_margin_inflow')
+        # self.margin_inflow_ts = MA10_margin_inflow_long.pivot(index='date', columns='中信一级行业', values='两融净买入')/1e8
+        self.margin_inflow_ts = self.margin_inflow_ts/1e8
         self.margin_inflow_ts['万德全A'] = self.margin_inflow_ts.sum(axis=1)
         self.margin_inflow_extreme_ts = self.calculate_ts_extreme(self.margin_inflow_ts, 0.9, 0.1)
-        self.margin_inflow_ma10_ts = MA10_margin_inflow_long.pivot(index='date', columns='中信一级行业', values='两融净买入_MA10')/1e8
+        # self.margin_inflow_ma10_ts = MA10_margin_inflow_long.pivot(index='date', columns='中信一级行业', values='两融净买入_MA10')/1e8
 
-        MA10_north_inflow_long = self.read_table_from_schema('processed_data', 'MA10_north_inflow')
-        self.north_inflow_ts = MA10_north_inflow_long.pivot(index='date', columns='中信一级行业', values='北向净买入')/1e8
+        self.north_inflow_ts = self.north_inflow_ts/1e8
         self.north_inflow_ts['万德全A'] = self.north_inflow_ts.sum(axis=1)
         self.north_inflow_extreme_ts = self.calculate_ts_extreme(self.north_inflow_ts, 0.9, 0.1)
-        self.north_inflow_ma10_ts = MA10_north_inflow_long.pivot(index='date', columns='中信一级行业', values='北向净买入_MA10')/1e8
 
-        MA10_aggregate_inflow_long = self.read_table_from_schema('processed_data', 'MA10_aggregate_inflow')
-        MA10_aggregate_inflow_ts = MA10_aggregate_inflow_long.pivot(index='date', columns='var_name', values='value')/1e8
+        self.aggregate_inflow_ts = self.aggregate_inflow_ts/1e8
+        self.aggregate_inflow_ts['万德全A'] = self.aggregate_inflow_ts.sum(axis=1)
+        self.aggregate_inflow_extreme_ts = self.calculate_ts_extreme(self.aggregate_inflow_ts, 0.9, 0.1)
+
+        self.etf_inflow_ts = self.etf_inflow_ts/1e8
+        self.etf_inflow_ts['万德全A'] = self.etf_inflow_ts.sum(axis=1)
+        self.etf_inflow_extreme_ts = self.calculate_ts_extreme(self.etf_inflow_ts, 0.9, 0.1)
+
+        self.holder_change_ts = self.holder_change_ts/1e8
+        self.holder_change_ts['万德全A'] = self.holder_change_ts.sum(axis=1)
+        self.holder_change_extreme_ts = self.calculate_ts_extreme(self.holder_change_ts, 0.9, 0.1)
 
         df_price_joined = self.read_joined_table_as_dataframe(
             target_table_name='markets_daily_long',
@@ -69,47 +82,11 @@ class Plotter(PgDbUpdaterBase):
         price_ts = df_price_joined.pivot(index='date', columns='industry', values='value')
         self.daily_return_ts = price_ts.pct_change().dropna(how='all')*100
 
-        # 合并涨跌幅数据和净流入数据
-        # self.merged_agagregate_both = pd.merge(self.daily_return_ts, MA10_aggregate_inflow_ts, left_index=True, right_index=True)
-        # self.merged_margin = pd.merge(self.daily_return_ts, margin_inflow_ts, left_index=True, right_index=True)
-        # self.merged_north = pd.merge(self.daily_return_ts, north_inflow_ts, left_index=True, right_index=True)
-
-    # def plot_irf(self):
-    #     # 创建VAR模型
-    #     model = sm.tsa.VAR(self.merged_agagregate_both[['万德全A', '四项流入之和_MA10']])
-    #
-    #     # 创建Figure和Subplot
-    #     fig = plt.figure(constrained_layout=True)
-    #     gs = gridspec.GridSpec(2, 5, figure=fig, hspace=0.05)  # 这里的hspace设置了行间距，你可以根据需要调整它的值
-    #
-    #     for order in range(1, 11):
-    #         # 估计VAR模型
-    #         results = model.fit(order)
-    #
-    #         # 提取单位冲击响应函数
-    #         irf = results.irf(30)  # 设定冲击响应函数的期数
-    #
-    #         # 绘制动态响应函数到临时文件
-    #         filename = f"temp_plot_order_{order}.png"
-    #         irf.plot(impulse='万德全A', response='四项流入之和_MA10')
-    #         plt.savefig(filename)
-    #         plt.close()
-    #
-    #         # 在Figure上显示该图像
-    #         ax = fig.add_subplot(gs[order - 1])
-    #         img = mpimg.imread(filename)
-    #         ax.imshow(img)
-    #         ax.axis('off')
-    #
-    #         # 为每个子图添加标题
-    #         ax.set_title(f"order={order}")
-    #
-    #         # 删除临时文件
-    #         os.remove(filename)
-    #
-    #     plt.show()
-
     def plot_inflow_irfs(self, daily_return_df, inflow_df, fig_name, reverse):
+        # 日期对齐 保留交集部分的行
+        index_intersection = daily_return_df.index.intersection(inflow_df.index)
+        daily_return_df = daily_return_df.loc[index_intersection]
+        inflow_df = inflow_df.loc[index_intersection]
         # 创建Figure和Subplot
         fig = plt.figure(constrained_layout=True)
         gs = gridspec.GridSpec(5, 7, figure=fig, hspace=0, wspace=0)  # 这里的hspace设置了行间距，你可以根据需要调整它的值
@@ -122,13 +99,10 @@ class Plotter(PgDbUpdaterBase):
             model = sm.tsa.VAR(merged)
 
             # 估计VAR模型
-            results = model.fit(6)
+            results = model.fit(5)
 
             # 提取单位冲击响应函数
             irf = results.irf(30)  # 设定冲击响应函数的期数
-
-            # 计算累积冲击响应函数
-            # cumulative_irf = np.cumsum(irf.irfs, axis=0)
 
             # 计算指定冲击和响应的累积冲击响应函数
             if not reverse:
