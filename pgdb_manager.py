@@ -322,7 +322,7 @@ class PgDbManager:
                                 how='left')
         return df_long
 
-    def get_missing_dates(self, all_dates, existing_dates):
+    def get_missing_dates_old(self, all_dates, existing_dates):
         """
         Get the missing dates between before and after existing_dates.
 
@@ -348,6 +348,24 @@ class PgDbManager:
         missing_dates.extend([d for d in all_dates if d > max_date])
 
         return sorted(missing_dates)
+
+    def get_missing_dates(self, all_dates, existing_dates):
+        """
+        Get the missing dates between before and after existing_dates.
+
+        Args:
+            all_dates (list): List of all dates to consider.
+            existing_dates (list): List of existing dates in the database.
+
+        Returns:
+            list: Sorted list of missing dates.
+        """
+        # 如果表是空的，没有数据，则全部missing
+        if not existing_dates:
+            return all_dates
+
+        missing_dates = sorted(set(all_dates) - set(existing_dates))
+        return missing_dates
 
     def get_missing_months_ends(self, all_month_ends, earliest_available, table_name, column_name):
         existing_dates = self.select_existing_dates_from_long_table(table_name, metric_name=column_name)
