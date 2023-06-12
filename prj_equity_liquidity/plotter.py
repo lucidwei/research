@@ -48,27 +48,25 @@ class Plotter(DatabaseUpdater):
         return processed_df
 
     def read_data(self):
-        # MA10_margin_inflow_long = self.read_table_from_schema('processed_data', 'MA10_margin_inflow')
-        # self.margin_inflow_ts = MA10_margin_inflow_long.pivot(index='date', columns='中信一级行业', values='两融净买入')/1e8
         self.margin_inflow_ts = self.margin_inflow_ts/1e8
-        self.margin_inflow_ts['万德全A'] = self.margin_inflow_ts.sum(axis=1)
+        # 对于全A的影响统一改为每10亿的影响
+        self.margin_inflow_ts['万德全A'] = self.margin_inflow_ts.sum(axis=1)/10
         self.margin_inflow_extreme_ts = self.calculate_ts_extreme(self.margin_inflow_ts, 0.9, 0.1)
-        # self.margin_inflow_ma10_ts = MA10_margin_inflow_long.pivot(index='date', columns='中信一级行业', values='两融净买入_MA10')/1e8
 
         self.north_inflow_ts = self.north_inflow_ts/1e8
-        self.north_inflow_ts['万德全A'] = self.north_inflow_ts.sum(axis=1)
+        self.north_inflow_ts['万德全A'] = self.north_inflow_ts.sum(axis=1)/10
         self.north_inflow_extreme_ts = self.calculate_ts_extreme(self.north_inflow_ts, 0.9, 0.1)
 
         self.aggregate_inflow_ts = self.aggregate_inflow_ts/1e8
-        self.aggregate_inflow_ts['万德全A'] = self.aggregate_inflow_ts.sum(axis=1)
+        self.aggregate_inflow_ts['万德全A'] = self.aggregate_inflow_ts.sum(axis=1)/10
         self.aggregate_inflow_extreme_ts = self.calculate_ts_extreme(self.aggregate_inflow_ts, 0.9, 0.1)
 
         self.etf_inflow_ts = self.etf_inflow_ts/1e8
-        self.etf_inflow_ts['万德全A'] = self.etf_inflow_ts.sum(axis=1)
+        self.etf_inflow_ts['万德全A'] = self.etf_inflow_ts.sum(axis=1)/10
         self.etf_inflow_extreme_ts = self.calculate_ts_extreme(self.etf_inflow_ts, 0.9, 0.1)
 
         self.holder_change_ts = self.holder_change_ts/1e8
-        self.holder_change_ts['万德全A'] = self.holder_change_ts.sum(axis=1)
+        self.holder_change_ts['万德全A'] = self.holder_change_ts.sum(axis=1)/10
         self.holder_change_extreme_ts = self.calculate_ts_extreme(self.holder_change_ts, 0.9, 0.1)
 
         df_price_joined = self.read_joined_table_as_dataframe(
@@ -93,16 +91,21 @@ class Plotter(DatabaseUpdater):
         plt.rcParams['axes.titlesize'] = 5
 
         for index, industry in enumerate(daily_return_df.columns):
+            if inflow_df[industry].eq(0).all():
+                continue
+
             merged = pd.merge(daily_return_df[industry], inflow_df[industry],
                               left_index=True, right_index=True, suffixes=('_return', '_inflow'))
             # 创建VAR模型
+            # 剔除前面不连续的日期和最近一周的影响
+            merged = merged[15:-5]
             model = sm.tsa.VAR(merged)
 
             # 估计VAR模型
-            results = model.fit(5)
+            results = model.fit(4)
 
             # 提取单位冲击响应函数
-            irf = results.irf(30)  # 设定冲击响应函数的期数
+            irf = results.irf(periods=30)  # 设定冲击响应函数的期数
 
             # 计算指定冲击和响应的累积冲击响应函数
             if not reverse:
@@ -115,11 +118,12 @@ class Plotter(DatabaseUpdater):
             # 绘制动态响应函数到临时文件
             filename = f"temp_plot_industry_{industry}.png"
             if reverse:
-                irf.plot(impulse=f'{industry}_return', response=f'{industry}_inflow')
+                irf.plot(impulse=f'{industry}_return', response=f'{industry}_inflow', signif=0.2)
 
             else:
-                irf.plot(impulse=f'{industry}_inflow', response=f'{industry}_return')
-                plt.ylim(-0.3, 0.3)
+                irf.plot(impulse=f'{industry}_inflow', response=f'{industry}_return', signif=0.2)
+                if industry == '万德全A':
+                    plt.ylim(-0.15, 0.15)
             plt.savefig(filename, dpi=60)
             plt.close()
 
@@ -138,23 +142,6 @@ class Plotter(DatabaseUpdater):
             os.remove(filename)
         print(f'{fig_name} saved!')
         plt.savefig(self.base_config.image_folder+fig_name, dpi=2000)
-
-
-    # def plot_irf(self):
-    #     # 创建VAR模型
-    #     model = sm.tsa.VAR(self.merged_data[['万德全A', '四项流入之和_MA10']])
-    #
-    #     # 估计VAR模型
-    #     order = 5  # VAR模型阶数
-    #     results = model.fit(order)
-    #
-    #     # 提取单位冲击响应函数
-    #     irf = results.irf(30)  # 设定冲击响应函数的期数
-    #
-    #     # 绘制动态响应函数
-    #     # irf.plot(impulse='四项流入之和_MA10', response='万德全A')
-    #     irf.plot(impulse='万德全A', response='四项流入之和_MA10')
-    #     plt.show()
 
     def get_best_order(self):
         # 设置阶数范围
