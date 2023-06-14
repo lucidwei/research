@@ -100,9 +100,11 @@ class Plotter(DatabaseUpdater):
             # 剔除前面不连续的日期和最近一周的影响
             merged = merged[15:-5]
             model = sm.tsa.VAR(merged)
+            # a = model.select_order()
 
             # 估计VAR模型
-            results = model.fit(4)
+            # 5是bic给的值，而且平时也不会考虑过去两周的影响，更符合我们的应用场景。10的话就太zigzag了，很难解释
+            results = model.fit(maxlags=5)
 
             # 提取单位冲击响应函数
             irf = results.irf(periods=30)  # 设定冲击响应函数的期数
@@ -123,7 +125,7 @@ class Plotter(DatabaseUpdater):
             else:
                 irf.plot(impulse=f'{industry}_inflow', response=f'{industry}_return', signif=0.2)
                 if industry == '万德全A':
-                    plt.ylim(-0.15, 0.15)
+                    plt.ylim(-0.1, 0.1)
             plt.savefig(filename, dpi=60)
             plt.close()
 

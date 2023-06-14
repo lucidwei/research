@@ -151,48 +151,52 @@ class PgDbManager:
                 with self.alch_engine.begin() as connection:
                     connection.execute(update_stmt)
 
-    def select_existing_values_in_target_column(self, target_table: str, target_column: str, *where_conditions):
+    def select_existing_values_in_target_column(self, target_table: str, target_columns,
+                                                *where_conditions):
         """
         获取目标表中指定列的现有值集合。
 
         Parameters:
             - target_table (str): 目标表的名称。
-            - target_column (str): 目标列的名称。
-            - *where_conditions (tuple or str): 可变长度参数，每个参数是一个元组 (where_column, where_value) 表示筛选条件。
+            - target_columns (Union[str, List[str]]): 目标列的名称，可以是单个列名或多个列名组成的列表。
+            - *where_conditions (tuple or str): 可变长度参数，每个参数是一个元组 (where_column, where_value) 表示筛选条件，
+              或者是一个字符串表示额外的筛选条件。
 
         Returns:
-            set: 目标列的现有值集合。
+            list: 目标列的现有值集合（已排序）。
         """
-        # Create session
-        session = Session(self.alch_engine)
-
-        try:
-            # Get metadata of the target table
-            metadata = MetaData()
-            target_table = Table(target_table, metadata, autoload_with=self.alch_engine)
-
-            # Build the select statement
-            where_clauses = []
-            for where_condition in where_conditions:
-                if isinstance(where_condition, tuple):
-                    where_column, where_value = where_condition
-                    if where_value is not None:
-                        where_clauses.append(target_table.c[where_column] == where_value)
-                    else:
-                        where_clauses.append(target_table.c[where_column].is_(None))
+        # Build the SELECT statement
+        select_columns = ', '.join(target_columns) if isinstance(target_columns, list) else target_columns
+        where_clauses = []
+        for where_condition in where_conditions:
+            if isinstance(where_condition, tuple):
+                where_column, where_value = where_condition
+                if where_value is not None:
+                    where_clauses.append(f"{where_column} = '{where_value}'")
                 else:
-                    where_clauses.append(text(where_condition))
-
-            if where_clauses:
-                stmt = select(target_table.c[target_column]).where(and_(*where_clauses))
+                    where_clauses.append(f"{where_column} IS NULL")
             else:
-                stmt = select(target_table.c[target_column])
+                where_clauses.append(where_condition)
 
-            # Execute the select statement
-            result = session.execute(stmt)
+        where_clause = ' AND '.join(where_clauses) if where_clauses else ''
+        if where_clause:
+            query = f"SELECT {select_columns} FROM {target_table} WHERE {where_clause};"
+        else:
+            query = f"SELECT {select_columns} FROM {target_table};"
 
-            existing_values = {row[0] for row in result if row[0] is not None}
-            sorted_existing_values = sorted(list(existing_values))
+        # Execute the SQL statement
+        result = self.alch_conn.execute(text(query))
+
+        if isinstance(target_columns, list):
+            # Return a DataFrame with the specified columns
+            columns = [col[0] for col in result.cursor.description]
+            data = result.fetchall()
+            df = pd.DataFrame(data, columns=columns)
+            return df
+        else:
+            # Return a list of column values
+            existing_values = sorted(set(row[0] for row in result if row[0] is not None))
+            return existing_values
 
             return sorted_existing_values
         finally:
