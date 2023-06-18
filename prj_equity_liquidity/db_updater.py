@@ -7,7 +7,6 @@ import datetime
 import os
 import numpy as np
 import pandas as pd
-from dateutil.relativedelta import relativedelta
 from base_config import BaseConfig
 from pgdb_updater_base import PgDbUpdaterBase
 from WindPy import w
@@ -20,11 +19,11 @@ class DatabaseUpdater(PgDbUpdaterBase):
         self.update_all_funds_info()
         # self.logic_reopened_dk_funds()
         # self.logic_reopened_cyq_funds()
-        # self.logic_etf_lof_funds()
-        # self.logic_margin_trade_by_industry()
-        # self.logic_north_inflow_by_industry()
-        # self.logic_major_holder()
-        # self.logic_price_valuation()
+        self.logic_etf_lof_funds()
+        self.logic_margin_trade_by_industry()
+        self.logic_north_inflow_by_industry()
+        self.logic_major_holder()
+        self.logic_price_valuation()
         self.update_MA_processed_data(MA_period=10)
 
     def logic_margin_trade_by_industry(self):
@@ -434,6 +433,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
                 df_upload.to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
 
     def update_MA_processed_data(self, MA_period):
+        # 复盘需要看MA10时需要用到这个函数
         df_full = self.get_metabase_full_df()
         # 收盘价 市盈率 股息率 市值不用求MA，只需对边际资金求MA
         self.margin_inflow_ts = self.get_metabase_results('margin_inflow', df_full)
@@ -691,25 +691,6 @@ class DatabaseUpdater(PgDbUpdaterBase):
         }
         self.insert_product_static_info(row)
 
-    def _update_funds_name(self):
-        code_set = self.select_existing_values_in_target_column(
-            'product_static_info',
-            'code',
-            ('product_type', 'fund'),
-            ('fund_fullname', None)
-        )
-
-        for code in code_set:
-            print('start download')
-            downloaded = w.wsd(code,
-                               "fund_fullname,fund_fullnameen",
-                               self.tradedays_str[-1], self.tradedays_str[-1], "unit=1", usedf=True)[1]
-            # 重置索引并将其作为一列, 重命名列名
-            downloaded = downloaded.reset_index().rename(columns={'index': 'code', 'FUND_FULLNAME': 'fund_fullname',
-                                                                  'FUND_FULLNAMEEN': 'english_name'})
-            print(f'Updating {code} name')
-            self.upload_product_static_info(downloaded.squeeze(), task='fund_name')
-
     def update_all_funds_info(self):
         """
         1.检查product_static_info中存在的基金信息记录，获取需要更新的日期
@@ -746,6 +727,50 @@ class DatabaseUpdater(PgDbUpdaterBase):
         self._update_funds_missing_fundfounddate()
 
         self._update_funds_name()
+        self._update_funds_issueshare()
+
+    def _update_funds_name(self):
+        code_set = self.select_existing_values_in_target_column(
+            'product_static_info',
+            'code',
+            ('product_type', 'fund'),
+            ('fund_fullname', None)
+        )
+
+        for code in code_set:
+            print('start download')
+            downloaded = w.wsd(code,
+                               "fund_fullname,fund_fullnameen",
+                               self.tradedays_str[-1], self.tradedays_str[-1], "unit=1", usedf=True)[1]
+            # 重置索引并将其作为一列, 重命名列名
+            downloaded = downloaded.reset_index().rename(columns={'index': 'code', 'FUND_FULLNAME': 'fund_fullname',
+                                                                  'FUND_FULLNAMEEN': 'english_name'})
+            print(f'Updating {code} name')
+            self.upload_product_static_info(downloaded.squeeze(), task='fund_name')
+
+    def _update_funds_issueshare(self):
+        code_set = self.select_existing_values_in_target_column(
+            'product_static_info',
+            ['code', 'chinese_name', 'buystartdate', 'fundfounddate'],
+            "fundfounddate is not null and issueshare is null and product_type='fund'"
+        )
+
+        for _, row in code_set:
+            code = row['code']
+            print(f'Downloading issueshare for {code}')
+            # TODO:这个命令可能是取不到的，不知道这样设置日期有没有问题
+            downloaded = w.wsd(code,
+                               "issue_unit",
+                               self.tradedays_str[-1], self.tradedays_str[-1], "unit=1", usedf=True)[1]
+            # 这段要改
+            upload_df = downloaded.reset_index().rename(columns={'index': 'code', 'ISSUE_UNIT': 'issueshare'})/1e8
+            upload_df['chinese_name'] = row['chinese_name']
+            upload_df['buystartdate'] = row['buystartdate']
+            upload_df['fundfounddate'] = row['fundfounddate']
+            upload_df['source'] = 'wind'
+            upload_df['product_type'] = 'fund'
+            print(f'Updating {code} issueshare')
+            self.insert_product_static_info(upload_df.squeeze())
 
     def _update_funds_by_buystartdate(self, missing_buystartdates):
         missing_dates = sorted(missing_buystartdates)
@@ -812,7 +837,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
 
         existing_codes = self.select_existing_values_in_target_column('product_static_info',
                                                                       'code',
-                                                                      "fundfounddate is NULL and product_type='fund'")
+                                                                      "product_type='fund'")
         all_funds = pd.read_excel(self.base_config.excels_path + '缺失发行日期的基金.xlsx', header=0,
                                   engine='openpyxl')
         df_cleaned = all_funds[all_funds['发行日期'].isnull()].sort_values(by='证券简称').dropna(
@@ -833,6 +858,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
                     columns={'index': 'code', 'SEC_NAME': 'chinese_name', 'ISSUE_DATE': 'buystartdate',
                              'FUND_SETUPDATE': 'fundfounddate', 'FUND_FULLNAME': 'fund_fullname',
                              'FUND_FULLNAMEEN': 'english_name', 'ISSUE_UNIT': 'issueshare'})
+                upload_df['issueshare'] = upload_df['issueshare']/1e8
                 upload_df['source'] = 'wind'
                 upload_df['product_type'] = 'fund'
                 for _, row in upload_df.iterrows():
@@ -840,24 +866,28 @@ class DatabaseUpdater(PgDbUpdaterBase):
 
     def _update_funds_missing_fundfounddate(self):
         # 用于更新基金成立后的信息
-        funds_for_missing_fundfounddate = self.select_existing_values_in_target_column('product_static_info',
-                                                                                       ['code', 'buystartdate',
-                                                                                        'chinese_name'],
-                                                                                       "fundfounddate is NULL and product_type='fund'")
+        funds_missing_fundfounddate = self.select_existing_values_in_target_column('product_static_info',
+                                                                                   ['code', 'buystartdate',
+                                                                                    'chinese_name'],
+                                                                                   "fundfounddate is NULL and product_type='fund'")
         # 筛选buystartdate在近3个月之内的行，再老的就是没有发行成功的基金，不必更新
-        # df_filtered = funds_for_missing_fundfounddate[
-        #     funds_for_missing_fundfounddate['buystartdate'] >= self.tradedays[-70]]
-        df_filtered = funds_for_missing_fundfounddate
+        df_filtered = funds_missing_fundfounddate[
+            funds_missing_fundfounddate['buystartdate'] >= self.tradedays[-70]]
+        # df_filtered = funds_missing_fundfounddate
 
         for _, row in df_filtered.iterrows():
             code = row['code']
-            print(f'Downloading fund info {code} for _update_special_funds_missing_buystartdate')
+            print(f'Downloading fund info {code} for _update_funds_missing_fundfounddate')
             downloaded_df = w.wsd(code, "issue_date,fund_setupdate,issue_unit",
                                   self.tradedays_str[-1], self.tradedays_str[-1], "", usedf=True)[1]
             # 解析下载的数据并上传至product_static_info
             upload_df = downloaded_df.reset_index().rename(
                 columns={'index': 'code', 'ISSUE_DATE': 'buystartdate', 'FUND_SETUPDATE': 'fundfounddate',
                          'ISSUE_UNIT': 'issueshare'})
+            # 尚未发行或发行失败
+            if pd.isna(upload_df.iloc[0]['issueshare']):
+                continue
+            upload_df['issueshare'] = upload_df['issueshare'] / 1e8
             upload_df['source'] = 'wind'
             upload_df['product_type'] = 'fund'
             upload_df['chinese_name'] = row['chinese_name']

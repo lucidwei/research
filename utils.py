@@ -106,6 +106,7 @@ def check_wind():
                          "unit=1;industryType=1")
     if download_try.Data[0][0].__contains__('quota exceeded'):
         raise Warning('取数报错，quota超限')
+        pass
     else:
         print('Wind在本次运行中数据尚未超限，如取数报错请检查其它报错原因（如wind本身缺少数据）')
 

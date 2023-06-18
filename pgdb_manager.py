@@ -198,10 +198,6 @@ class PgDbManager:
             existing_values = sorted(set(row[0] for row in result if row[0] is not None))
             return existing_values
 
-            return sorted_existing_values
-        finally:
-            session.close()
-
     def select_existing_dates_from_long_table(self, table_name, metric_name=None, product_name=None, field=None,
                                               return_df=False):
         """
