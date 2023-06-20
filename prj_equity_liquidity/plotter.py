@@ -31,8 +31,8 @@ class Plotter(DatabaseUpdater):
         # self.plot_inflow_industry_irfs(self.daily_return_ts, self.etf_inflow_ts, 'etf各行业irf', reverse=False)
         # self.plot_inflow_industry_irfs(self.daily_return_ts, self.holder_change_ts, '大股东变化各行业逆irf', reverse=True)
         # self.plot_inflow_industry_irfs(self.daily_return_ts, self.holder_change_ts, '大股东变化各行业irf', reverse=False)
-        self.plot_inflow_windA_irfs(self.daily_return_ts, self.new_fund_ts, '新发基金各行业逆irf', reverse=True)
-        self.plot_inflow_windA_irfs(self.daily_return_ts, self.new_fund_ts, '大股东变化各行业irf', reverse=False)
+        self.plot_inflow_windA_irfs(self.daily_return_ts, self.new_fund_ts, '新发基金全A逆irf', reverse=True)
+        self.plot_inflow_windA_irfs(self.daily_return_ts, self.new_fund_ts, '新发基金全Airf', reverse=False)
         # self.plot_inflow_industry_irfs(self.daily_return_ts, self.margin_inflow_extreme_ts, '极端两融各行业irf', reverse=False)
         # self.plot_inflow_industry_irfs(self.daily_return_ts, self.north_inflow_extreme_ts, '极端北向各行业irf', reverse=False)
 
@@ -171,7 +171,7 @@ class Plotter(DatabaseUpdater):
                               left_index=True, right_index=True, suffixes=('_return', '_inflow'))
             # 创建VAR模型
             # 剔除前面不连续的日期和最近一周的影响
-            merged = merged[15:-5]
+            merged = merged[5:-5]
             model = sm.tsa.VAR(merged)
             # a = model.select_order()
 
@@ -184,20 +184,20 @@ class Plotter(DatabaseUpdater):
 
             # 计算指定冲击和响应的累积冲击响应函数
             if not reverse:
-                cumulative_response = np.sum(irf.irfs[:30, merged.columns.get_loc(f'{metric}_return'),
-                                             merged.columns.get_loc(f'{metric}_inflow')])
+                cumulative_response = np.sum(irf.irfs[:30, merged.columns.get_loc(f'万德全A'),
+                                             merged.columns.get_loc(metric)])
             else:
-                cumulative_response = np.sum(irf.irfs[:30, merged.columns.get_loc(f'{metric}_inflow'),
-                                             merged.columns.get_loc(f'{metric}_return')])
+                cumulative_response = np.sum(irf.irfs[:30, merged.columns.get_loc(metric),
+                                             merged.columns.get_loc(f'万德全A')])
 
             # 绘制动态响应函数到临时文件
             filename = f"temp_plot_industry_{metric}.png"
             if reverse:
-                irf.plot(impulse=f'{metric}_return', response=f'{metric}_inflow', signif=0.2)
+                irf.plot(impulse='万德全A', response=metric, signif=0.2)
 
             else:
-                irf.plot(impulse=f'{metric}_inflow', response=f'{metric}_return', signif=0.2)
-            plt.savefig(filename, dpi=60)
+                irf.plot(impulse=metric, response='万德全A', signif=0.2)
+            plt.savefig(filename, dpi=100)
             plt.close()
 
             # 在Figure上显示该图像
@@ -214,7 +214,7 @@ class Plotter(DatabaseUpdater):
             # 删除临时文件
             os.remove(filename)
         print(f'{fig_name} saved!')
-        plt.savefig(self.base_config.image_folder+fig_name, dpi=2000)
+        plt.savefig(self.base_config.image_folder+fig_name, dpi=400, bbox_inches='tight')
 
     def get_best_order(self):
         # 设置阶数范围

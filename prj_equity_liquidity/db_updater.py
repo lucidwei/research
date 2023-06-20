@@ -408,7 +408,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
             ('type_identifier', 'price_valuation')
         )
 
-        for date in missing_dates[-5:]:
+        for date in missing_dates:
             for code in industry_codes:
                 print(
                     f'Downloading and uploading close,val_pe_nonnegative,dividendyield2,mkt_cap_ashare for {code} {date}')
@@ -500,9 +500,9 @@ class DatabaseUpdater(PgDbUpdaterBase):
             LEFT JOIN (SELECT "public"."product_static_info"."fundfounddate" AS "fundfounddate", SUM("public"."product_static_info"."issueshare") AS "sum" FROM "public"."product_static_info" WHERE ("public"."product_static_info"."product_type" = 'fund') AND (NOT (LOWER("public"."product_static_info"."fund_fullname") LIKE '%债%') OR ("public"."product_static_info"."fund_fullname" IS NULL)) AND (LOWER("public"."product_static_info"."fund_fullname") LIKE '%交易型开放式%') GROUP BY "public"."product_static_info"."fundfounddate" ORDER BY "public"."product_static_info"."fundfounddate" DESC) AS "Question 221" ON "source"."fundfounddate" = "Question 221"."fundfounddate") AS "source" GROUP BY "source"."fundfounddate" ORDER BY "source"."fundfounddate" DESC
             """
         )
-        new_fund_ts = self.alch_conn.execute(metabase_query)
-        return pd.DataFrame(new_fund_ts,
-                            columns=['date', 'ETF基金发行份额', '主动类基金发行份额', '非债类发行份额'])
+        new_fund = self.alch_conn.execute(metabase_query)
+        new_fund_ts = pd.DataFrame(new_fund, columns=['date', 'ETF基金发行份额', '主动类基金发行份额', '非债类发行份额']).dropna().set_index('date')
+        return new_fund_ts
 
     def get_metabase_results(self, task, df_full):
         print(f'Calculating for task:{task}')
