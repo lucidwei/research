@@ -464,6 +464,10 @@ class DatabaseUpdater(PgDbUpdaterBase):
         # df_upload.to_sql('price_valuation_MA10', con=self.alch_engine, schema='processed_data', if_exists='replace', index=False)
 
     def get_metabase_full_df(self):
+        """
+        不是metabase question#176 五项资金流动情况(时间序列)的日度变体
+        对应不起来了……以后引用metabase question要做好记录
+        """
         metabase_query = text(
             """
             SELECT "source"."date" AS "date", "source"."中信一级行业" AS "中信一级行业", SUM("source"."北向资金净买入") AS "sum", SUM("source"."ETF净流入") AS "sum_2", SUM("source"."两融净买入") AS "sum_3", SUM("source"."四项流入之和") AS "sum_4", SUM("source"."大股东拟净持仓变动金额") AS "sum_5"
@@ -479,6 +483,26 @@ class DatabaseUpdater(PgDbUpdaterBase):
         return pd.DataFrame(full_industry_history,
                             columns=['date', '中信一级行业', '北向资金净买入', 'ETF净流入', '两融净买入',
                                      '四项流入之和', '大股东拟净持仓变动金额'])
+
+    def get_metabase_new_fund_ts(self):
+        """
+        metabase question 229, 基金-主被动发行规模(日度被引时间序列)
+        """
+        metabase_query = text(
+            """
+            SELECT "source"."fundfounddate" AS "fundfounddate", SUM("source"."ETF基金发行份额") AS "sum", SUM("source"."主动类基金发行份额") AS "sum_2", SUM("source"."非债类基金发行份额") AS "sum_3"
+            FROM (SELECT "source"."fundfounddate" AS "fundfounddate", "source"."sum" AS "sum", COALESCE("Question 221"."sum", 0) AS "ETF基金发行份额", COALESCE("source"."sum", 0) AS "非债类基金发行份额", COALESCE("source"."sum", 0) - COALESCE("Question 221"."sum", 0) AS "主动类基金发行份额", "Question 221"."fundfounddate" AS "Question 221__fundfounddate", "Question 221"."sum" AS "Question 221__sum", "Question 221"."fundfounddate" AS "Question 221__fundfounddate_2", "Question 221"."fundfounddate" AS "Question 221__fundfounddate_3" FROM (SELECT "public"."product_static_info"."fundfounddate" AS "fundfounddate", SUM("public"."product_static_info"."issueshare") AS "sum" FROM "public"."product_static_info"
+            WHERE ("public"."product_static_info"."product_type" = 'fund')
+               AND (NOT (LOWER("public"."product_static_info"."fund_fullname") LIKE '%债%')
+                OR ("public"."product_static_info"."fund_fullname" IS NULL)) AND (NOT (LOWER("public"."product_static_info"."fund_fullname") LIKE '%存单%') OR ("public"."product_static_info"."fund_fullname" IS NULL))
+            GROUP BY "public"."product_static_info"."fundfounddate"
+            ORDER BY "public"."product_static_info"."fundfounddate" ASC) AS "source"
+            LEFT JOIN (SELECT "public"."product_static_info"."fundfounddate" AS "fundfounddate", SUM("public"."product_static_info"."issueshare") AS "sum" FROM "public"."product_static_info" WHERE ("public"."product_static_info"."product_type" = 'fund') AND (NOT (LOWER("public"."product_static_info"."fund_fullname") LIKE '%债%') OR ("public"."product_static_info"."fund_fullname" IS NULL)) AND (LOWER("public"."product_static_info"."fund_fullname") LIKE '%交易型开放式%') GROUP BY "public"."product_static_info"."fundfounddate" ORDER BY "public"."product_static_info"."fundfounddate" DESC) AS "Question 221" ON "source"."fundfounddate" = "Question 221"."fundfounddate") AS "source" GROUP BY "source"."fundfounddate" ORDER BY "source"."fundfounddate" DESC
+            """
+        )
+        new_fund_ts = self.alch_conn.execute(metabase_query)
+        return pd.DataFrame(new_fund_ts,
+                            columns=['date', 'ETF基金发行份额', '主动类基金发行份额', '非债类发行份额'])
 
     def get_metabase_results(self, task, df_full):
         print(f'Calculating for task:{task}')
@@ -727,7 +751,8 @@ class DatabaseUpdater(PgDbUpdaterBase):
         self._update_funds_missing_fundfounddate()
 
         self._update_funds_name()
-        self._update_funds_issueshare()
+        # 取不到数，暂不更新
+        # self._update_funds_issueshare()
 
     def _update_funds_name(self):
         code_set = self.select_existing_values_in_target_column(
@@ -755,21 +780,23 @@ class DatabaseUpdater(PgDbUpdaterBase):
             "fundfounddate is not null and issueshare is null and product_type='fund'"
         )
 
-        for _, row in code_set:
+        for _, row in code_set.iterrows():
             code = row['code']
             print(f'Downloading issueshare for {code}')
-            # TODO:这个命令可能是取不到的，不知道这样设置日期有没有问题
+            # wsd取不到数，应该是数据缺失。较早的发行规模暂时不更新了
             downloaded = w.wsd(code,
                                "issue_unit",
                                self.tradedays_str[-1], self.tradedays_str[-1], "unit=1", usedf=True)[1]
-            # 这段要改
-            upload_df = downloaded.reset_index().rename(columns={'index': 'code', 'ISSUE_UNIT': 'issueshare'})/1e8
+            if pd.isna(downloaded.iloc[0, 0]):
+                continue
+
+            print(f'Uploading {code} issueshare')
+            upload_df = downloaded.reset_index().rename(columns={'index': 'code', 'ISSUE_UNIT': 'issueshare'}) / 1e8
             upload_df['chinese_name'] = row['chinese_name']
             upload_df['buystartdate'] = row['buystartdate']
             upload_df['fundfounddate'] = row['fundfounddate']
             upload_df['source'] = 'wind'
             upload_df['product_type'] = 'fund'
-            print(f'Updating {code} issueshare')
             self.insert_product_static_info(upload_df.squeeze())
 
     def _update_funds_by_buystartdate(self, missing_buystartdates):
@@ -846,8 +873,8 @@ class DatabaseUpdater(PgDbUpdaterBase):
             if code not in existing_codes:
                 print(f'Downloading fund info {code} for _update_special_funds_missing_buystartdate')
                 downloaded_df = \
-                w.wsd(code, "issue_date,fund_setupdate,sec_name,fund_fullname,fund_fullnameen,issue_unit",
-                      self.tradedays_str[-1], self.tradedays_str[-1], "", usedf=True)[1]
+                    w.wsd(code, "issue_date,fund_setupdate,sec_name,fund_fullname,fund_fullnameen,issue_unit",
+                          self.tradedays_str[-1], self.tradedays_str[-1], "", usedf=True)[1]
                 if downloaded_df.empty:
                     print(
                         f"Empty data downloaded for {code}, in _update_funds_by_buystartdate")
@@ -858,7 +885,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
                     columns={'index': 'code', 'SEC_NAME': 'chinese_name', 'ISSUE_DATE': 'buystartdate',
                              'FUND_SETUPDATE': 'fundfounddate', 'FUND_FULLNAME': 'fund_fullname',
                              'FUND_FULLNAMEEN': 'english_name', 'ISSUE_UNIT': 'issueshare'})
-                upload_df['issueshare'] = upload_df['issueshare']/1e8
+                upload_df['issueshare'] = upload_df['issueshare'] / 1e8
                 upload_df['source'] = 'wind'
                 upload_df['product_type'] = 'fund'
                 for _, row in upload_df.iterrows():
