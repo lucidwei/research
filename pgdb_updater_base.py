@@ -10,14 +10,15 @@ from WindPy import w
 from base_config import BaseConfig
 from pgdb_manager import PgDbManager
 from utils import check_wind, timeit
-from sqlalchemy import Table, MetaData, text, select, and_
-from sqlalchemy.orm import Session
+from sqlalchemy import Table, MetaData, text, select
+import tushare as ts
 
 
 class PgDbUpdaterBase(PgDbManager):
     def __init__(self, base_config: BaseConfig):
         super().__init__(base_config)
         check_wind()
+        self.pro = ts.pro_api('3c0eb978b70236184bebf8378aab04fa29867f6ddb0dc1c578e1f9d1')
         self.set_dates()
 
     def set_dates(self):
