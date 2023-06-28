@@ -3,6 +3,7 @@
 # Author  : Lucid
 # FileName: pg_database.py
 # Software: PyCharm
+from typing import Union
 from base_config import BaseConfig
 import psycopg2, sqlalchemy, subprocess
 from sqlalchemy import create_engine, text, select, case, String, cast, and_, column
@@ -152,7 +153,7 @@ class PgDbManager:
                     connection.execute(update_stmt)
 
     def select_existing_values_in_target_column(self, target_table: str, target_columns,
-                                                *where_conditions):
+                                                *where_conditions) -> Union[list, pd.DataFrame]:
         """
         获取目标表中指定列的现有值集合。
 

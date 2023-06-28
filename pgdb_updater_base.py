@@ -662,9 +662,6 @@ class PgDbUpdaterBase(PgDbManager):
         )
         self.alch_conn.commit()
 
-    def check_meta_table(self, table_name, check_column, **kwargs):
-        raise NotImplementedError("Subclasses must implement check_meta_table method.")
-
     def get_missing_metrics(self, target_table: str, target_column: str, metrics_at_hand: list):
         """
         Retrieves the missing metrics that are present in the input list but not in the specified target table 的 column.
@@ -698,9 +695,6 @@ class PgDbUpdaterBase(PgDbManager):
         missing_values = input_set - existing_values
 
         return sorted(list(missing_values))
-
-    def check_data_table(self, table_name, type_identifier, **kwargs):
-        raise NotImplementedError("Subclasses must implement check_data_table method.")
 
     def is_markets_daily_long_updated_today(self, field: str, product_name_key_word: str):
         # 获取今天的日期
