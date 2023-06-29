@@ -28,16 +28,28 @@ class DatabaseUpdater(PgDbUpdaterBase):
                                                                             ['code', 'chinese_name'],
                                                                             "product_type='index'")
                 sector_codes = sector_codes[sector_codes['chinese_name'] != '万德全A']
-                for _, row in sector_codes:
-                    sector_code = row['code']
+                for _, row in sector_codes.iterrows():
                     industry_name = row['chinese_name']
                     # 先判断是否需要更新，以防浪费quota
                     sector_update_date = self.select_existing_values_in_target_column('product_static_info',
                                                                                       'update_date',
-                                                                                      f"product_type='stock' AND stk_industry_cs={industry_name}")
+                                                                                      f"product_type='stock' AND stk_industry_cs='{industry_name}'")
                     # 如果现在没有数据，或最近更新的时间超过了30天
-                    if not sector_update_date or sector_update_date < self.tradedays[-1] - pd.Timedelta(days=30):
+                    if not sector_update_date:
+                        print('No sector_update_date, logic_industry_stk_price_volume need update')
                         return True
+                    elif len(sector_update_date) == 1:
+                        sector_update_datetime = datetime.datetime.strptime(sector_update_date[0], '%Y-%m-%d').date()
+                        if sector_update_datetime < self.tradedays[-1] - pd.Timedelta(days=30):
+                            print('sector_update_date last updated over a month ago, '
+                                  'logic_industry_stk_price_volume need update')
+                            return True
+                        else:
+                            print('sector_update_date last updated less than a month ago, '
+                                  'logic_industry_stk_price_volume not need update')
+                            return False
+                    else:
+                        raise Exception('len(sector_update_date) should be either 0 or 1')
             case _:
                 raise Exception(f'type_identifier {type_identifier} not supported in _check_meta_table')
 
@@ -48,7 +60,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
         # 获取需要更新的日期区间
         match type_identifier:
             case 'industry_volume':
-                filter_condition = f"product_static_info.product_type='index' AND {table_name}.field='收盘价'"
+                filter_condition = f"product_static_info.product_type='index' AND {table_name}.field='成交额'"
                 existing_dates = self.select_column_from_joined_table(
                     target_table_name='product_static_info',
                     target_join_column='internal_id',
@@ -142,6 +154,9 @@ class DatabaseUpdater(PgDbUpdaterBase):
             ('product_type', 'index')
         )
 
+        if missing_dates[0] == self.tradedays[-1]:
+            print('Only today is missing, skipping update _upload_missing_data_industry_volume')
+            return
         for date in missing_dates:
             for code in industry_codes:
                 print(
@@ -152,7 +167,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
                     print(
                         f"Missing data for {date} {code}, _upload_missing_data_industry_volume")
                     continue
-                df_upload = df.drop('WindCodes').rename(
+                df_upload = df.rename(
                     columns={'VOLUME': '成交量',
                              'AMT': '成交额',
                              'TURN': '换手率',
@@ -170,6 +185,8 @@ class DatabaseUpdater(PgDbUpdaterBase):
         """
         # 检查或更新meta_table
         need_update_meta_table = self._check_meta_table(type_identifier='price_volume')
+        # #TODO: 首次run，force为TRUE
+        # need_update_meta_table = True
         # 检查或更新data_table
         missing_dates = self._check_data_table(table_name='markets_daily_long',
                                                type_identifier='price_volume')
@@ -186,18 +203,18 @@ class DatabaseUpdater(PgDbUpdaterBase):
         for _, row in sector_codes.iterrows():
             sector_code = row['code']
             industry_name = row['chinese_name']
-            print(f'Wind downloading {industry_name} sectorconstituent for _check_meta_table')
+            print(f'Wind downloading {industry_name} sectorconstituent for _upload_missing_meta_stk_industry_price_volume')
             today_industry_stocks_df = w.wset("sectorconstituent",
                                               f"date={self.tradedays_str[-2]};"
                                               f"windcode={sector_code}", usedf=True)[1]
             sector_stk_codes = today_industry_stocks_df['wind_code'].tolist()
             existing_codes = self.select_existing_values_in_target_column('product_static_info', 'code',
-                                                                          f"product_type='stock' AND stk_industry_cs={industry_name}")
-            new_stk_codes = sector_stk_codes - existing_codes
-            selected_rows = today_industry_stocks_df[today_industry_stocks_df['code'].isin(new_stk_codes)]
+                                                                          f"product_type='stock' AND stk_industry_cs='{industry_name}'")
+            new_stk_codes = set(sector_stk_codes) - set(existing_codes)
+            selected_rows = today_industry_stocks_df[today_industry_stocks_df['wind_code'].isin(new_stk_codes)]
 
             # 构建df，列包含code, chinese_name, source, stk_industry_cs, product_type, update_date
-            df_upload = selected_rows['wind_code', 'sec_name'].rename(
+            df_upload = selected_rows[['wind_code', 'sec_name']].rename(
                 columns={'wind_code': 'code', 'sec_name': 'chinese_name'})
             df_upload['source'] = 'wind and tushare'
             df_upload['product_type'] = 'stock'
@@ -205,7 +222,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
             for i, row_stk in df_upload.iterrows():
                 code = row_stk['code']
                 date = self.tradedays[-2]
-                print(f'Wind downloading industry_citic for {code} on {date}')
+                print(f'Wind downloading industry_citic for {code} on {date} for _upload_missing_meta_stk_industry_price_volume')
                 info_df = w.wsd(code, "industry_citic", f'{date}', f'{date}', "unit=1;industryType=1",
                                 usedf=True)[1]
                 if info_df.empty:
@@ -223,12 +240,13 @@ class DatabaseUpdater(PgDbUpdaterBase):
             missing_dates = self._check_data_table(table_name='markets_daily_long',
                                                    type_identifier='stk_price_volume',
                                                    stock_code=code)
+            missing_dates_str_list = [date_obj.strftime('%Y%m%d') for date_obj in missing_dates]
             print(f"tushare downloading 行情 for {code}")
             df = self.pro.daily(**{
                 "ts_code": code,
                 "trade_date": "",
-                "start_date": missing_dates[0],
-                "end_date": missing_dates[-1],
+                "start_date": missing_dates_str_list[0],
+                "end_date": missing_dates_str_list[-2],
                 "offset": "",
                 "limit": ""
             }, fields=[

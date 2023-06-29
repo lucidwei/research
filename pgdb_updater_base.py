@@ -555,21 +555,41 @@ class PgDbUpdaterBase(PgDbManager):
                 internal_id = result.fetchone()[0]
                 conn.commit()
         elif row['product_type'] == 'stock':
-            query = text("""
-                        INSERT INTO product_static_info (code, chinese_name, stk_industry_cs, source, type_identifier, product_type)
-                        VALUES (:code, :chinese_name, :stk_industry_cs, :source, :type_identifier, :product_type)
-                        ON CONFLICT (chinese_name, product_type) DO NOTHING
-                        RETURNING internal_id;
-                        """)
-            self.alch_conn.execute(query,
-                                   {
-                                       'code': row['code'],
-                                       'chinese_name': row['chinese_name'],
-                                       'source': row['source'],
-                                       'product_type': row['product_type'],
-                                       'stk_industry_cs': row['stk_industry_cs'],
-                                       'type_identifier': row['type_identifier'],
-                                   })
+            if 'type_identifier' not in row.index:
+                query = text("""
+                            INSERT INTO product_static_info (code, chinese_name, stk_industry_cs, source, product_type, update_date)
+                            VALUES (:code, :chinese_name, :stk_industry_cs, :source, :product_type, :update_date)
+                            ON CONFLICT (code, product_type) DO UPDATE 
+                            SET chinese_name = EXCLUDED.chinese_name,
+                                stk_industry_cs = EXCLUDED.stk_industry_cs,
+                                source = EXCLUDED.source,
+                                update_date = EXCLUDED.update_date
+                            """)
+                self.alch_conn.execute(query,
+                                       {
+                                           'code': row['code'],
+                                           'chinese_name': row['chinese_name'],
+                                           'source': row['source'],
+                                           'product_type': row['product_type'],
+                                           'stk_industry_cs': row['stk_industry_cs'],
+                                           'update_date': row['update_date'],
+                                       })
+            else:
+                query = text("""
+                            INSERT INTO product_static_info (code, chinese_name, stk_industry_cs, source, type_identifier, product_type)
+                            VALUES (:code, :chinese_name, :stk_industry_cs, :source, :type_identifier, :product_type)
+                            ON CONFLICT (chinese_name, product_type) DO NOTHING
+                            RETURNING internal_id;
+                            """)
+                self.alch_conn.execute(query,
+                                       {
+                                           'code': row['code'],
+                                           'chinese_name': row['chinese_name'],
+                                           'source': row['source'],
+                                           'product_type': row['product_type'],
+                                           'stk_industry_cs': row['stk_industry_cs'],
+                                           'type_identifier': row['type_identifier'],
+                                       })
             self.alch_conn.commit()
             internal_id = None
         elif row['product_type'] == 'index':
@@ -615,11 +635,12 @@ class PgDbUpdaterBase(PgDbManager):
                         WHERE code = :code
                         """)
             self.alch_conn.execute(query,
-                         {
-                             'code': row['code'],
-                             'etf_type': row['etf_type'],
-                             'stk_industry_cs': None if pd.isnull(row['stk_industry_cs']) else row['stk_industry_cs'],
-                         })
+                                   {
+                                       'code': row['code'],
+                                       'etf_type': row['etf_type'],
+                                       'stk_industry_cs': None if pd.isnull(row['stk_industry_cs']) else row[
+                                           'stk_industry_cs'],
+                                   })
             self.alch_conn.commit()
         else:
             raise Exception(f'task:{task} not supported!')

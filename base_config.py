@@ -56,6 +56,7 @@ class BaseConfig:
                         'risk_parity': 'wgz_db',
                         'low_freq': 'wgz_db',
                         'equity_liquidity': 'wgz_db',
+                        'equity_sentiment': 'wgz_db',
                         }
 
         self.db_config = {
