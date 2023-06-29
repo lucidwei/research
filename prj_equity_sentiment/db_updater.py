@@ -11,6 +11,7 @@ from base_config import BaseConfig
 from pgdb_updater_base import PgDbUpdaterBase
 from WindPy import w
 from sqlalchemy import text
+from utils import has_large_date_gap
 
 
 class DatabaseUpdater(PgDbUpdaterBase):
@@ -19,7 +20,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
         self.logic_industry_volume()
         self.logic_industry_large_order()
         self.logic_industry_stk_price_volume()
-        self.logic_analyst()
+        # self.logic_analyst()
 
     def _check_meta_table(self, type_identifier):
         match type_identifier:
@@ -54,50 +55,60 @@ class DatabaseUpdater(PgDbUpdaterBase):
             case _:
                 raise Exception(f'type_identifier {type_identifier} not supported in _check_meta_table')
 
-    def _check_data_table(self, table_name, type_identifier, **kwargs):
+    def _check_data_table(self, type_identifier, **kwargs):
         # Retrieve the optional filter condition
         additional_filter = kwargs.get('additional_filter')
 
         # 获取需要更新的日期区间
         match type_identifier:
             case 'industry_volume':
-                filter_condition = f"product_static_info.product_type='index' AND {table_name}.field='成交额'"
+                filter_condition = f"product_static_info.product_type='index' AND markets_daily_long.field='成交额'"
                 existing_dates = self.select_column_from_joined_table(
                     target_table_name='product_static_info',
                     target_join_column='internal_id',
-                    join_table_name=table_name,
+                    join_table_name='markets_daily_long',
                     join_column='product_static_info_id',
                     selected_column=f'date',
                     filter_condition=filter_condition
                 )
             case 'price_volume':
-                filter_condition = f"product_static_info.product_type='stock' AND {table_name}.field='收盘价'"
+                filter_condition = f"product_static_info.product_type='stock' AND markets_daily_long.field='收盘价'"
                 existing_dates = self.select_column_from_joined_table(
                     target_table_name='product_static_info',
                     target_join_column='internal_id',
-                    join_table_name=table_name,
+                    join_table_name='markets_daily_long',
                     join_column='product_static_info_id',
                     selected_column=f'date',
                     filter_condition=filter_condition
                 )
             case 'stk_price_volume':
                 stock_code = kwargs.get('stock_code')
-                filter_condition = f"markets_daily_long.product_name='{stock_code}' AND {table_name}.field='收盘价'"
+                filter_condition = f"stocks_daily_long.product_name='{stock_code}' AND stocks_daily_long.field='收盘价'"
                 existing_dates = self.select_column_from_joined_table(
                     target_table_name='product_static_info',
                     target_join_column='internal_id',
-                    join_table_name=table_name,
+                    join_table_name='stocks_daily_long',
+                    join_column='product_static_info_id',
+                    selected_column=f'date',
+                    filter_condition=filter_condition
+                )
+            case 'industry_large_order':
+                filter_condition = f"markets_daily_long.field='主力净流入额'"
+                existing_dates = self.select_column_from_joined_table(
+                    target_table_name='product_static_info',
+                    target_join_column='internal_id',
+                    join_table_name='markets_daily_long',
                     join_column='product_static_info_id',
                     selected_column=f'date',
                     filter_condition=filter_condition
                 )
             case 'analyst':
                 stock_code = kwargs.get('stock_code')
-                filter_condition = f"markets_daily_long.product_name='{stock_code}' AND {table_name}.field='券商-研报标题'"
+                filter_condition = f"markets_daily_long.product_name='{stock_code}' AND markets_daily_long.field='券商-研报标题'"
                 existing_dates = self.select_column_from_joined_table(
                     target_table_name='product_static_info',
                     target_join_column='internal_id',
-                    join_table_name=table_name,
+                    join_table_name='markets_daily_long',
                     join_column='product_static_info_id',
                     selected_column=f'date',
                     filter_condition=filter_condition
@@ -111,18 +122,6 @@ class DatabaseUpdater(PgDbUpdaterBase):
                     missing_dates[1] = self.tradedays[-1]
                 return missing_dates
 
-            case '备用':
-                filter_condition = f"metric_static_info.type_identifier = '{type_identifier}'"
-                if additional_filter:
-                    filter_condition += f" AND {additional_filter}"
-                existing_dates = self.select_column_from_joined_table(
-                    target_table_name='metric_static_info',
-                    target_join_column='internal_id',
-                    join_table_name=table_name,
-                    join_column='metric_static_info_id',
-                    selected_column=f'date',
-                    filter_condition=filter_condition
-                )
             case _:
                 raise Exception(f'type_identifier: {type_identifier} not supported.')
 
@@ -142,8 +141,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
         """
         # 不需检查或更新meta_table，因为行业指数和全A已经存在于product_static_info
         # 直接检查或更新data_table
-        missing_dates = self._check_data_table(table_name='markets_daily_long',
-                                               type_identifier='industry_volume',
+        missing_dates = self._check_data_table(type_identifier='industry_volume',
                                                additional_filter=f"field='成交额'")
         if missing_dates:
             self._upload_missing_data_industry_volume(missing_dates)
@@ -185,11 +183,10 @@ class DatabaseUpdater(PgDbUpdaterBase):
         用wind.py更新行业和全A的主力净流入额，用来构建拥挤度。
         """
         # 不需检查或更新meta_table，因为行业指数和全A已经存在于product_static_info
-        missing_dates = self._check_data_table(table_name='markets_daily_long',
-                                               type_identifier='industry_large_order',
+        missing_dates = self._check_data_table(type_identifier='industry_large_order',
                                                additional_filter=f"field='主力净流入额'")
         if missing_dates:
-            self._upload_missing_data_industry_volume(missing_dates)
+            self._upload_missing_data_industry_large_order(missing_dates)
 
     def _upload_missing_data_industry_large_order(self, missing_dates):
         industry_codes = self.select_existing_values_in_target_column(
@@ -213,8 +210,8 @@ class DatabaseUpdater(PgDbUpdaterBase):
                     f"Missing data for {code} {missing_dates[0]}~{missing_dates[-1]}, "
                     f"_upload_missing_data_industry_large_order")
                 continue
-            df_upload = df.rename(
-                columns={'DateTime': 'date',
+            df_upload = df.reset_index().rename(
+                columns={'index': 'date',
                          'MFD_INFLOW_M': '主力净流入额',
                          })
             df_upload['product_name'] = code
@@ -229,11 +226,10 @@ class DatabaseUpdater(PgDbUpdaterBase):
         """
         # 检查或更新meta_table
         need_update_meta_table = self._check_meta_table(type_identifier='price_volume')
-        # #TODO: 首次run，force为TRUE
+        # 首次run，force为TRUE
         # need_update_meta_table = True
         # 检查或更新data_table
-        missing_dates = self._check_data_table(table_name='markets_daily_long',
-                                               type_identifier='price_volume')
+        missing_dates = self._check_data_table(type_identifier='price_volume')
         if need_update_meta_table:
             self._upload_missing_meta_stk_industry_price_volume()
         if missing_dates:
@@ -281,10 +277,21 @@ class DatabaseUpdater(PgDbUpdaterBase):
         existing_codes = self.select_existing_values_in_target_column('product_static_info', 'code',
                                                                       f"product_type='stock'")
         for code in existing_codes:
-            missing_dates = self._check_data_table(table_name='markets_daily_long',
-                                                   type_identifier='stk_price_volume',
+            missing_dates = self._check_data_table(type_identifier='stk_price_volume',
                                                    stock_code=code)
             missing_dates_str_list = [date_obj.strftime('%Y%m%d') for date_obj in missing_dates]
+            if missing_dates[0] == self.all_dates[-1]:
+                print(f'{code} Only today is missing, skipping update _upload_missing_data_stk_price_volume')
+                continue
+            elif has_large_date_gap(missing_dates) and missing_dates[-1] == self.all_dates[-1]:
+                print(f'{code} 期间有停牌, 但已经更新过了只缺今天， skipping update _upload_missing_data_stk_price_volume')
+                continue
+            elif self.tradedays[-1] - missing_dates[-6] > datetime.timedelta(days=15):
+                print(f'{code}在期间内曾经为新股，且发行后的数据已经更新过了， skipping update _upload_missing_data_stk_price_volume')
+            elif code == '900936.SH':
+                # B股没有数据
+                continue
+
             print(f"tushare downloading 行情 for {code}")
             df = self.pro.daily(**{
                 "ts_code": code,
@@ -317,21 +324,21 @@ class DatabaseUpdater(PgDbUpdaterBase):
             })
             # 转换为长格式数据框
             df_long = pd.melt(df, id_vars=['date', 'product_name'], var_name='field', value_name='value')
-            df_long.to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
+            df_long.to_sql('stocks_daily_long', self.alch_engine, if_exists='append', index=False)
 
     def logic_analyst(self):
         existing_codes = self.select_existing_values_in_target_column('product_static_info', 'code',
                                                                       f"product_type='stock'")
         for code in existing_codes:
-            missing_dates = self._check_data_table(table_name='markets_daily_long',
-                                                   type_identifier='analyst',
+            missing_dates = self._check_data_table(type_identifier='analyst',
                                                    stock_code=code)
+            missing_dates_str_list = [date_obj.strftime('%Y%m%d') for date_obj in missing_dates]
             print(f"tushare downloading 研报历史 for {code} {missing_dates[0]}-{missing_dates[1]}")
             df = self.pro.report_rc(**{
                 "ts_code": code,
                 "report_date": "",
-                "start_date": missing_dates[0],
-                "end_date": missing_dates[-1],
+                "start_date": missing_dates_str_list[0],
+                "end_date": missing_dates_str_list[-1],
                 "limit": "",
                 "offset": ""
             }, fields=[
@@ -353,7 +360,12 @@ class DatabaseUpdater(PgDbUpdaterBase):
                 "rating": '卖方评级',
             }).drop_duplicates()
             df['券商-研报标题'] = df['机构名称'] + '-' + df['报告标题']
-            df = df.drop(columns=['机构名称', '报告标题'])
+            df_selected = df[['date', 'product_name', '券商-研报标题']].drop_duplicates()
+            df_report_counts = df_selected.groupby(['product_name', 'date'])['券商-研报标题'].nunique().reset_index()
+            df_report_counts.columns = ['product_name', 'date', '报告数量']
+
+            #TODO: 因为是断续数据，需要剔除已存在的
+
             # 转换为长格式数据框
-            df_long = pd.melt(df, id_vars=['date', 'product_name'], var_name='field', value_name='str_value')
+            df_long = pd.melt(df_report_counts, id_vars=['date', 'product_name'], var_name='field', value_name='value')
             df_long.to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)

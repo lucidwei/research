@@ -140,6 +140,18 @@ def is_date(value):
         return False
 
 
+def has_large_date_gap(date_list):
+    """
+    判断由日期时间组成的列表中是否存在超过20天间隔的日期
+    """
+    sorted_dates = sorted(date_list)  # 对日期进行排序
+    for i in range(len(sorted_dates) - 1):
+        diff = sorted_dates[i + 1] - sorted_dates[i]
+        if diff > timedelta(days=20):
+            return True
+    return False
+
+
 def get_month_end_dates(start_date: date, end_date: date):
     """
     返回一个包含给定时间范围内所有月末日期的元组(tuple)，元组包含 datetime 对象和 str 对象两种格式

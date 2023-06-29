@@ -93,9 +93,33 @@ class MoneyFlow(PgDbUpdaterBase):
         north_inflow_df = pd.DataFrame(north_inflow, columns=['date', '两融净买入总额'])
 
         # TODO: 还要构建行业的，从长格式转换为date-industry的买入额或流入额
-        finance_net_buy_industry
-        north_inflow_industry
-        pass
+        # Question 152 各行业两融净买入额(时间序列)
+        finance_net_buy_industry_query = text(
+            """
+            SELECT "source"."date" AS "date", "source"."中信一级行业" AS "中信一级行业", SUM("source"."value") AS "sum"
+            FROM (SELECT "source"."date" AS "date", "source"."field" AS "field", "source"."value" AS "value", "source"."中信一级行业" AS "中信一级行业" FROM (SELECT "source"."date" AS "date", "source"."product_name" AS "product_name", "source"."field" AS "field", "source"."value" AS "value", substring("source"."product_name" FROM 'CS(.*)') AS "中信一级行业" FROM (SELECT "public"."markets_daily_long"."date" AS "date", "public"."markets_daily_long"."product_name" AS "product_name", "public"."markets_daily_long"."field" AS "field", "public"."markets_daily_long"."value" AS "value" FROM "public"."markets_daily_long"
+            LEFT JOIN "public"."metric_static_info" AS "Metric Static Info" ON "public"."markets_daily_long"."metric_static_info_id" = "Metric Static Info"."internal_id"
+            WHERE "Metric Static Info"."type_identifier" = 'margin_by_industry') AS "source") AS "source") AS "source" WHERE "source"."field" = '两融净买入额'
+            GROUP BY "source"."date", "source"."中信一级行业"
+            ORDER BY "source"."date" ASC, "source"."中信一级行业" ASC
+            """
+        )
+        finance_net_buy_industry = self.alch_conn.execute(north_inflow_query)
+        finance_net_buy_industry_df = pd.DataFrame(finance_net_buy_industry, columns=['date', '中信行业', '两融净买入额'])
+
+        # Question 156 各行业北向净买入额(时间序列)
+        north_inflow_industry_query = text(
+            """
+            SELECT "source"."date" AS "date", "source"."中信一级行业" AS "中信一级行业", SUM("source"."value") AS "sum"
+            FROM (SELECT "source"."date" AS "date", "source"."field" AS "field", "source"."value" AS "value", "source"."中信一级行业" AS "中信一级行业" FROM (SELECT "public"."markets_daily_long"."date" AS "date", "public"."markets_daily_long"."product_name" AS "product_name", "public"."markets_daily_long"."field" AS "field", "public"."markets_daily_long"."value" AS "value", "public"."markets_daily_long"."metric_static_info_id" AS "metric_static_info_id", substring("public"."markets_daily_long"."product_name" FROM 'CS(.*)') AS "中信一级行业", "Metric Static Info"."type_identifier" AS "Metric Static Info__type_identifier", "Metric Static Info"."internal_id" AS "Metric Static Info__internal_id" FROM "public"."markets_daily_long"
+            LEFT JOIN "public"."metric_static_info" AS "Metric Static Info" ON "public"."markets_daily_long"."metric_static_info_id" = "Metric Static Info"."internal_id"
+            WHERE "Metric Static Info"."type_identifier" = 'north_inflow') AS "source") AS "source" WHERE "source"."field" = '净买入'
+            GROUP BY "source"."date", "source"."中信一级行业"
+            ORDER BY "source"."date" ASC, "source"."中信一级行业" ASC
+            """
+        )
+        north_inflow_industry = self.alch_conn.execute(north_inflow_query)
+        north_inflow_industry_df = pd.DataFrame(north_inflow_industry, columns=['date', '中信行业', '北向净买入额'])
 
     def calc_finance_net_buy(self):
         # 最近20个交易日融资买入额占最近60个交易日融资买入额比重作为融资买入情绪
@@ -152,15 +176,19 @@ class PriceVolume(PgDbUpdaterBase):
         pass
 
     def calc_over_MA_number(self, window=30):
+        # 需要个股数据
         # 计算各行业30日均线上数量占比分位
         pass
 
     def calc_recent_new_highs(self, window=60):
+        # 需要个股数据
         # 计算各行业创 60 日新高数量占比分位
         pass
 
 
 class Analyst(PgDbUpdaterBase):
+    # 无tushare数据权限，暂时不能做
+    # TODO：可以看看wind
     def __init__(self, base_config: BaseConfig):
         super().__init__(base_config)
         # 初始化MoneyFlow类需要的其他属性
@@ -181,10 +209,12 @@ class MarketDivergence(PgDbUpdaterBase):
         pass
 
     def calc_market_breadth(self):
+        # 可利用个股或行业计算。前者需要个股数据。
         pass
 
     def calc_28_amount_diverge(self):
         # 国盛策略：二八交易分化
+        # 需要个股数据
         pass
 
     def calc_rotation_strength(self):
