@@ -17,6 +17,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
     def __init__(self, base_config: BaseConfig):
         super().__init__(base_config)
         self.logic_industry_volume()
+        self.logic_industry_large_order()
         self.logic_industry_stk_price_volume()
         self.logic_analyst()
 
@@ -178,6 +179,49 @@ class DatabaseUpdater(PgDbUpdaterBase):
                                            value_name='value').dropna()
 
                 df_upload.to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
+
+    def logic_industry_large_order(self):
+        """
+        用wind.py更新行业和全A的主力净流入额，用来构建拥挤度。
+        """
+        # 不需检查或更新meta_table，因为行业指数和全A已经存在于product_static_info
+        missing_dates = self._check_data_table(table_name='markets_daily_long',
+                                               type_identifier='industry_large_order',
+                                               additional_filter=f"field='主力净流入额'")
+        if missing_dates:
+            self._upload_missing_data_industry_volume(missing_dates)
+
+    def _upload_missing_data_industry_large_order(self, missing_dates):
+        industry_codes = self.select_existing_values_in_target_column(
+            'product_static_info',
+            'code',
+            ('product_type', 'index')
+        )
+
+        if missing_dates[0] == self.tradedays[-1]:
+            print('Only today is missing, skipping update _upload_missing_data_industry_large_order')
+            return
+
+        for code in industry_codes:
+            print(
+                f'Wind downloading and upload mfd_inflow_m for {code} {missing_dates[0]}~{missing_dates[-1]} '
+                f'_upload_missing_data_industry_large_order')
+            df = w.wsd(code, "mfd_inflow_m", missing_dates[0],
+                       missing_dates[-1], "unit=1", usedf=True)[1]
+            if df.empty:
+                print(
+                    f"Missing data for {code} {missing_dates[0]}~{missing_dates[-1]}, "
+                    f"_upload_missing_data_industry_large_order")
+                continue
+            df_upload = df.rename(
+                columns={'DateTime': 'date',
+                         'MFD_INFLOW_M': '主力净流入额',
+                         })
+            df_upload['product_name'] = code
+            df_upload = df_upload.melt(id_vars=['date', 'product_name'], var_name='field',
+                                       value_name='value').dropna()
+
+            df_upload.to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
 
     def logic_industry_stk_price_volume(self):
         """

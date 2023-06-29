@@ -920,3 +920,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
             upload_df['chinese_name'] = row['chinese_name']
             for _, info in upload_df.iterrows():
                 self.insert_product_static_info(info)
+
+    def logic_buy_back(self):
+        #TODO: ¹ÉÆ±»Ø¹º
+        pass

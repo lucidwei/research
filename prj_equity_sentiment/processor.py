@@ -9,18 +9,61 @@ import numpy as np
 import pandas as pd
 from base_config import BaseConfig
 from pgdb_updater_base import PgDbUpdaterBase
-from WindPy import w
 from sqlalchemy import text
 
 
 class Processor(PgDbUpdaterBase):
     """
     用来生成各种指标，并上传至数据库
+    每个子函数都返回两个，总量（全A）和行业
     """
+
     def __init__(self, base_config: BaseConfig):
         super().__init__(base_config)
+        self.money_flow = MoneyFlow(base_config)
+        self.price_volume = PriceVolume(base_config)
+        self.analyst = Analyst(base_config)
+        self.market_divergence = MarketDivergence(base_config)
+        self.generate_indicators()
+        self.upload_indicators()
 
-    def calculate_money_flow(self):
+    def generate_indicators(self):
+        # 生成所有指标
+        self.money_flow.calculate()
+        self.price_volume.calculate()
+        self.analyst.calculate()
+        self.market_divergence.calculate()
+        self.calculate_industry_congestion()
+
+    def upload_indicators(self):
+        self.upload_indicator(self.money_flow.results)
+        self.upload_indicator(self.price_volume.results)
+        self.upload_indicator(self.analyst.results)
+        self.upload_indicator(self.market_divergence.results)
+        # self.upload_indicator(self.industry_congestion.results)
+        pass
+
+    def upload_indicator(self):
+        pass
+
+    def calculate_industry_congestion(self):
+        # 将上述指标进行汇总，得到复合拥挤度
+        # 需要先对各指标求irf，根据irf结果指定不同指标的权重，不着急做
+        pass
+
+
+class MoneyFlow(PgDbUpdaterBase):
+    def __init__(self, base_config: BaseConfig):
+        super().__init__(base_config)
+        self.read_data_money_flow()
+
+    def calculate(self):
+        # 将计算结果保存在self.results中
+        self.calc_finance_net_buy()
+        self.calc_north_inflow()
+        pass
+
+    def read_data_money_flow(self):
         # Question 153 两融净买入总额(时间序列)
         finance_net_buy_query = text(
             """
@@ -49,16 +92,101 @@ class Processor(PgDbUpdaterBase):
         north_inflow = self.alch_conn.execute(north_inflow_query)
         north_inflow_df = pd.DataFrame(north_inflow, columns=['date', '两融净买入总额'])
 
-        # TODO: 还要构建行业的
-
-    def calculate_price_volume(self):
+        # TODO: 还要构建行业的，从长格式转换为date-industry的买入额或流入额
+        finance_net_buy_industry
+        north_inflow_industry
         pass
 
-    def calculate_market_divergence(self):
+    def calc_finance_net_buy(self):
+        # 最近20个交易日融资买入额占最近60个交易日融资买入额比重作为融资买入情绪
+
+        # 将融资买入情绪进行滚动一年分位处理
         pass
 
-    def calculate_industry_congestion(self):
+    def calc_north_inflow(self):
+        # 注：自建
+        # 最近20个交易日北向净流入额占最近60个交易日北向净流入额比重作为北向买入情绪
+
+        # 将北向买入情绪进行滚动一年分位处理
         pass
 
-    def upload_indicators(self):
+
+class PriceVolume(PgDbUpdaterBase):
+    def __init__(self, base_config: BaseConfig):
+        super().__init__(base_config)
+        self.read_data_price_volume()
+
+    def calculate(self):
+        # 计算各行业量价相关的各指标
+        # 将计算结果保存在self.results中
+        self.calc_amt_proportion()
+        self.calc_amt_quantile()
+        self.calc_turnover_quantile()
+        self.calc_vol_shrink_rate()
+        self.calc_momentum()
+        self.calc_over_MA_number()
+        self.calc_recent_new_highs()
+
+    def read_data_price_volume(self):
+        # 从长格式转换为date-stk_codes的收盘价
+        pass
+
+    def calc_amt_proportion(self):
+        # 计算各行业的成交占比
+        pass
+
+    def calc_amt_quantile(self):
+        # 计算各行业的成交额滚动一年分位
+        pass
+
+    def calc_turnover_quantile(self):
+        # 计算各行业的换手率滚动一年分位
+        pass
+
+    def calc_vol_shrink_rate(self):
+        # 计算各行业的缩量率
+        pass
+
+    def calc_momentum(self):
+        # 这个暂时不知道怎么做
+        pass
+
+    def calc_over_MA_number(self, window=30):
+        # 计算各行业30日均线上数量占比分位
+        pass
+
+    def calc_recent_new_highs(self, window=60):
+        # 计算各行业创 60 日新高数量占比分位
+        pass
+
+
+class Analyst(PgDbUpdaterBase):
+    def __init__(self, base_config: BaseConfig):
+        super().__init__(base_config)
+        # 初始化MoneyFlow类需要的其他属性
+
+    def calculate(self):
+        # 计算各行业的增持或买入评级研报数量分位
+        # 将计算结果保存在self.results中
+        pass
+
+
+class MarketDivergence(PgDbUpdaterBase):
+    def __init__(self, base_config: BaseConfig):
+        super().__init__(base_config)
+
+    def calculate(self):
+        # 计算各行业衡量市场分化程度的各指标
+        # 将计算结果保存在self.results中
+        pass
+
+    def calc_market_breadth(self):
+        pass
+
+    def calc_28_amount_diverge(self):
+        # 国盛策略：二八交易分化
+        pass
+
+    def calc_rotation_strength(self):
+        # 计算全市场（不同行业之间的）轮动强度
         pass
