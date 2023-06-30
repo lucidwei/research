@@ -40,7 +40,7 @@ class Processor(PgDbUpdaterBase):
 
     def generate_indicators(self):
         # 生成所有指标
-        # self.money_flow.calculate()
+        self.money_flow.calculate()
         self.price_volume.calculate()
         self.analyst.calculate()
         self.market_divergence.calculate()
@@ -79,9 +79,7 @@ class MoneyFlow(PgDbUpdaterBase):
     def results(self):
         return {
             'finance_net_buy_percentile_industry': self.fnb_percentile_industry,
-            'finance_net_buy_percentile_total': self.fnb_percentile_total,
             'north_percentile_industry': self.north_percentile_industry,
-            'north_percentile_total': self.north_percentile_total,
         }
 
     def read_data_money_flow(self):
@@ -111,7 +109,7 @@ class MoneyFlow(PgDbUpdaterBase):
             """
         )
         north_inflow = self.alch_conn.execute(north_inflow_query)
-        self.north_inflow_df = pd.DataFrame(north_inflow, columns=['date', '两融净买入总额']).set_index('date')
+        self.north_inflow_df = pd.DataFrame(north_inflow, columns=['date', '北向净买入总额']).set_index('date')
 
         # 还要构建行业的
         # Question 152 各行业两融净买入额(时间序列)
@@ -155,7 +153,8 @@ class MoneyFlow(PgDbUpdaterBase):
         # 将融资买入情绪进行滚动一年分位处理
         self.fnb_percentile_industry = weights_industry.rolling(window=252).apply(
             lambda x: pd.Series(x).rank(pct=True)[0])
-        self.fnb_percentile_total = weights_total.rolling(window=252).apply(lambda x: pd.Series(x).rank(pct=True)[0])
+        fnb_percentile_total = weights_total.rolling(window=252).apply(lambda x: pd.Series(x).rank(pct=True)[0])
+        self.fnb_percentile_industry['总额'] = fnb_percentile_total['两融净买入总额']
 
     def calc_north_inflow(self):
         # 注：自建
@@ -167,7 +166,8 @@ class MoneyFlow(PgDbUpdaterBase):
         # 将北向买入情绪进行滚动一年分位处理
         self.north_percentile_industry = weights_industry.rolling(window=252).apply(
             lambda x: pd.Series(x).rank(pct=True)[0])
-        self.north_percentile_total = weights_total.rolling(window=252).apply(lambda x: pd.Series(x).rank(pct=True)[0])
+        north_percentile_total = weights_total.rolling(window=252).apply(lambda x: pd.Series(x).rank(pct=True)[0])
+        self.north_percentile_industry['总额'] = north_percentile_total['北向净买入总额']
 
 
 class PriceVolume(PgDbUpdaterBase):
@@ -276,19 +276,6 @@ class PriceVolume(PgDbUpdaterBase):
         pass
 
 
-class Analyst(PgDbUpdaterBase):
-    # 无tushare数据权限，暂时不能做
-    # TODO：可以看看wind
-    def __init__(self, base_config: BaseConfig):
-        super().__init__(base_config)
-        # 初始化MoneyFlow类需要的其他属性
-
-    def calculate(self):
-        # 计算各行业的增持或买入评级研报数量分位
-        # 将计算结果保存在self.results中
-        pass
-
-
 class MarketDivergence(PgDbUpdaterBase):
     def __init__(self, base_config: BaseConfig):
         super().__init__(base_config)
@@ -303,9 +290,7 @@ class MarketDivergence(PgDbUpdaterBase):
     @property
     def results(self):
         return {
-            'market_breadth_industry_close': self.mb_industry_close,
-            'market_breadth_industry_drawdown': self.mb_industry_drawdown,
-            'market_breadth_industry_above_ma': self.mb_industry_above_ma,
+            'market_breadth_industry': self.mb_industry_combined,
             'rotation_strength': self.rotation_strength,
         }
 
@@ -331,8 +316,15 @@ class MarketDivergence(PgDbUpdaterBase):
         # 可利用个股或行业计算。前者需要个股数据。
         # 行业层面
         close_industry_df = self.close_industry_df.drop(columns=['万德全A'])
-        # 当日收涨比例,
-        self.mb_industry_close = close_industry_df.apply(lambda x: sum(x > x.shift(1)), axis=1)
+        # 当日收涨比例
+        # 计算每个行业的日涨跌幅
+        pct_change_df = close_industry_df.pct_change()
+        # 判断每天哪些行业收涨
+        rising_df = pct_change_df > 0
+        # 计算每天收涨的行业的比例
+        mb_industry_close = rising_df.mean(axis=1).to_frame()
+        mb_industry_close.columns = ['当日收涨比例']
+        # mb_industry_close = close_industry_df.apply(lambda x: sum(x > x.shift(1)), axis=1)
 
         # 回撤幅度中位数减去全A的回撤幅度
         # 计算行业回撤幅度
@@ -342,12 +334,17 @@ class MarketDivergence(PgDbUpdaterBase):
         market_drawdown = (self.close_industry_df['万德全A'] / self.close_industry_df['万德全A'].rolling(
             window=252).max()) - 1
         # 计算市场宽度
-        self.mb_industry_drawdown = industry_drawdown_median - market_drawdown
+        mb_industry_drawdown = (industry_drawdown_median - market_drawdown).to_frame()
+        mb_industry_drawdown.columns = ['市场宽度-基于回撤']
 
         # 行业指数收盘价站上20日均线的比例
-        above_ma_ratio = (close_industry_df > close_industry_df.rolling(window=20).mean()).mean(axis=1)
-        # 计算市场宽度
-        self.mb_industry_above_ma = above_ma_ratio
+        mb_industry_above_ma = (close_industry_df > close_industry_df.rolling(window=20).mean()).mean(axis=1).to_frame()
+        mb_industry_above_ma.columns = ['市场宽度-基于位置']
+
+        mb_industry_combined = pd.concat([mb_industry_close, mb_industry_drawdown, mb_industry_above_ma], axis=1)
+        self.mb_industry_combined = mb_industry_combined.reset_index().melt(id_vars=['date'],
+                                                                            var_name='market_breadth_type',
+                                                                            value_name='value')
 
     def calc_28_amount_diverge(self):
         # 国盛策略：二八交易分化
@@ -360,3 +357,16 @@ class MarketDivergence(PgDbUpdaterBase):
         daily_returns = close_industry_df.pct_change()  # 计算每日涨跌幅
         rank_changes = daily_returns.rank(axis=1).diff().abs()  # 计算涨跌百分比排名的变化的绝对值
         self.rotation_strength = rank_changes.sum(axis=1)  # 求和得到轮动强度
+
+
+class Analyst(PgDbUpdaterBase):
+    # 无tushare数据权限，暂时不能做
+    # TODO：可以看看wind
+    def __init__(self, base_config: BaseConfig):
+        super().__init__(base_config)
+        # 初始化MoneyFlow类需要的其他属性
+
+    def calculate(self):
+        # 计算各行业的增持或买入评级研报数量分位
+        # 将计算结果保存在self.results中
+        pass

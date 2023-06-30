@@ -15,9 +15,13 @@ import tushare as ts
 
 
 class PgDbUpdaterBase(PgDbManager):
+    connection_checked = False
+
     def __init__(self, base_config: BaseConfig):
+        if not PgDbUpdaterBase.connection_checked:
+            check_wind()
+            PgDbUpdaterBase.connection_checked = True
         super().__init__(base_config)
-        check_wind()
         self.pro = ts.pro_api('3c0eb978b70236184bebf8378aab04fa29867f6ddb0dc1c578e1f9d1')
         self.set_dates()
 
