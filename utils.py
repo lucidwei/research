@@ -148,8 +148,21 @@ def has_large_date_gap(date_list):
     for i in range(len(sorted_dates) - 1):
         diff = sorted_dates[i + 1] - sorted_dates[i]
         if diff > timedelta(days=20):
+            print("存在超过20天间隔的日期：")
+            print("左边日期:", sorted_dates[i])
+            print("右边日期:", sorted_dates[i + 1])
             return True
     return False
+
+def match_recent_tradedays(date_list, tradedays):
+    """
+    匹配给定列表中最近的五个交易日和 self.tradedays 的最后五个交易日，并检查对应元素的值是否一致
+    """
+    recent_dates = date_list[-5:] if len(date_list) >= 5 else date_list
+    for i in range(1, min(len(recent_dates)+1, 6)):
+        if recent_dates[-i] != tradedays[-i]:
+            return False
+    return True
 
 
 def get_month_end_dates(start_date: date, end_date: date):

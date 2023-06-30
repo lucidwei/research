@@ -11,7 +11,7 @@ from base_config import BaseConfig
 from pgdb_updater_base import PgDbUpdaterBase
 from WindPy import w
 from sqlalchemy import text
-from utils import has_large_date_gap
+from utils import has_large_date_gap, match_recent_tradedays
 
 
 class DatabaseUpdater(PgDbUpdaterBase):
@@ -276,15 +276,26 @@ class DatabaseUpdater(PgDbUpdaterBase):
     def _upload_missing_data_stk_price_volume(self):
         existing_codes = self.select_existing_values_in_target_column('product_static_info', 'code',
                                                                       f"product_type='stock'")
-        for code in existing_codes:
+        for code in existing_codes[3200:]:
             missing_dates = self._check_data_table(type_identifier='stk_price_volume',
                                                    stock_code=code)
             missing_dates_str_list = [date_obj.strftime('%Y%m%d') for date_obj in missing_dates]
             if missing_dates[0] == self.all_dates[-1]:
                 print(f'{code} Only today is missing, skipping update _upload_missing_data_stk_price_volume')
                 continue
+            elif 2 <= len(missing_dates) <= 5:
+                # missing_dates保留近5个交易日后，正常更新
+                missing_dates_recent = [date for date in missing_dates if date in self.tradedays[-5:]]
+                missing_dates_str_list = [date_obj.strftime('%Y%m%d') for date_obj in missing_dates_recent]
+                # 只缺今天数据，跳过
+                if missing_dates_recent[0] == self.all_dates[-1]:
+                    print(f'{code} Only today is missing, skipping update _upload_missing_data_stk_price_volume')
+                    continue
             elif has_large_date_gap(missing_dates) and missing_dates[-1] == self.all_dates[-1]:
                 print(f'{code} 期间有停牌, 但已经更新过了只缺今天， skipping update _upload_missing_data_stk_price_volume')
+                continue
+            elif not has_large_date_gap(missing_dates) and not match_recent_tradedays(missing_dates, self.tradedays):
+                print(f'{code} 近期停牌, 但曾经更新过了， skipping update _upload_missing_data_stk_price_volume')
                 continue
             elif self.tradedays[-1] - missing_dates[-6] > datetime.timedelta(days=15):
                 print(f'{code}在期间内曾经为新股，且发行后的数据已经更新过了， skipping update _upload_missing_data_stk_price_volume')
@@ -292,7 +303,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
                 # B股没有数据
                 continue
 
-            print(f"tushare downloading 行情 for {code}")
+            print(f"tushare downloading 行情 for {code} {missing_dates[0]}~{missing_dates[-2]}")
             df = self.pro.daily(**{
                 "ts_code": code,
                 "trade_date": "",
