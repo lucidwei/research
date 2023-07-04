@@ -26,25 +26,6 @@ class DatabaseUpdater(PgDbUpdaterBase):
         self.logic_price_valuation()
         self.update_MA_processed_data(MA_period=10)
 
-    def logic_margin_trade_by_industry(self):
-        """
-        1. 检查
-        :return:
-        """
-        # 检查或更新meta_table
-        need_update_meta_table = self._check_meta_table('metric_static_info', 'chinese_name',
-                                                        type_identifier='margin_by_industry')
-        if need_update_meta_table:
-            for industry in self.today_industries_df['industryname'].tolist():
-                self.insert_metric_static_info(source_code=f'wind_tradingstatisticsbyindustry_{industry}',
-                                               chinese_name=f'融资融券行业交易统计_{industry}', english_name='',
-                                               type_identifier='margin_by_industry', unit='')
-        # 检查或更新data_table
-        missing_dates = self._check_data_table(table_name='markets_daily_long',
-                                               type_identifier='margin_by_industry')
-        self._upload_missing_data_industry_margin(missing_dates)
-        # self._upload_wide_data_industry_margin()
-
     def _check_data_table(self, table_name, type_identifier, **kwargs):
         # Retrieve the optional filter condition
         additional_filter = kwargs.get('additional_filter')
@@ -132,6 +113,25 @@ class DatabaseUpdater(PgDbUpdaterBase):
             return True
         else:
             return False
+
+    def logic_margin_trade_by_industry(self):
+        """
+        1. 检查
+        :return:
+        """
+        # 检查或更新meta_table
+        need_update_meta_table = self._check_meta_table('metric_static_info', 'chinese_name',
+                                                        type_identifier='margin_by_industry')
+        if need_update_meta_table:
+            for industry in self.today_industries_df['industryname'].tolist():
+                self.insert_metric_static_info(source_code=f'wind_tradingstatisticsbyindustry_{industry}',
+                                               chinese_name=f'融资融券行业交易统计_{industry}', english_name='',
+                                               type_identifier='margin_by_industry', unit='')
+        # 检查或更新data_table
+        missing_dates = self._check_data_table(table_name='markets_daily_long',
+                                               type_identifier='margin_by_industry')
+        self._upload_missing_data_industry_margin(missing_dates)
+        # self._upload_wide_data_industry_margin()
 
     def _upload_missing_data_industry_margin(self, missing_dates):
         if len(missing_dates) == 0:

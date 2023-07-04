@@ -276,11 +276,11 @@ class DatabaseUpdater(PgDbUpdaterBase):
     def _upload_missing_data_stk_price_volume(self):
         existing_codes = self.select_existing_values_in_target_column('product_static_info', 'code',
                                                                       f"product_type='stock'")
-        for code in existing_codes[3200:]:
+        for code in existing_codes[3810:]:
             missing_dates = self._check_data_table(type_identifier='stk_price_volume',
                                                    stock_code=code)
             missing_dates_str_list = [date_obj.strftime('%Y%m%d') for date_obj in missing_dates]
-            if missing_dates[0] == self.all_dates[-1]:
+            if missing_dates[0] == self.tradedays[-1]:
                 print(f'{code} Only today is missing, skipping update _upload_missing_data_stk_price_volume')
                 continue
             elif 2 <= len(missing_dates) <= 5:
@@ -288,10 +288,10 @@ class DatabaseUpdater(PgDbUpdaterBase):
                 missing_dates_recent = [date for date in missing_dates if date in self.tradedays[-5:]]
                 missing_dates_str_list = [date_obj.strftime('%Y%m%d') for date_obj in missing_dates_recent]
                 # 只缺今天数据，跳过
-                if missing_dates_recent[0] == self.all_dates[-1]:
-                    print(f'{code} Only today is missing, skipping update _upload_missing_data_stk_price_volume')
+                if missing_dates_recent[0] == self.tradedays[-1]:
+                    print(f'{code} 只缺一天数据暂不更新, skipping update _upload_missing_data_stk_price_volume')
                     continue
-            elif has_large_date_gap(missing_dates) and missing_dates[-1] == self.all_dates[-1]:
+            elif has_large_date_gap(missing_dates) and missing_dates[-1] == self.tradedays[-1]:
                 print(f'{code} 期间有停牌, 但已经更新过了只缺今天， skipping update _upload_missing_data_stk_price_volume')
                 continue
             elif not has_large_date_gap(missing_dates) and not match_recent_tradedays(missing_dates, self.tradedays):

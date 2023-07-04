@@ -41,17 +41,17 @@ class Processor(PgDbUpdaterBase):
     def generate_indicators(self):
         # 生成所有指标
         self.money_flow.calculate()
-        self.price_volume.calculate()
-        self.analyst.calculate()
+        # self.price_volume.calculate()
+        # self.analyst.calculate()
         self.market_divergence.calculate()
         self.calculate_industry_congestion()
 
     def upload_indicators(self):
         self.upload_indicator(self.money_flow.results)
-        self.upload_indicator(self.price_volume.results)
-        # self.upload_indicator(self.analyst.results)
+        # self.upload_indicator(self.price_volume.results)
+        ## self.upload_indicator(self.analyst.results)
         self.upload_indicator(self.market_divergence.results)
-        # self.upload_indicator(self.industry_congestion.results)
+        ## self.upload_indicator(self.industry_congestion.results)
         pass
 
     def upload_indicator(self, results: dict):
@@ -72,14 +72,17 @@ class MoneyFlow(PgDbUpdaterBase):
 
     def calculate(self):
         # 将计算结果保存在self.results中
+        print('calculating for MoneyFlow')
         self.calc_finance_net_buy()
         self.calc_north_inflow()
+        self.calc_big_order_inflow()
 
     @property
     def results(self):
         return {
             'finance_net_buy_percentile_industry': self.fnb_percentile_industry,
             'north_percentile_industry': self.north_percentile_industry,
+            'big_order_inflow_percentile': self.big_order_inflow_percentile,
         }
 
     def read_data_money_flow(self):
@@ -142,6 +145,22 @@ class MoneyFlow(PgDbUpdaterBase):
         self.north_inflow_industry_df = pd.DataFrame(north_inflow_industry,
                                                      columns=['date', '中信行业', '北向净买入额'])
 
+        # Question 244 主力净流入（全景）
+        big_order_inflow_query = text(
+            """
+            SELECT "public"."markets_daily_long"."date" AS "date", "Product Static Info"."chinese_name" AS "Product Static Info__chinese_name", SUM("public"."markets_daily_long"."value") AS "sum"
+            FROM "public"."markets_daily_long"
+            LEFT JOIN "public"."product_static_info" AS "Product Static Info" ON "public"."markets_daily_long"."product_static_info_id" = "Product Static Info"."internal_id"
+            WHERE ("Product Static Info"."product_type" = 'index')
+               AND ("public"."markets_daily_long"."field" = '主力净流入额')
+            GROUP BY "public"."markets_daily_long"."date", "Product Static Info"."chinese_name"
+            ORDER BY "public"."markets_daily_long"."date" ASC, "Product Static Info"."chinese_name" ASC
+            """
+        )
+        big_order_inflow = self.alch_conn.execute(big_order_inflow_query)
+        self.big_order_inflow_df = pd.DataFrame(big_order_inflow,
+                                                     columns=['date', '中信行业', '主力净流入额'])
+
     def calc_finance_net_buy(self):
         # 从长格式转换为date-industry的买入额或流入额
         wide_df = self.finance_net_buy_industry_df.pivot(index='date', columns='中信行业', values='两融净买入额')
@@ -169,6 +188,13 @@ class MoneyFlow(PgDbUpdaterBase):
         north_percentile_total = weights_total.rolling(window=252).apply(lambda x: pd.Series(x).rank(pct=True)[0])
         self.north_percentile_industry['总额'] = north_percentile_total['北向净买入总额']
 
+    def calc_big_order_inflow(self):
+        # 最近一周主力净流入额作为大单情绪
+        wide_df = self.big_order_inflow_df.pivot(index='date', columns='中信行业', values='主力净流入额')
+        wide_df_ma = wide_df.rolling(5).sum()
+        # 对大单情绪进行滚动一年分位处理
+        self.big_order_inflow_percentile = wide_df_ma.rolling(window=252).apply(lambda x: pd.Series(x).rank(pct=True)[0])
+
 
 class PriceVolume(PgDbUpdaterBase):
     def __init__(self, base_config: BaseConfig):
@@ -177,6 +203,7 @@ class PriceVolume(PgDbUpdaterBase):
 
     def calculate(self):
         # 计算各行业量价相关的各指标
+        print('calculating for PriceVolume')
         # 将计算结果保存在self.results中
         self.calc_amt_proportion()
         self.calc_amt_quantile()
@@ -283,6 +310,7 @@ class MarketDivergence(PgDbUpdaterBase):
 
     def calculate(self):
         # 计算各行业衡量市场分化程度的各指标
+        print('calculating for MarketDivergence')
         self.calc_market_breadth()
         self.calc_28_amount_diverge()
         self.calc_rotation_strength()
@@ -356,7 +384,8 @@ class MarketDivergence(PgDbUpdaterBase):
         close_industry_df = self.close_industry_df.drop(columns=['万德全A'])
         daily_returns = close_industry_df.pct_change()  # 计算每日涨跌幅
         rank_changes = daily_returns.rank(axis=1).diff().abs()  # 计算涨跌百分比排名的变化的绝对值
-        self.rotation_strength = rank_changes.sum(axis=1)  # 求和得到轮动强度
+        self.rotation_strength = rank_changes.sum(axis=1).to_frame()  # 求和得到轮动强度
+        self.rotation_strength['rotation_strength_daily_ma'] = self.rotation_strength.rolling(window=25).mean()
 
 
 class Analyst(PgDbUpdaterBase):
