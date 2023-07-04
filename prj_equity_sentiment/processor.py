@@ -18,9 +18,11 @@ def calculate_recent_weight(df: pd.DataFrame, window_short=20, window_long=60):
     for column in df.columns:
         recent_20_days = df[column].rolling(window=window_short).sum()
         # 选择正值来计算 recent_60_days，避免分母接近0或为负值的情况，波幅剧烈且难以解释
-        positive_values = df[column].where(df[column] > 0, 0)
-        recent_60_days = positive_values.rolling(window=window_long).sum()
         # recent_60_days = df[column].rolling(window=window_long).sum()
+        # positive_values = df[column].where(df[column] > 0, 0)
+        positive_values = df[column].abs()
+        recent_60_days = positive_values.rolling(window=window_long).sum()
+
         weight = recent_20_days / recent_60_days
         result_df[column] = weight
     return result_df.sort_index()
@@ -89,34 +91,6 @@ class MoneyFlow(PgDbUpdaterBase):
         }
 
     def read_data_money_flow(self):
-        # # Question 153 两融净买入总额(时间序列)
-        # finance_net_buy_query = text(
-        #     """
-        #     SELECT "source"."date" AS "date", SUM("source"."value") AS "sum"
-        #     FROM (SELECT "source"."date" AS "date", "source"."field" AS "field", "source"."value" AS "value", "source"."中信一级行业" AS "中信一级行业" FROM (SELECT "source"."date" AS "date", "source"."product_name" AS "product_name", "source"."field" AS "field", "source"."value" AS "value", substring("source"."product_name" FROM 'CS(.*)') AS "中信一级行业" FROM (SELECT "public"."markets_daily_long"."date" AS "date", "public"."markets_daily_long"."product_name" AS "product_name", "public"."markets_daily_long"."field" AS "field", "public"."markets_daily_long"."value" AS "value" FROM "public"."markets_daily_long"
-        #     LEFT JOIN "public"."metric_static_info" AS "Metric Static Info" ON "public"."markets_daily_long"."metric_static_info_id" = "Metric Static Info"."internal_id"
-        #     WHERE "Metric Static Info"."type_identifier" = 'margin_by_industry') AS "source") AS "source") AS "source" WHERE "source"."field" = '两融净买入额'
-        #     GROUP BY "source"."date"
-        #     ORDER BY "source"."date" ASC
-        #     """
-        # )
-        # finance_net_buy = self.alch_conn.execute(finance_net_buy_query)
-        # self.finance_net_buy_df = pd.DataFrame(finance_net_buy, columns=['date', '两融净买入总额']).set_index('date')
-        #
-        # # Question 157 北向资金净买入总额(时间序列)
-        # north_inflow_query = text(
-        #     """
-        #     SELECT "source"."date" AS "date", SUM("source"."value") AS "sum"
-        #     FROM (SELECT "source"."date" AS "date", "source"."field" AS "field", "source"."value" AS "value", "source"."中信一级行业" AS "中信一级行业" FROM (SELECT "public"."markets_daily_long"."date" AS "date", "public"."markets_daily_long"."product_name" AS "product_name", "public"."markets_daily_long"."field" AS "field", "public"."markets_daily_long"."value" AS "value", "public"."markets_daily_long"."metric_static_info_id" AS "metric_static_info_id", substring("public"."markets_daily_long"."product_name" FROM 'CS(.*)') AS "中信一级行业", "Metric Static Info"."type_identifier" AS "Metric Static Info__type_identifier", "Metric Static Info"."internal_id" AS "Metric Static Info__internal_id" FROM "public"."markets_daily_long"
-        #     LEFT JOIN "public"."metric_static_info" AS "Metric Static Info" ON "public"."markets_daily_long"."metric_static_info_id" = "Metric Static Info"."internal_id"
-        #     WHERE "Metric Static Info"."type_identifier" = 'north_inflow') AS "source") AS "source" WHERE "source"."field" = '净买入'
-        #     GROUP BY "source"."date"
-        #     ORDER BY "source"."date" ASC
-        #     """
-        # )
-        # north_inflow = self.alch_conn.execute(north_inflow_query)
-        # self.north_inflow_df = pd.DataFrame(north_inflow, columns=['date', '北向净买入总额']).set_index('date')
-
         # 还要构建行业的
         # Question 152 各行业两融净买入额(时间序列)
         finance_net_buy_industry_query = text(
@@ -168,18 +142,14 @@ class MoneyFlow(PgDbUpdaterBase):
         # 从长格式转换为date-industry的买入额或流入额
         wide_df = self.finance_net_buy_industry_df.pivot(index='date', columns='中信行业', values='两融净买入额')
         wide_df['总额'] = wide_df.sum(axis=1)
-        wide_df_ma10 = wide_df.rolling(10).mean()
 
         # 最近20个交易日融资买入额占最近60个交易日融资买入额比重作为融资买入情绪
-        weights_industry = calculate_recent_weight(df=wide_df_ma10).dropna(subset=['交通运输'])
-        # weights_total = calculate_recent_weight(df=self.finance_net_buy_df)
+        weights_industry = calculate_recent_weight(df=wide_df).dropna(subset=['交通运输'])
 
 
         # 将融资买入情绪进行滚动一年分位处理
         fnb_percentile_industry = weights_industry.rolling(window=252).apply(
             lambda x: pd.Series(x).rank(pct=True)[0])
-        # fnb_percentile_total = weights_total.rolling(window=252).apply(lambda x: pd.Series(x).rank(pct=True)[0])
-        # fnb_percentile_industry['总额'] = fnb_percentile_total['两融净买入总额']
         self.fnb_percentile_industry = fnb_percentile_industry.reset_index().melt(id_vars=['date'],
                                                                                   var_name='industry',
                                                                                   value_name='finance_net_buy')
@@ -188,15 +158,13 @@ class MoneyFlow(PgDbUpdaterBase):
         # 注：自建
         # 最近20个交易日北向净流入额占最近60个交易日北向净流入额比重作为北向买入情绪
         wide_df = self.north_inflow_industry_df.pivot(index='date', columns='中信行业', values='北向净买入额')
-        weights_industry = calculate_recent_weight(df=wide_df)
-        # weights_total = calculate_recent_weight(df=self.north_inflow_df)
-        weights_industry['总额'] = weights_industry.sum(axis=1)
+        wide_df['总额'] = wide_df.sum(axis=1)
+
+        weights_industry = calculate_recent_weight(df=wide_df).dropna(subset=['交通运输'])
 
         # 将北向买入情绪进行滚动一年分位处理
         north_percentile_industry = weights_industry.rolling(window=252).apply(
             lambda x: pd.Series(x).rank(pct=True)[0])
-        # north_percentile_total = weights_total.rolling(window=252).apply(lambda x: pd.Series(x).rank(pct=True)[0])
-        # north_percentile_industry['总额'] = north_percentile_total['北向净买入总额']
         self.north_percentile_industry = north_percentile_industry.reset_index().melt(id_vars=['date'],
                                                                                       var_name='industry',
                                                                                       value_name='north_inflow')
