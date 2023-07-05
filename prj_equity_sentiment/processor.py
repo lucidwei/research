@@ -46,14 +46,14 @@ class Processor(PgDbUpdaterBase):
     def generate_indicators(self):
         # 生成所有指标
         self.money_flow.calculate()
-        # self.price_volume.calculate()
+        self.price_volume.calculate()
         # self.analyst.calculate()
         self.market_divergence.calculate()
         self.calculate_industry_congestion()
 
     def upload_indicators(self):
         self.upload_indicator(self.money_flow.results)
-        # self.upload_indicator(self.price_volume.results)
+        self.upload_indicator(self.price_volume.results)
         ## self.upload_indicator(self.analyst.results)
         self.upload_indicator(self.market_divergence.results)
         ## self.upload_indicator(self.industry_congestion.results)
@@ -251,7 +251,7 @@ class PriceVolume(PgDbUpdaterBase):
 
     def calc_amt_quantile(self):
         # 计算各行业的成交额滚动一年分位
-        amount_industry_df = self.amount_industry_df.drop(columns=['万德全A'])
+        amount_industry_df = self.amount_industry_df
         amt_quantile_df = amount_industry_df.rolling(window=252).apply(
             lambda x: pd.Series(x).rank(pct=True)[0])
         self.amt_quantile_df = amt_quantile_df.reset_index().melt(id_vars=['date'], var_name='industry',
@@ -259,7 +259,7 @@ class PriceVolume(PgDbUpdaterBase):
 
     def calc_turnover_quantile(self):
         # 计算各行业的换手率滚动一年分位
-        turnover_industry_df = self.turnover_industry_df.drop(columns=['万德全A'])
+        turnover_industry_df = self.turnover_industry_df
         turnover_quantile_df = turnover_industry_df.rolling(window=252).apply(
             lambda x: pd.Series(x).rank(pct=True)[0])
         self.turnover_quantile_df = turnover_quantile_df.reset_index().melt(id_vars=['date'], var_name='industry',
@@ -267,7 +267,7 @@ class PriceVolume(PgDbUpdaterBase):
 
     def calc_vol_shrink_rate(self):
         # 计算各行业的缩量率
-        amount_industry_df = self.amount_industry_df.drop(columns=['万德全A'])
+        amount_industry_df = self.amount_industry_df
         rolling_avg = amount_industry_df.rolling(window=252).mean()
         shrink_rate_df = amount_industry_df / rolling_avg - 1
         self.shrink_rate_df = shrink_rate_df.reset_index().melt(id_vars=['date'], var_name='industry',
