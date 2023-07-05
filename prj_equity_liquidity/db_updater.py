@@ -17,8 +17,8 @@ class DatabaseUpdater(PgDbUpdaterBase):
     def __init__(self, base_config: BaseConfig):
         super().__init__(base_config)
         self.update_all_funds_info()
-        # self.logic_reopened_dk_funds()
-        # self.logic_reopened_cyq_funds()
+        ## self.logic_reopened_dk_funds()
+        ## self.logic_reopened_cyq_funds()
         self.logic_etf_lof_funds()
         self.logic_margin_trade_by_industry()
         self.logic_north_inflow_by_industry()
@@ -32,8 +32,21 @@ class DatabaseUpdater(PgDbUpdaterBase):
 
         # 获取需要更新的日期区间
         match type_identifier:
-            case 'major_holder' | 'price_valuation' | 'fund':
+            case 'major_holder' | 'fund':
                 filter_condition = f"product_static_info.type_identifier = '{type_identifier}'"
+                if additional_filter:
+                    filter_condition += f" AND {additional_filter}"
+                existing_dates = self.select_column_from_joined_table(
+                    target_table_name='product_static_info',
+                    target_join_column='internal_id',
+                    join_table_name=table_name,
+                    join_column='product_static_info_id',
+                    selected_column=f'date',
+                    filter_condition=filter_condition
+                )
+            case 'price_valuation':
+                filter_condition = f"product_static_info.type_identifier = '{type_identifier}' " \
+                                   f"AND field='收盘价' AND product_type='index'"
                 if additional_filter:
                     filter_condition += f" AND {additional_filter}"
                 existing_dates = self.select_column_from_joined_table(
