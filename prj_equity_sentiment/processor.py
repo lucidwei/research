@@ -10,7 +10,8 @@ import pandas as pd
 from base_config import BaseConfig
 from pgdb_updater_base import PgDbUpdaterBase
 from sqlalchemy import text
-
+import matplotlib
+matplotlib.use('TkAgg')
 
 def calculate_recent_weight(df: pd.DataFrame, window_short=20, window_long=60):
     df = df.sort_index()
@@ -41,7 +42,6 @@ class Processor(PgDbUpdaterBase):
         self.analyst = Analyst(base_config)
         self.market_divergence = MarketDivergence(base_config)
         self.generate_indicators()
-        self.upload_indicators()
 
     def generate_indicators(self):
         # 生成所有指标
@@ -88,6 +88,14 @@ class MoneyFlow(PgDbUpdaterBase):
             'finance_net_buy_percentile_industry': self.fnb_percentile_industry,
             'north_percentile_industry': self.north_percentile_industry,
             'big_order_inflow_percentile': self.big_order_inflow_percentile,
+        }
+
+    @property
+    def results_wide(self):
+        return {
+            'finance_net_buy_percentile_industry': self.fnb_percentile_industry_wide,
+            'north_percentile_industry': self.north_percentile_industry_wide,
+            'big_order_inflow_percentile': self.big_order_inflow_percentile_wide,
         }
 
     def read_data_money_flow(self):
@@ -148,9 +156,9 @@ class MoneyFlow(PgDbUpdaterBase):
 
 
         # 将融资买入情绪进行滚动一年分位处理
-        fnb_percentile_industry = weights_industry.rolling(window=252).apply(
-            lambda x: pd.Series(x).rank(pct=True)[0])
-        self.fnb_percentile_industry = fnb_percentile_industry.reset_index().melt(id_vars=['date'],
+        self.fnb_percentile_industry_wide = weights_industry.rolling(window=252).apply(
+            lambda x: pd.Series(x).rank(pct=True)[-1])
+        self.fnb_percentile_industry = self.fnb_percentile_industry_wide.reset_index().melt(id_vars=['date'],
                                                                                   var_name='industry',
                                                                                   value_name='finance_net_buy')
 
@@ -163,9 +171,9 @@ class MoneyFlow(PgDbUpdaterBase):
         weights_industry = calculate_recent_weight(df=wide_df).dropna(subset=['交通运输'])
 
         # 将北向买入情绪进行滚动一年分位处理
-        north_percentile_industry = weights_industry.rolling(window=252).apply(
-            lambda x: pd.Series(x).rank(pct=True)[0])
-        self.north_percentile_industry = north_percentile_industry.reset_index().melt(id_vars=['date'],
+        self.north_percentile_industry_wide = weights_industry.rolling(window=252).apply(
+            lambda x: pd.Series(x).rank(pct=True)[-1])
+        self.north_percentile_industry = self.north_percentile_industry_wide.reset_index().melt(id_vars=['date'],
                                                                                       var_name='industry',
                                                                                       value_name='north_inflow')
 
@@ -174,8 +182,8 @@ class MoneyFlow(PgDbUpdaterBase):
         wide_df = self.big_order_inflow_df.pivot(index='date', columns='中信行业', values='主力净流入额')
         wide_df_ma = wide_df.rolling(10).mean()
         # 对大单情绪进行滚动一年分位处理
-        big_order_inflow_percentile = wide_df_ma.rolling(window=252).apply(lambda x: pd.Series(x).rank(pct=True)[0])
-        self.big_order_inflow_percentile = big_order_inflow_percentile.reset_index().melt(id_vars=['date'],
+        self.big_order_inflow_percentile_wide = wide_df_ma.rolling(window=252).apply(lambda x: pd.Series(x).rank(pct=True)[-1])
+        self.big_order_inflow_percentile = self.big_order_inflow_percentile_wide.reset_index().melt(id_vars=['date'],
                                                                                           var_name='industry',
                                                                                           value_name='big_order_inflow_percentile')
 
@@ -203,6 +211,14 @@ class PriceVolume(PgDbUpdaterBase):
                 'amt_quantile': self.amt_quantile_df,
                 'turnover_quantile': self.turnover_quantile_df,
                 'shrink_rate': self.shrink_rate_df
+                }
+
+    @property
+    def results_wide(self):
+        return {'amt_proportion': self.amt_proportion_df_wide,
+                'amt_quantile': self.amt_quantile_df_wide,
+                'turnover_quantile': self.turnover_quantile_df_wide,
+                'shrink_rate': self.shrink_rate_df_wide
                 }
 
     def read_data_price_volume(self):
@@ -245,32 +261,32 @@ class PriceVolume(PgDbUpdaterBase):
         amount_industry_df = self.amount_industry_df.drop(columns=['万德全A'])
         # 计算每一行中各列数值的占比
         row_sums = amount_industry_df.sum(axis=1)  # 计算每行的总和
-        amt_proportion_df = amount_industry_df.div(row_sums, axis=0)
-        self.amt_proportion_df = amt_proportion_df.reset_index().melt(id_vars=['date'], var_name='industry',
+        self.amt_proportion_df_wide = amount_industry_df.div(row_sums, axis=0)
+        self.amt_proportion_df = self.amt_proportion_df_wide.reset_index().melt(id_vars=['date'], var_name='industry',
                                                                       value_name='amt_proportion')
 
     def calc_amt_quantile(self):
         # 计算各行业的成交额滚动一年分位
         amount_industry_df = self.amount_industry_df
-        amt_quantile_df = amount_industry_df.rolling(window=252).apply(
-            lambda x: pd.Series(x).rank(pct=True)[0])
-        self.amt_quantile_df = amt_quantile_df.reset_index().melt(id_vars=['date'], var_name='industry',
+        self.amt_quantile_df_wide = amount_industry_df.rolling(window=252).apply(
+            lambda x: pd.Series(x).rank(pct=True)[-1])
+        self.amt_quantile_df = self.amt_quantile_df_wide.reset_index().melt(id_vars=['date'], var_name='industry',
                                                                   value_name='amt_quantile')
 
     def calc_turnover_quantile(self):
         # 计算各行业的换手率滚动一年分位
         turnover_industry_df = self.turnover_industry_df
-        turnover_quantile_df = turnover_industry_df.rolling(window=252).apply(
-            lambda x: pd.Series(x).rank(pct=True)[0])
-        self.turnover_quantile_df = turnover_quantile_df.reset_index().melt(id_vars=['date'], var_name='industry',
+        self.turnover_quantile_df_wide = turnover_industry_df.rolling(window=252).apply(
+            lambda x: pd.Series(x).rank(pct=True)[-1])
+        self.turnover_quantile_df = self.turnover_quantile_df_wide.reset_index().melt(id_vars=['date'], var_name='industry',
                                                                             value_name='turnover_quantile')
 
     def calc_vol_shrink_rate(self):
         # 计算各行业的缩量率
         amount_industry_df = self.amount_industry_df
         rolling_avg = amount_industry_df.rolling(window=252).mean()
-        shrink_rate_df = amount_industry_df / rolling_avg - 1
-        self.shrink_rate_df = shrink_rate_df.reset_index().melt(id_vars=['date'], var_name='industry',
+        self.shrink_rate_df_wide = amount_industry_df / rolling_avg - 1
+        self.shrink_rate_df = self.shrink_rate_df_wide.reset_index().melt(id_vars=['date'], var_name='industry',
                                                                 value_name='shrink_rate')
 
     def calc_momentum(self):
@@ -307,6 +323,13 @@ class MarketDivergence(PgDbUpdaterBase):
             'rotation_strength': self.rotation_strength,
         }
 
+    @property
+    def results_wide(self):
+        return {
+            'market_breadth_industry': self.mb_industry_combined_wide,
+            'rotation_strength': self.rotation_strength,
+        }
+
     def read_data(self):
         # 各行业收盘价
         # Question 232 各行业收盘价(时间序列)
@@ -338,6 +361,7 @@ class MarketDivergence(PgDbUpdaterBase):
         mb_industry_close = rising_df.mean(axis=1).to_frame()
         mb_industry_close.columns = ['当日收涨比例']
         # mb_industry_close = close_industry_df.apply(lambda x: sum(x > x.shift(1)), axis=1)
+        mb_industry_close['当日收涨比例MA25'] = mb_industry_close['当日收涨比例'].rolling(window=25).mean()
 
         # 回撤幅度中位数减去全A的回撤幅度
         # 计算行业回撤幅度
@@ -354,8 +378,8 @@ class MarketDivergence(PgDbUpdaterBase):
         mb_industry_above_ma = (close_industry_df > close_industry_df.rolling(window=20).mean()).mean(axis=1).to_frame()
         mb_industry_above_ma.columns = ['市场宽度-基于位置']
 
-        mb_industry_combined = pd.concat([mb_industry_close, mb_industry_drawdown, mb_industry_above_ma], axis=1)
-        self.mb_industry_combined = mb_industry_combined.reset_index().melt(id_vars=['date'],
+        self.mb_industry_combined_wide = pd.concat([mb_industry_close, mb_industry_drawdown, mb_industry_above_ma], axis=1)
+        self.mb_industry_combined = self.mb_industry_combined_wide.reset_index().melt(id_vars=['date'],
                                                                             var_name='market_breadth_type',
                                                                             value_name='value')
 
