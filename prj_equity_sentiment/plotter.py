@@ -39,6 +39,8 @@ class Plotter(PgDbManager):
         self.plot_indicator_industry_irfs(self.daily_return_ts, self.shrink_rate, '情绪-缩量率各行业逆irf', reverse=True)
         self.plot_indicator_industry_irfs(self.daily_return_ts, self.amt_proportion, '情绪-成交占比各行业irf', reverse=False)
         self.plot_indicator_industry_irfs(self.daily_return_ts, self.amt_proportion, '情绪-成交占比各行业逆irf', reverse=True)
+        self.plot_indicator_industry_irfs(self.daily_return_ts, self.amt_prop_quantile, '情绪-成交占比分位各行业irf', reverse=False)
+        self.plot_indicator_industry_irfs(self.daily_return_ts, self.amt_prop_quantile, '情绪-成交占比分位各行业逆irf', reverse=True)
 
     def read_data(self):
         money_flow_dict, price_volume_dict, market_diverg_dict = self.processed_data
@@ -58,6 +60,7 @@ class Plotter(PgDbManager):
 
         # 仅行业
         self.amt_proportion = price_volume_dict['amt_proportion']*100
+        self.amt_prop_quantile = price_volume_dict['amt_prop_quantile']*100
 
         # 市场行情
         df_price_joined = self.read_joined_table_as_dataframe(

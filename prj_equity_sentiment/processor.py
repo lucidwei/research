@@ -203,6 +203,7 @@ class PriceVolume(PgDbUpdaterBase):
         # 将计算结果保存在self.results中
         self.calc_amt_proportion()
         self.calc_amt_quantile()
+        self.calc_amt_prop_quantile()
         self.calc_turnover_quantile()
         self.calc_vol_shrink_rate()
         self.calc_momentum()
@@ -214,7 +215,8 @@ class PriceVolume(PgDbUpdaterBase):
         return {'amt_proportion': self.amt_proportion_df,
                 'amt_quantile': self.amt_quantile_df,
                 'turnover_quantile': self.turnover_quantile_df,
-                'shrink_rate': self.shrink_rate_df
+                'shrink_rate': self.shrink_rate_df,
+                'amt_prop_quantile': self.amt_prop_quantile_df,
                 }
 
     @property
@@ -222,7 +224,8 @@ class PriceVolume(PgDbUpdaterBase):
         return {'amt_proportion': self.amt_proportion_df_wide,
                 'amt_quantile': self.amt_quantile_df_wide,
                 'turnover_quantile': self.turnover_quantile_df_wide,
-                'shrink_rate': self.shrink_rate_df_wide
+                'shrink_rate': self.shrink_rate_df_wide,
+                'amt_prop_quantile': self.amt_prop_quantile_wide,
                 }
 
     def read_data_price_volume(self):
@@ -276,6 +279,13 @@ class PriceVolume(PgDbUpdaterBase):
             lambda x: pd.Series(x).rank(pct=True)[-1])
         self.amt_quantile_df = self.amt_quantile_df_wide.reset_index().melt(id_vars=['date'], var_name='industry',
                                                                   value_name='amt_quantile')
+
+    def calc_amt_prop_quantile(self):
+        # 计算各行业的成交额占比的滚动一年分位
+        self.amt_prop_quantile_wide = self.amt_proportion_df_wide.rolling(window=252).apply(
+            lambda x: pd.Series(x).rank(pct=True)[-1])
+        self.amt_prop_quantile_df = self.amt_prop_quantile_wide.reset_index().melt(id_vars=['date'], var_name='industry',
+                                                                  value_name='amt_prop_quantile')
 
     def calc_turnover_quantile(self):
         # 计算各行业的换手率滚动一年分位
