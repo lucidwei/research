@@ -19,7 +19,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
         super().__init__(base_config)
         self.logic_industry_volume()
         self.logic_industry_large_order()
-        self.logic_industry_stk_price_volume()
+        # self.logic_industry_stk_price_volume()
         # self.logic_analyst()
 
     def _check_meta_table(self, type_identifier):

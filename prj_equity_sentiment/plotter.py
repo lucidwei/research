@@ -12,88 +12,84 @@ import matplotlib, os
 import matplotlib.gridspec as gridspec
 from base_config import BaseConfig
 from prj_equity_sentiment.processor import Processor
+from pgdb_manager import PgDbManager
 
 
-class Plotter:
+class Plotter(PgDbManager):
     def __init__(self, base_config: BaseConfig, processed_data: Processor):
         super().__init__(base_config)
         self.processed_data = processed_data
         plt.rcParams['font.sans-serif'] = ['simhei']
         plt.rcParams['axes.unicode_minus'] = False
         self.read_data()
-        # self.get_best_order()
-        self.plot_inflow_industry_irfs(self.daily_return_ts, self.margin_inflow_ts, '两融各行业逆irf', reverse=True)
-        self.plot_inflow_industry_irfs(self.daily_return_ts, self.margin_inflow_ts, '两融各行业irf', reverse=False)
+        self.make_plots()
 
-    def calculate_ts_extreme(self, ts_df, upper=0.8, lower=0.2):
-        processed_df = ts_df.copy()
-
-        for column in processed_df.columns:
-            quantile_80 = processed_df[column].quantile(upper)
-            quantile_20 = processed_df[column].quantile(lower)
-
-            processed_df.loc[processed_df[column] > quantile_80, column] = processed_df[column]
-            processed_df.loc[processed_df[column] < quantile_20, column] = processed_df[column]
-            processed_df.loc[(processed_df[column] >= quantile_20) & (processed_df[column] <= quantile_80), column] = 0
-
-        return processed_df
+    def make_plots(self):
+        self.plot_indicator_industry_irfs(self.daily_return_ts, self.finance_net_buy_percentile_industry, '情绪-两融各行业irf', reverse=False)
+        self.plot_indicator_industry_irfs(self.daily_return_ts, self.finance_net_buy_percentile_industry, '情绪-两融各行业逆irf', reverse=True)
+        self.plot_indicator_industry_irfs(self.daily_return_ts, self.north_percentile_industry, '情绪-北向各行业irf', reverse=False)
+        self.plot_indicator_industry_irfs(self.daily_return_ts, self.north_percentile_industry, '情绪-北向各行业逆irf', reverse=True)
+        self.plot_indicator_industry_irfs(self.daily_return_ts, self.big_order_inflow_percentile, '情绪-主力资金各行业irf', reverse=False)
+        self.plot_indicator_industry_irfs(self.daily_return_ts, self.big_order_inflow_percentile, '情绪-主力资金各行业逆irf', reverse=True)
+        self.plot_indicator_industry_irfs(self.daily_return_ts, self.amt_quantile, '情绪-成交额各行业irf', reverse=False)
+        self.plot_indicator_industry_irfs(self.daily_return_ts, self.amt_quantile, '情绪-成交额各行业逆irf', reverse=True)
+        self.plot_indicator_industry_irfs(self.daily_return_ts, self.turnover_quantile, '情绪-换手率各行业irf', reverse=False)
+        self.plot_indicator_industry_irfs(self.daily_return_ts, self.turnover_quantile, '情绪-换手率各行业逆irf', reverse=True)
+        self.plot_indicator_industry_irfs(self.daily_return_ts, self.shrink_rate, '情绪-缩量率各行业irf', reverse=False)
+        self.plot_indicator_industry_irfs(self.daily_return_ts, self.shrink_rate, '情绪-缩量率各行业逆irf', reverse=True)
+        self.plot_indicator_industry_irfs(self.daily_return_ts, self.amt_proportion, '情绪-成交占比各行业irf', reverse=False)
+        self.plot_indicator_industry_irfs(self.daily_return_ts, self.amt_proportion, '情绪-成交占比各行业逆irf', reverse=True)
 
     def read_data(self):
-        self.margin_inflow_ts = self.margin_inflow_ts/1e8
-        # 对于全A的影响统一改为每10亿的影响
-        self.margin_inflow_ts['万德全A'] = self.margin_inflow_ts.sum(axis=1)/10
-        # self.margin_inflow_extreme_ts = self.calculate_ts_extreme(self.margin_inflow_ts, 0.9, 0.1)
+        money_flow_dict, price_volume_dict, market_diverg_dict = self.processed_data
 
-        self.north_inflow_ts = self.north_inflow_ts/1e8
-        self.north_inflow_ts['万德全A'] = self.north_inflow_ts.sum(axis=1)/10
-        # self.north_inflow_extreme_ts = self.calculate_ts_extreme(self.north_inflow_ts, 0.9, 0.1)
+        # 仅总量
+        self.market_breadth = market_diverg_dict['market_breadth_industry_level']*100
+        self.rotation_strength = market_diverg_dict['rotation_strength']
 
-        self.aggregate_inflow_ts = self.aggregate_inflow_ts/1e8
-        self.aggregate_inflow_ts['万德全A'] = self.aggregate_inflow_ts.sum(axis=1)/10
-        # self.aggregate_inflow_extreme_ts = self.calculate_ts_extreme(self.aggregate_inflow_ts, 0.9, 0.1)
+        # 总量行业一起
+        self.finance_net_buy_percentile_industry = money_flow_dict['finance_net_buy_percentile_industry'].rename(columns={'总额': '万德全A'})*100
+        self.north_percentile_industry = money_flow_dict['north_percentile_industry'].rename(columns={'总额': '万德全A'})*100
+        self.big_order_inflow_percentile = money_flow_dict['big_order_inflow_percentile']*100
 
-        self.etf_inflow_ts = self.etf_inflow_ts/1e8
-        self.etf_inflow_ts['万德全A'] = self.etf_inflow_ts.sum(axis=1)/10
-        # self.etf_inflow_extreme_ts = self.calculate_ts_extreme(self.etf_inflow_ts, 0.9, 0.1)
+        self.amt_quantile = price_volume_dict['amt_quantile']*100
+        self.turnover_quantile = price_volume_dict['turnover_quantile']*100
+        self.shrink_rate = price_volume_dict['shrink_rate']*100
 
-        self.holder_change_ts = self.holder_change_ts/1e8
-        self.holder_change_ts['万德全A'] = self.holder_change_ts.sum(axis=1)/10
-        # self.holder_change_extreme_ts = self.calculate_ts_extreme(self.holder_change_ts, 0.9, 0.1)
+        # 仅行业
+        self.amt_proportion = price_volume_dict['amt_proportion']*100
 
-        self.new_fund_ts = self.get_metabase_new_fund_ts()
-        # self.new_fund_ts['万德全A'] = self.new_fund_ts['非债类发行份额']
-        # self.new_fund_extreme_ts = self.calculate_ts_extreme(self.new_fund_ts, 0.9, 0.1)
-
+        # 市场行情
         df_price_joined = self.read_joined_table_as_dataframe(
             target_table_name='markets_daily_long',
             target_join_column='product_static_info_id',
             join_table_name='product_static_info',
             join_column='internal_id',
-            filter_condition="field='收盘价'"
+            filter_condition="field='收盘价' and product_type='index'"
         )
         df_price_joined = df_price_joined[['date', 'chinese_name', 'field', 'value']].rename(columns={'chinese_name': 'industry'})
         price_ts = df_price_joined.pivot(index='date', columns='industry', values='value')
         self.daily_return_ts = price_ts.pct_change().dropna(how='all')*100
 
-    def plot_inflow_industry_irfs(self, daily_return_df, inflow_df, fig_name, reverse):
+    def plot_indicator_industry_irfs(self, daily_return_df, indicator_df, fig_name, reverse):
         # 日期对齐 保留交集部分的行
-        index_intersection = daily_return_df.index.intersection(inflow_df.index)
+        index_intersection = daily_return_df.index.intersection(indicator_df.index)
         daily_return_df = daily_return_df.loc[index_intersection]
-        inflow_df = inflow_df.loc[index_intersection]
+        indicator_df = indicator_df.loc[index_intersection]
         # 创建Figure和Subplot
         fig = plt.figure(constrained_layout=True)
         gs = gridspec.GridSpec(5, 7, figure=fig, hspace=0, wspace=0)  # 这里的hspace设置了行间距，你可以根据需要调整它的值
         plt.rcParams['axes.titlesize'] = 5
 
-        for index, industry in enumerate(daily_return_df.columns):
-            if inflow_df[industry].eq(0).all():
+        for index, industry in enumerate(indicator_df.columns):
+            if indicator_df[industry].eq(0).all():
                 continue
 
-            merged = pd.merge(daily_return_df[industry], inflow_df[industry],
-                              left_index=True, right_index=True, suffixes=('_return', '_inflow'))
+            merged = pd.merge(daily_return_df[industry], indicator_df[industry],
+                              left_index=True, right_index=True, suffixes=('_return', '_indicator')).dropna()
             # 创建VAR模型
             # 剔除前面不连续的日期和最近一周的影响
-            merged = merged[15:-5]
+            merged = merged[5:-5]
             model = sm.tsa.VAR(merged)
             # a = model.select_order()
 
@@ -102,25 +98,25 @@ class Plotter:
             results = model.fit(maxlags=5)
 
             # 提取单位冲击响应函数
-            irf = results.irf(periods=30)  # 设定冲击响应函数的期数
+            irf = results.irf(periods=25)  # 设定冲击响应函数的期数
 
             # 计算指定冲击和响应的累积冲击响应函数
             if not reverse:
-                cumulative_response = np.sum(irf.irfs[:30, merged.columns.get_loc(f'{industry}_return'),
-                                             merged.columns.get_loc(f'{industry}_inflow')])
+                cumulative_response = np.sum(irf.irfs[:25, merged.columns.get_loc(f'{industry}_return'),
+                                             merged.columns.get_loc(f'{industry}_indicator')])
             else:
-                cumulative_response = np.sum(irf.irfs[:30, merged.columns.get_loc(f'{industry}_inflow'),
+                cumulative_response = np.sum(irf.irfs[:25, merged.columns.get_loc(f'{industry}_indicator'),
                                              merged.columns.get_loc(f'{industry}_return')])
 
             # 绘制动态响应函数到临时文件
             filename = f"temp_plot_industry_{industry}.png"
             if reverse:
-                irf.plot(impulse=f'{industry}_return', response=f'{industry}_inflow', signif=0.2)
+                irf.plot(impulse=f'{industry}_return', response=f'{industry}_indicator', signif=0.2)
 
             else:
-                irf.plot(impulse=f'{industry}_inflow', response=f'{industry}_return', signif=0.2)
-                if industry == '万德全A':
-                    plt.ylim(-0.1, 0.1)
+                irf.plot(impulse=f'{industry}_indicator', response=f'{industry}_return', signif=0.2)
+                # if industry == '万德全A':
+                #     plt.ylim(-0.1, 0.1)
             plt.savefig(filename, dpi=60)
             plt.close()
 
@@ -132,9 +128,7 @@ class Plotter:
 
             # 为每个子图添加标题，并在标题中包含累积冲击响应函数的值
             if reverse:
-                if industry == '万德全A':
-                    ax.set_title(f"{industry}\nCumulative: {cumulative_response:.2f}十亿元")
-                ax.set_title(f"{industry}\nCumulative: {cumulative_response:.2f}亿元")
+                ax.set_title(f"{industry}\nCumulative: {cumulative_response:.2f}逆向%")
             else:
                 ax.set_title(f"{industry}\nCumulative: {cumulative_response:.2f}%")
             # 删除临时文件

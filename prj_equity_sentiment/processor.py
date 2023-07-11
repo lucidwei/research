@@ -62,7 +62,11 @@ class Processor(PgDbUpdaterBase):
     def upload_indicator(self, results: dict):
         for table_name, df in results.items():
             print(f'uploading {table_name} to database')
-            df.dropna().to_sql(name=table_name, con=self.alch_engine, schema='processed_data', if_exists='replace')
+            df.dropna().to_sql(name=table_name, con=self.alch_engine, schema='processed_data', if_exists='replace', index=False)
+
+    @property
+    def wide_results(self):
+        return (self.money_flow.results_wide, self.price_volume.results_wide, self.market_divergence.results_wide)
 
     def calculate_industry_congestion(self):
         # 将上述指标进行汇总，得到复合拥挤度
@@ -326,7 +330,7 @@ class MarketDivergence(PgDbUpdaterBase):
     @property
     def results_wide(self):
         return {
-            'market_breadth_industry': self.mb_industry_combined_wide,
+            'market_breadth_industry_level': self.mb_industry_combined_wide,
             'rotation_strength': self.rotation_strength,
         }
 
@@ -361,7 +365,7 @@ class MarketDivergence(PgDbUpdaterBase):
         mb_industry_close = rising_df.mean(axis=1).to_frame()
         mb_industry_close.columns = ['当日收涨比例']
         # mb_industry_close = close_industry_df.apply(lambda x: sum(x > x.shift(1)), axis=1)
-        mb_industry_close['当日收涨比例MA25'] = mb_industry_close['当日收涨比例'].rolling(window=25).mean()
+        mb_industry_close['当日收涨比例MA20'] = mb_industry_close['当日收涨比例'].rolling(window=20).mean()
 
         # 回撤幅度中位数减去全A的回撤幅度
         # 计算行业回撤幅度
@@ -376,6 +380,8 @@ class MarketDivergence(PgDbUpdaterBase):
 
         # 行业指数收盘价站上20日均线的比例
         mb_industry_above_ma = (close_industry_df > close_industry_df.rolling(window=20).mean()).mean(axis=1).to_frame()
+        # 将最初的19个计算结果改为NaN
+        mb_industry_above_ma.iloc[:20] = np.nan
         mb_industry_above_ma.columns = ['市场宽度-基于位置']
 
         self.mb_industry_combined_wide = pd.concat([mb_industry_close, mb_industry_drawdown, mb_industry_above_ma], axis=1)
@@ -394,7 +400,8 @@ class MarketDivergence(PgDbUpdaterBase):
         daily_returns = close_industry_df.pct_change()  # 计算每日涨跌幅
         rank_changes = daily_returns.rank(axis=1).diff().abs()  # 计算涨跌百分比排名的变化的绝对值
         self.rotation_strength = rank_changes.sum(axis=1).to_frame()  # 求和得到轮动强度
-        self.rotation_strength['rotation_strength_daily_ma'] = self.rotation_strength.rolling(window=25).mean()
+        self.rotation_strength['rotation_strength_daily_ma'] = self.rotation_strength.rolling(window=20).mean()
+        self.rotation_strength = self.rotation_strength.reset_index()
 
 
 class Analyst(PgDbUpdaterBase):
