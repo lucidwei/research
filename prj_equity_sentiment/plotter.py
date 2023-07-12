@@ -25,29 +25,33 @@ class Plotter(PgDbManager):
         self.make_plots()
 
     def make_plots(self):
-        self.plot_indicator_industry_irfs(self.daily_return_ts, self.finance_net_buy_percentile_industry, '情绪-两融各行业irf', reverse=False)
-        self.plot_indicator_industry_irfs(self.daily_return_ts, self.finance_net_buy_percentile_industry, '情绪-两融各行业逆irf', reverse=True)
-        self.plot_indicator_industry_irfs(self.daily_return_ts, self.north_percentile_industry, '情绪-北向各行业irf', reverse=False)
-        self.plot_indicator_industry_irfs(self.daily_return_ts, self.north_percentile_industry, '情绪-北向各行业逆irf', reverse=True)
-        self.plot_indicator_industry_irfs(self.daily_return_ts, self.big_order_inflow_percentile, '情绪-主力资金各行业irf', reverse=False)
-        self.plot_indicator_industry_irfs(self.daily_return_ts, self.big_order_inflow_percentile, '情绪-主力资金各行业逆irf', reverse=True)
-        self.plot_indicator_industry_irfs(self.daily_return_ts, self.amt_quantile, '情绪-成交额各行业irf', reverse=False)
-        self.plot_indicator_industry_irfs(self.daily_return_ts, self.amt_quantile, '情绪-成交额各行业逆irf', reverse=True)
-        self.plot_indicator_industry_irfs(self.daily_return_ts, self.turnover_quantile, '情绪-换手率各行业irf', reverse=False)
-        self.plot_indicator_industry_irfs(self.daily_return_ts, self.turnover_quantile, '情绪-换手率各行业逆irf', reverse=True)
-        self.plot_indicator_industry_irfs(self.daily_return_ts, self.shrink_rate, '情绪-缩量率各行业irf', reverse=False)
-        self.plot_indicator_industry_irfs(self.daily_return_ts, self.shrink_rate, '情绪-缩量率各行业逆irf', reverse=True)
-        self.plot_indicator_industry_irfs(self.daily_return_ts, self.amt_proportion, '情绪-成交占比各行业irf', reverse=False)
-        self.plot_indicator_industry_irfs(self.daily_return_ts, self.amt_proportion, '情绪-成交占比各行业逆irf', reverse=True)
-        self.plot_indicator_industry_irfs(self.daily_return_ts, self.amt_prop_quantile, '情绪-成交占比分位各行业irf', reverse=False)
-        self.plot_indicator_industry_irfs(self.daily_return_ts, self.amt_prop_quantile, '情绪-成交占比分位各行业逆irf', reverse=True)
+        # self.plot_indicator_industry_irfs(self.daily_return_ts, self.finance_net_buy_percentile_industry, '情绪-两融各行业irf', reverse=False)
+        # self.plot_indicator_industry_irfs(self.daily_return_ts, self.finance_net_buy_percentile_industry, '情绪-两融各行业逆irf', reverse=True)
+        # self.plot_indicator_industry_irfs(self.daily_return_ts, self.north_percentile_industry, '情绪-北向各行业irf', reverse=False)
+        # self.plot_indicator_industry_irfs(self.daily_return_ts, self.north_percentile_industry, '情绪-北向各行业逆irf', reverse=True)
+        # self.plot_indicator_industry_irfs(self.daily_return_ts, self.big_order_inflow_percentile, '情绪-主力资金各行业irf', reverse=False)
+        # self.plot_indicator_industry_irfs(self.daily_return_ts, self.big_order_inflow_percentile, '情绪-主力资金各行业逆irf', reverse=True)
+        # self.plot_indicator_industry_irfs(self.daily_return_ts, self.amt_quantile, '情绪-成交额各行业irf', reverse=False)
+        # self.plot_indicator_industry_irfs(self.daily_return_ts, self.amt_quantile, '情绪-成交额各行业逆irf', reverse=True)
+        # self.plot_indicator_industry_irfs(self.daily_return_ts, self.turnover_quantile, '情绪-换手率各行业irf', reverse=False)
+        # self.plot_indicator_industry_irfs(self.daily_return_ts, self.turnover_quantile, '情绪-换手率各行业逆irf', reverse=True)
+        # self.plot_indicator_industry_irfs(self.daily_return_ts, self.shrink_rate, '情绪-缩量率各行业irf', reverse=False)
+        # self.plot_indicator_industry_irfs(self.daily_return_ts, self.shrink_rate, '情绪-缩量率各行业逆irf', reverse=True)
+        # self.plot_indicator_industry_irfs(self.daily_return_ts, self.amt_proportion, '情绪-成交占比各行业irf', reverse=False)
+        # self.plot_indicator_industry_irfs(self.daily_return_ts, self.amt_proportion, '情绪-成交占比各行业逆irf', reverse=True)
+        # self.plot_indicator_industry_irfs(self.daily_return_ts, self.amt_prop_quantile, '情绪-成交占比分位各行业irf', reverse=False)
+        # self.plot_indicator_industry_irfs(self.daily_return_ts, self.amt_prop_quantile, '情绪-成交占比分位各行业逆irf', reverse=True)
+        self.plot_indicator_overall_irfs(self.daily_return_ts, self.market_breadth, '情绪-市场宽度全Airf', reverse=False)
+        self.plot_indicator_overall_irfs(self.daily_return_ts, self.market_breadth, '情绪-市场宽度全A逆irf', reverse=True)
+        self.plot_indicator_overall_irfs(self.daily_return_ts, self.rotation_strength, '情绪-轮动强度全Airf', reverse=False)
+        self.plot_indicator_overall_irfs(self.daily_return_ts, self.rotation_strength, '情绪-轮动强度全A逆irf', reverse=True)
 
     def read_data(self):
         money_flow_dict, price_volume_dict, market_diverg_dict = self.processed_data
 
         # 仅总量
         self.market_breadth = market_diverg_dict['market_breadth_industry_level']*100
-        self.rotation_strength = market_diverg_dict['rotation_strength']
+        self.rotation_strength = market_diverg_dict['rotation_strength'].set_index('date').rename(columns={0: 'rotation_strength_daily'})
 
         # 总量行业一起
         self.finance_net_buy_percentile_industry = money_flow_dict['finance_net_buy_percentile_industry'].rename(columns={'总额': '万德全A'})*100
@@ -138,3 +142,68 @@ class Plotter(PgDbManager):
             os.remove(filename)
         print(f'{fig_name} saved!')
         plt.savefig(self.base_config.image_folder+fig_name, dpi=2000)
+
+    def plot_indicator_overall_irfs(self, daily_return_df, indicator_df, fig_name, reverse):
+        # 日期对齐 保留交集部分的行
+        index_intersection = daily_return_df.index.intersection(indicator_df.index)
+        daily_return_df = daily_return_df.loc[index_intersection]
+        indicator_df = indicator_df.loc[index_intersection]
+        # 创建Figure和Subplot
+        fig = plt.figure(constrained_layout=True)
+        gs = gridspec.GridSpec(2, 2, figure=fig, hspace=0, wspace=0)  # 这里的hspace设置了行间距，你可以根据需要调整它的值
+        plt.rcParams['axes.titlesize'] = 5
+
+        for index, indicator in enumerate(indicator_df.columns):
+            if indicator_df[indicator].eq(0).all():
+                continue
+
+            merged = pd.merge(daily_return_df['万德全A'], indicator_df[indicator],
+                              left_index=True, right_index=True).dropna()
+            # 创建VAR模型
+            # 剔除前面不连续的日期和最近一周的影响
+            merged = merged[5:-5]
+            model = sm.tsa.VAR(merged)
+            # a = model.select_order()
+
+            # 估计VAR模型
+            # 5是bic给的值，而且平时也不会考虑过去两周的影响，更符合我们的应用场景。10的话就太zigzag了，很难解释
+            results = model.fit(maxlags=5)
+
+            # 提取单位冲击响应函数
+            irf = results.irf(periods=25)  # 设定冲击响应函数的期数
+
+            # 计算指定冲击和响应的累积冲击响应函数
+            if not reverse:
+                cumulative_response = np.sum(irf.irfs[:25, merged.columns.get_loc(f'万德全A'),
+                                             merged.columns.get_loc(f'{indicator}')])
+            else:
+                cumulative_response = np.sum(irf.irfs[:25, merged.columns.get_loc(f'{indicator}'),
+                                             merged.columns.get_loc(f'万德全A')])
+
+            # 绘制动态响应函数到临时文件
+            filename = f"temp_plot_industry_{indicator}.png"
+            if reverse:
+                irf.plot(impulse=f'万德全A', response=f'{indicator}', signif=0.2)
+
+            else:
+                irf.plot(impulse=f'{indicator}', response=f'万德全A', signif=0.2)
+                # if industry == '万德全A':
+                #     plt.ylim(-0.1, 0.1)
+            plt.savefig(filename, dpi=60)
+            plt.close()
+
+            # 在Figure上显示该图像
+            ax = fig.add_subplot(gs[index])
+            img = mpimg.imread(filename)
+            ax.imshow(img, interpolation='none')
+            ax.axis('off')
+
+            # 为每个子图添加标题，并在标题中包含累积冲击响应函数的值
+            if reverse:
+                ax.set_title(f"{indicator}\nCumulative: {cumulative_response:.2f}逆向%")
+            else:
+                ax.set_title(f"{indicator}\nCumulative: {cumulative_response:.2f}%")
+            # 删除临时文件
+            os.remove(filename)
+        print(f'{fig_name} saved!')
+        plt.savefig(self.base_config.image_folder+fig_name, dpi=400)
