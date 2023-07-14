@@ -51,7 +51,7 @@ class Plotter(PgDbManager):
 
         # 仅总量
         self.market_breadth = market_diverg_dict['market_breadth_industry_level']*100
-        self.rotation_strength = market_diverg_dict['rotation_strength'].set_index('date').rename(columns={0: 'rotation_strength_daily'})
+        self.rotation_strength = market_diverg_dict['rotation_strength']
 
         # 总量行业一起
         self.finance_net_buy_percentile_industry = money_flow_dict['finance_net_buy_percentile_industry'].rename(columns={'总额': '万德全A'})*100

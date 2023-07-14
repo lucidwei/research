@@ -11,7 +11,10 @@ from base_config import BaseConfig
 from pgdb_updater_base import PgDbUpdaterBase
 from sqlalchemy import text
 import matplotlib
+
 matplotlib.use('TkAgg')
+from statsmodels.tsa.api import VAR
+
 
 def calculate_recent_weight(df: pd.DataFrame, window_short=20, window_long=60):
     df = df.sort_index()
@@ -42,6 +45,7 @@ class Processor(PgDbUpdaterBase):
         self.analyst = Analyst(base_config)
         self.market_divergence = MarketDivergence(base_config)
         self.generate_indicators()
+        self.calculate_predictions()
 
     def generate_indicators(self):
         # 生成所有指标
@@ -57,12 +61,12 @@ class Processor(PgDbUpdaterBase):
         ## self.upload_indicator(self.analyst.results)
         self.upload_indicator(self.market_divergence.results)
         ## self.upload_indicator(self.industry_congestion.results)
-        pass
 
     def upload_indicator(self, results: dict):
         for table_name, df in results.items():
             print(f'uploading {table_name} to database')
-            df.dropna().to_sql(name=table_name, con=self.alch_engine, schema='processed_data', if_exists='replace', index=False)
+            df.dropna().to_sql(name=table_name, con=self.alch_engine, schema='processed_data', if_exists='replace',
+                               index=False)
 
     @property
     def wide_results(self):
@@ -72,6 +76,144 @@ class Processor(PgDbUpdaterBase):
         # 将上述指标进行汇总，得到复合拥挤度
         # 需要先对各指标求irf，根据irf结果指定不同指标的权重，不着急做
         pass
+
+    def calculate_predictions(self):
+        # 市场行情
+        df_price_joined = self.read_joined_table_as_dataframe(
+            target_table_name='markets_daily_long',
+            target_join_column='product_static_info_id',
+            join_table_name='product_static_info',
+            join_column='internal_id',
+            filter_condition="field='收盘价' and product_type='index'"
+        )
+        df_price_joined = df_price_joined[['date', 'chinese_name', 'field', 'value']].rename(
+            columns={'chinese_name': 'industry'})
+        price_ts = df_price_joined.pivot(index='date', columns='industry', values='value')
+        daily_return_df = price_ts.pct_change().dropna(how='all')
+
+        self.predictions_list = []
+        for data_dict in self.wide_results:
+            dict_predictions = {}
+            for indicators_group, df in data_dict.items():
+                # 日期对齐 保留交集部分的行
+                index_intersection = daily_return_df.index.intersection(df.index)
+                daily_return_df = daily_return_df.loc[index_intersection]
+                df = df.loc[index_intersection].rename(columns={'总额': '万德全A'})
+
+                if len(df.columns) in (30, 31):
+                    # 有行业数据
+                    predictions_5_days = {}
+                    predictions_25_days = {}
+                    for _, industry in enumerate(df.columns):
+                        if df[industry].eq(0).all():
+                            continue
+                        merged = pd.merge(daily_return_df[industry], df[industry],
+                                          left_index=True, right_index=True,
+                                          suffixes=('_return', '_indicator')).dropna()
+                        # 创建VAR模型
+                        # 剔除前面不连续的日期和最近一周的影响
+                        merged_trimmed = merged[5:-5]
+                        model = VAR(merged_trimmed)
+                        results = model.fit(maxlags=5)
+
+                        # # 提取单位冲击响应函数
+                        # irf = results.irf(30).irfs[1:, 0, 1]
+                        # # 计算指标每日变化（作为冲击），除以100使得冲击为%单位的变化是不对的，冲击的单位应该和基准变量一致。
+                        # shock = df[industry].diff().dropna()
+                        # # 使用 IRF 和指标的过去值来预测未来的股指走势
+                        # predictions_5_days[industry] = np.sum([np.multiply(irf[i:i+5], shock[-1-i]) for i in range(5)])
+                        # predictions_25_days[industry] = np.sum([np.sum(np.multiply(irf[i:i+25], shock[-1-i])) for i in range(25)])
+
+                        # 直接用VAR预测
+                        predictions_5_days[industry] = results.forecast(merged.values, 5)[:, 0].sum()
+                        predictions_25_days[industry] = results.forecast(merged.values, 25)[:, 0].sum()
+
+                    predictions_sum = pd.concat(
+                        [pd.DataFrame(predictions_5_days, index=['predictions_5_days']).sum(axis=0),
+                         pd.DataFrame(predictions_25_days, index=['predictions_25_days']).sum(axis=0)], axis=1).rename(
+                        columns={0: 'predictions_5_days', 1: 'predictions_25_days'})
+                elif len(df.columns) == 4:
+                    # 无行业数据
+                    predictions_5_days = {}
+                    predictions_25_days = {}
+                    for _, indicator in enumerate(df.columns):
+                        merged = pd.merge(daily_return_df['万德全A'], df[indicator],
+                                          left_index=True, right_index=True).dropna()
+                        # 创建VAR模型
+                        # 剔除前面不连续的日期和最近一周的影响
+                        merged_trimmed = merged[5:-5]
+                        model = VAR(merged_trimmed)
+                        results = model.fit(maxlags=5)
+
+                        # 直接用VAR预测
+                        predictions_5_days[indicator] = results.forecast(merged.values, 5)[:, 0].sum()
+                        predictions_25_days[indicator] = results.forecast(merged.values, 25)[:, 0].sum()
+
+                        # # 提取单位冲击响应函数
+                        # irf = results.irf(30).irfs[1:, 0, 1]
+                        # # 计算指标每日变化（作为冲击）
+                        # shock = df[indicator].diff().dropna()
+                        #
+                        # # 使用 IRF 和指标的过去值来预测未来的股指走势
+                        # predictions_5_days[indicator] = np.sum([np.multiply(irf[i:i+5], shock[-1-i]) for i in range(5)])
+                        # predictions_25_days[indicator] = np.sum([np.sum(np.multiply(irf[i:i+25], shock[-1-i])) for i in range(25)])
+
+                    predictions_sum = pd.concat([pd.DataFrame(predictions_5_days, index=['placeholder']).sum(axis=0),
+                                                 pd.DataFrame(predictions_25_days, index=['placeholder']).sum(axis=0)],
+                                                axis=1).rename(
+                        columns={0: 'predictions_5_days', 1: 'predictions_25_days'})
+                else:
+                    raise Exception(f'indicators df length={len(df.columns)} not supported!')
+                dict_predictions[indicators_group] = predictions_sum
+            self.predictions_list.append(dict_predictions)
+        df_5_days_industry, df_25_days_industry, df_5_days_total, df_25_days_total = self.combine_predictions()
+        self.convert_upload_predictions(df_5_days_industry, '5_days_industry_forecast')
+        self.convert_upload_predictions(df_5_days_total, '5_days_total_forecast')
+
+    def convert_upload_predictions(self, df_wide, table_name):
+        df_long = df_wide.reset_index().rename(columns={'index': 'industry'}).melt(id_vars=['index'],
+                                                                                   var_name='indicator',
+                                                                                   value_name='value')
+        print(f'uploading {table_name} to database')
+        df_long.to_sql(name=table_name, con=self.alch_engine, schema='processed_data', if_exists='replace',
+                       index=False)
+
+    def combine_predictions(self):
+        def calculate_combined_mean(df):
+            if len(df.index) >= 30:
+                # Calculate mean of the first 3 columns (ignoring zero values)
+                mean_first_3 = df.iloc[:, 0:3].mean(axis=1)
+                # Calculate mean of the last 5 columns (ignoring zero values)
+                mean_last_5 = df.iloc[:, -5:].mean(axis=1)
+                # Calculate combined mean
+                mean_combined = (mean_first_3 + mean_last_5) / 2
+                # Add the new column to the DataFrame
+                df['加权均值'] = mean_combined
+                return df.fillna(0)
+            else:
+                df['加权均值'] = df.mean(axis=1)
+                return df
+
+        # Initialize empty dataframes for first two tables
+        df_5_days_industry = pd.DataFrame()
+        df_25_days_industry = pd.DataFrame()
+
+        # Initialize empty dataframes for last two tables
+        df_5_days_total = pd.DataFrame()
+        df_25_days_total = pd.DataFrame()
+
+        for data in self.predictions_list:
+            for key, df in data.items():
+                if len(df.index) >= 30:  # industry related data
+                    df_5_days_industry[key] = df['predictions_5_days']
+                    df_25_days_industry[key] = df['predictions_25_days']
+                else:  # total related data
+                    for indicator in df.index.tolist():
+                        df_5_days_total.loc['万德全A', indicator] = df.loc[indicator, 'predictions_5_days']
+                        df_25_days_total.loc['万德全A', indicator] = df.loc[indicator, 'predictions_25_days']
+
+        return calculate_combined_mean(df_5_days_industry), calculate_combined_mean(
+            df_25_days_industry), calculate_combined_mean(df_5_days_total), calculate_combined_mean(df_25_days_total)
 
 
 class MoneyFlow(PgDbUpdaterBase):
@@ -158,13 +300,12 @@ class MoneyFlow(PgDbUpdaterBase):
         # 最近20个交易日融资买入额占最近60个交易日融资买入额比重作为融资买入情绪
         weights_industry = calculate_recent_weight(df=wide_df).dropna(subset=['交通运输'])
 
-
         # 将融资买入情绪进行滚动一年分位处理
         self.fnb_percentile_industry_wide = weights_industry.rolling(window=252).apply(
             lambda x: pd.Series(x).rank(pct=True)[-1])
         self.fnb_percentile_industry = self.fnb_percentile_industry_wide.reset_index().melt(id_vars=['date'],
-                                                                                  var_name='industry',
-                                                                                  value_name='finance_net_buy')
+                                                                                            var_name='industry',
+                                                                                            value_name='finance_net_buy')
 
     def calc_north_inflow(self):
         # 注：自建
@@ -178,18 +319,19 @@ class MoneyFlow(PgDbUpdaterBase):
         self.north_percentile_industry_wide = weights_industry.rolling(window=252).apply(
             lambda x: pd.Series(x).rank(pct=True)[-1])
         self.north_percentile_industry = self.north_percentile_industry_wide.reset_index().melt(id_vars=['date'],
-                                                                                      var_name='industry',
-                                                                                      value_name='north_inflow')
+                                                                                                var_name='industry',
+                                                                                                value_name='north_inflow')
 
     def calc_big_order_inflow(self):
         # 最近一周主力净流入额作为大单情绪
         wide_df = self.big_order_inflow_df.pivot(index='date', columns='中信行业', values='主力净流入额')
         wide_df_ma = wide_df.rolling(10).mean()
         # 对大单情绪进行滚动一年分位处理
-        self.big_order_inflow_percentile_wide = wide_df_ma.rolling(window=252).apply(lambda x: pd.Series(x).rank(pct=True)[-1])
+        self.big_order_inflow_percentile_wide = wide_df_ma.rolling(window=252).apply(
+            lambda x: pd.Series(x).rank(pct=True)[-1])
         self.big_order_inflow_percentile = self.big_order_inflow_percentile_wide.reset_index().melt(id_vars=['date'],
-                                                                                          var_name='industry',
-                                                                                          value_name='big_order_inflow_percentile')
+                                                                                                    var_name='industry',
+                                                                                                    value_name='big_order_inflow_percentile')
 
 
 class PriceVolume(PgDbUpdaterBase):
@@ -270,7 +412,7 @@ class PriceVolume(PgDbUpdaterBase):
         row_sums = amount_industry_df.sum(axis=1)  # 计算每行的总和
         self.amt_proportion_df_wide = amount_industry_df.div(row_sums, axis=0)
         self.amt_proportion_df = self.amt_proportion_df_wide.reset_index().melt(id_vars=['date'], var_name='industry',
-                                                                      value_name='amt_proportion')
+                                                                                value_name='amt_proportion')
 
     def calc_amt_quantile(self):
         # 计算各行业的成交额滚动一年分位
@@ -278,22 +420,24 @@ class PriceVolume(PgDbUpdaterBase):
         self.amt_quantile_df_wide = amount_industry_df.rolling(window=252).apply(
             lambda x: pd.Series(x).rank(pct=True)[-1])
         self.amt_quantile_df = self.amt_quantile_df_wide.reset_index().melt(id_vars=['date'], var_name='industry',
-                                                                  value_name='amt_quantile')
+                                                                            value_name='amt_quantile')
 
     def calc_amt_prop_quantile(self):
         # 计算各行业的成交额占比的滚动一年分位
         self.amt_prop_quantile_wide = self.amt_proportion_df_wide.rolling(window=252).apply(
             lambda x: pd.Series(x).rank(pct=True)[-1])
-        self.amt_prop_quantile_df = self.amt_prop_quantile_wide.reset_index().melt(id_vars=['date'], var_name='industry',
-                                                                  value_name='amt_prop_quantile')
+        self.amt_prop_quantile_df = self.amt_prop_quantile_wide.reset_index().melt(id_vars=['date'],
+                                                                                   var_name='industry',
+                                                                                   value_name='amt_prop_quantile')
 
     def calc_turnover_quantile(self):
         # 计算各行业的换手率滚动一年分位
         turnover_industry_df = self.turnover_industry_df
         self.turnover_quantile_df_wide = turnover_industry_df.rolling(window=252).apply(
             lambda x: pd.Series(x).rank(pct=True)[-1])
-        self.turnover_quantile_df = self.turnover_quantile_df_wide.reset_index().melt(id_vars=['date'], var_name='industry',
-                                                                            value_name='turnover_quantile')
+        self.turnover_quantile_df = self.turnover_quantile_df_wide.reset_index().melt(id_vars=['date'],
+                                                                                      var_name='industry',
+                                                                                      value_name='turnover_quantile')
 
     def calc_vol_shrink_rate(self):
         # 计算各行业的缩量率
@@ -301,7 +445,7 @@ class PriceVolume(PgDbUpdaterBase):
         rolling_avg = amount_industry_df.rolling(window=252).mean()
         self.shrink_rate_df_wide = amount_industry_df / rolling_avg - 1
         self.shrink_rate_df = self.shrink_rate_df_wide.reset_index().melt(id_vars=['date'], var_name='industry',
-                                                                value_name='shrink_rate')
+                                                                          value_name='shrink_rate')
 
     def calc_momentum(self):
         # 这个暂时不知道怎么做
@@ -394,10 +538,11 @@ class MarketDivergence(PgDbUpdaterBase):
         mb_industry_above_ma.iloc[:20] = np.nan
         mb_industry_above_ma.columns = ['市场宽度-基于位置']
 
-        self.mb_industry_combined_wide = pd.concat([mb_industry_close, mb_industry_drawdown, mb_industry_above_ma], axis=1)
+        self.mb_industry_combined_wide = pd.concat([mb_industry_close, mb_industry_drawdown, mb_industry_above_ma],
+                                                   axis=1)
         self.mb_industry_combined = self.mb_industry_combined_wide.reset_index().melt(id_vars=['date'],
-                                                                            var_name='market_breadth_type',
-                                                                            value_name='value')
+                                                                                      var_name='market_breadth_type',
+                                                                                      value_name='value')
 
     def calc_28_amount_diverge(self):
         # 国盛策略：二八交易分化
@@ -408,10 +553,17 @@ class MarketDivergence(PgDbUpdaterBase):
         # 计算全市场（不同行业之间的）轮动强度
         close_industry_df = self.close_industry_df.drop(columns=['万德全A'])
         daily_returns = close_industry_df.pct_change()  # 计算每日涨跌幅
+
         rank_changes = daily_returns.rank(axis=1).diff().abs()  # 计算涨跌百分比排名的变化的绝对值
         self.rotation_strength = rank_changes.sum(axis=1).to_frame()  # 求和得到轮动强度
-        self.rotation_strength['rotation_strength_daily_ma'] = self.rotation_strength.rolling(window=20).mean()
-        self.rotation_strength = self.rotation_strength.reset_index()
+        self.rotation_strength.columns = ['rotation_strength_daily']
+        self.rotation_strength['rotation_strength_daily_ma20'] = self.rotation_strength.rolling(window=20).mean()
+
+        # 使用过去5天的涨跌幅进行排序
+        rank_changes_5d = daily_returns.rolling(window=5).sum().rank(axis=1).diff().abs()
+        self.rotation_strength['rotation_strength_5d'] = rank_changes_5d.sum(axis=1).to_frame()  # 求和得到轮动强度
+        self.rotation_strength['rotation_strength_5d_ma20'] = self.rotation_strength['rotation_strength_5d'].rolling(
+            window=20).mean()
 
 
 class Analyst(PgDbUpdaterBase):
