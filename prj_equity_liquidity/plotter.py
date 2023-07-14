@@ -28,8 +28,8 @@ class Plotter(PgDbUpdaterBase):
         self.plot_inflow_industry_irfs(self.daily_return_ts, self.north_inflow_ts, '北向各行业irf', reverse=False)
         self.plot_inflow_industry_irfs(self.daily_return_ts, self.aggregate_inflow_ts, '四项总和各行业逆irf', reverse=True)
         self.plot_inflow_industry_irfs(self.daily_return_ts, self.aggregate_inflow_ts, '四项总和各行业irf', reverse=False)
-        self.plot_inflow_industry_irfs(self.daily_return_ts, self.etf_inflow_ts, 'etf各行业逆irf', reverse=True)
-        self.plot_inflow_industry_irfs(self.daily_return_ts, self.etf_inflow_ts, 'etf各行业irf', reverse=False)
+        # self.plot_inflow_industry_irfs(self.daily_return_ts, self.etf_inflow_ts, 'etf各行业逆irf', reverse=True)
+        # self.plot_inflow_industry_irfs(self.daily_return_ts, self.etf_inflow_ts, 'etf各行业irf', reverse=False)
         self.plot_inflow_industry_irfs(self.daily_return_ts, self.holder_change_ts, '大股东变化各行业逆irf', reverse=True)
         self.plot_inflow_industry_irfs(self.daily_return_ts, self.holder_change_ts, '大股东变化各行业irf', reverse=False)
         self.plot_inflow_windA_irfs(self.daily_return_ts, self.new_fund_ts, '新发基金全A逆irf', reverse=True)
@@ -175,9 +175,12 @@ class Plotter(PgDbUpdaterBase):
 
     def plot_inflow_industry_irfs(self, daily_return_df, inflow_df, fig_name, reverse):
         # 日期对齐 保留交集部分的行
-        index_intersection = daily_return_df.index.intersection(inflow_df.index)
+        # 求5日流入和，测算结果直接能与周度跟踪相乘
+        inflow_5d = inflow_df.rolling(5).sum().dropna()
+        index_intersection = daily_return_df.index.intersection(inflow_5d.index)
         daily_return_df = daily_return_df.loc[index_intersection]
-        inflow_df = inflow_df.loc[index_intersection]
+        inflow_df = inflow_5d.loc[index_intersection]
+
         # 创建Figure和Subplot
         fig = plt.figure(constrained_layout=True)
         gs = gridspec.GridSpec(5, 7, figure=fig, hspace=0, wspace=0)  # 这里的hspace设置了行间距，你可以根据需要调整它的值
@@ -241,10 +244,11 @@ class Plotter(PgDbUpdaterBase):
         plt.savefig(self.base_config.image_folder+fig_name, dpi=2000)
 
     def plot_inflow_windA_irfs(self, daily_return_df, inflow_df, fig_name, reverse):
-        # 日期对齐 保留交集部分的行
-        index_intersection = daily_return_df.index.intersection(inflow_df.index)
+        inflow_5d = inflow_df.rolling(5).sum().dropna()
+        index_intersection = daily_return_df.index.intersection(inflow_5d.index)
         daily_return_df = daily_return_df.loc[index_intersection]
-        inflow_df = inflow_df.loc[index_intersection]
+        inflow_df = inflow_5d.loc[index_intersection]
+
         # 创建Figure和Subplot
         fig = plt.figure(constrained_layout=True)
         gs = gridspec.GridSpec(1, 3, figure=fig, hspace=0, wspace=0)
