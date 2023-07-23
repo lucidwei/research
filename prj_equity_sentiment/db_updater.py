@@ -156,7 +156,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
         if missing_dates[0] == self.tradedays[-1]:
             print('Only today is missing, skipping update _upload_missing_data_industry_volume')
             return
-        for date in missing_dates:
+        for date in missing_dates[::-1]:
             for code in industry_codes:
                 print(
                     f'Wind downloading and upload volume,amt,turn for {code} {date} _upload_missing_data_industry_volume')
@@ -217,8 +217,13 @@ class DatabaseUpdater(PgDbUpdaterBase):
             df_upload['product_name'] = code
             df_upload = df_upload.melt(id_vars=['date', 'product_name'], var_name='field',
                                        value_name='value').dropna()
+            # 去除已经存在的日期
+            existing_dates = self.select_existing_dates_from_long_table('markets_daily_long',
+                                                                        product_name=code,
+                                                                        field='主力净流入额')
+            downloaded_filtered = df_upload[~df_upload['date'].isin(existing_dates)]
 
-            df_upload.to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
+            downloaded_filtered.to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
 
     def logic_industry_stk_price_volume(self):
         """

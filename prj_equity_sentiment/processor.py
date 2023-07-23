@@ -66,7 +66,7 @@ class Processor(PgDbUpdaterBase):
         for table_name, df in results.items():
             print(f'uploading {table_name} to database')
             df.dropna().to_sql(name=table_name, con=self.alch_engine, schema='processed_data', if_exists='replace',
-                               index=False)
+                               index=True)
 
     @property
     def wide_results(self):
@@ -132,7 +132,7 @@ class Processor(PgDbUpdaterBase):
                         [pd.DataFrame(predictions_5_days, index=['predictions_5_days']).sum(axis=0),
                          pd.DataFrame(predictions_25_days, index=['predictions_25_days']).sum(axis=0)], axis=1).rename(
                         columns={0: 'predictions_5_days', 1: 'predictions_25_days'})
-                elif len(df.columns) == 4:
+                elif len(df.columns) <= 5:
                     # 无行业数据
                     predictions_5_days = {}
                     predictions_25_days = {}
@@ -171,12 +171,12 @@ class Processor(PgDbUpdaterBase):
         self.convert_upload_predictions(df_5_days_total, '5_days_total_forecast')
 
     def convert_upload_predictions(self, df_wide, table_name):
-        df_long = df_wide.reset_index().rename(columns={'index': 'industry'}).melt(id_vars=['index'],
-                                                                                   var_name='indicator',
-                                                                                   value_name='value')
+        # df_long = df_wide.reset_index().rename(columns={'index': 'industry'}).melt(id_vars=['industry'],
+        #                                                                            var_name='indicator',
+        #                                                                            value_name='value')
         print(f'uploading {table_name} to database')
-        df_long.to_sql(name=table_name, con=self.alch_engine, schema='processed_data', if_exists='replace',
-                       index=False)
+        df_wide.to_sql(name=table_name, con=self.alch_engine, schema='processed_data', if_exists='replace',
+                       index=True)
 
     def combine_predictions(self):
         def calculate_combined_mean(df):
@@ -192,7 +192,11 @@ class Processor(PgDbUpdaterBase):
                 return df.fillna(0)
             else:
                 df['加权均值'] = df.mean(axis=1)
-                return df
+                df = df.rename(columns={'rotation_strength_daily': '日度轮动强度',
+                                        'rotation_strength_daily_ma20': '日度轮动强度MA20',
+                                        'rotation_strength_5d': '五日轮动强度',
+                                        'rotation_strength_5d_ma20': '五日轮动强度MA20'})
+                return df.T
 
         # Initialize empty dataframes for first two tables
         df_5_days_industry = pd.DataFrame()
@@ -301,7 +305,7 @@ class MoneyFlow(PgDbUpdaterBase):
         weights_industry = calculate_recent_weight(df=wide_df).dropna(subset=['交通运输'])
 
         # 将融资买入情绪进行滚动一年分位处理
-        self.fnb_percentile_industry_wide = weights_industry.rolling(window=252).apply(
+        self.fnb_percentile_industry_wide = weights_industry.rolling(window=250).apply(
             lambda x: pd.Series(x).rank(pct=True)[-1])
         self.fnb_percentile_industry = self.fnb_percentile_industry_wide.reset_index().melt(id_vars=['date'],
                                                                                             var_name='industry',
@@ -316,7 +320,7 @@ class MoneyFlow(PgDbUpdaterBase):
         weights_industry = calculate_recent_weight(df=wide_df).dropna(subset=['交通运输'])
 
         # 将北向买入情绪进行滚动一年分位处理
-        self.north_percentile_industry_wide = weights_industry.rolling(window=252).apply(
+        self.north_percentile_industry_wide = weights_industry.rolling(window=250).apply(
             lambda x: pd.Series(x).rank(pct=True)[-1])
         self.north_percentile_industry = self.north_percentile_industry_wide.reset_index().melt(id_vars=['date'],
                                                                                                 var_name='industry',
@@ -327,7 +331,7 @@ class MoneyFlow(PgDbUpdaterBase):
         wide_df = self.big_order_inflow_df.pivot(index='date', columns='中信行业', values='主力净流入额')
         wide_df_ma = wide_df.rolling(10).mean()
         # 对大单情绪进行滚动一年分位处理
-        self.big_order_inflow_percentile_wide = wide_df_ma.rolling(window=252).apply(
+        self.big_order_inflow_percentile_wide = wide_df_ma.rolling(window=250).apply(
             lambda x: pd.Series(x).rank(pct=True)[-1])
         self.big_order_inflow_percentile = self.big_order_inflow_percentile_wide.reset_index().melt(id_vars=['date'],
                                                                                                     var_name='industry',
