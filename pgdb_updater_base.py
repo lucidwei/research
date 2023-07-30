@@ -969,53 +969,53 @@ class PgDbUpdaterBase(PgDbManager):
             self.alch_conn.execute(text(query))
             self.alch_conn.commit()
 
-    def calculate_custom_metric(self, english_name_a, english_name_b, calculation_function, new_english_name,
-                                new_chinese_name, new_unit):
-        """
-        只能一条一条计算
-        :param english_name_a:
-        :param english_name_b:
-        :param calculation_function:
-        :param new_english_name:
-        :param new_chinese_name:
-        :return:
-        """
-        # Check if calculation_function has a name
-        function_name = getattr(calculation_function, '__name__', None)
-        if function_name is None:
-            raise ValueError("calculation_function must have a name, use regular function definition.")
-
-        # Step 1: Get data for the specified columns
-        query_a = f"SELECT date, value as value_a FROM low_freq_long WHERE metric_name = '{english_name_a}'"
-        query_b = f"SELECT date, value as value_b FROM low_freq_long WHERE metric_name = '{english_name_b}'"
-        df_a = pd.read_sql_query(text(query_a), self.alch_conn)
-        df_b = pd.read_sql_query(text(query_b), self.alch_conn)
-
-        # Step 2: Merge data on date
-        df = df_a.merge(df_b, on='date')
-
-        # Step 3: Calculate the custom metric using the calculation_function
-        df['calculated_value'] = df.apply(lambda row: calculation_function(row['value_a'], row['value_b']), axis=1)
-
-        # Step 4: Insert calculated values into low_freq_long
-        for _, row in df.iterrows():
-            query = f"""
-            INSERT INTO low_freq_long (date, metric_name, value)
-            VALUES ('{row['date']}', '{new_english_name}', {row['calculated_value']})
-            ON CONFLICT (date, metric_name) DO UPDATE SET value = EXCLUDED.value
-            """
-            self.alch_conn.execute(text(query))
-
-        # Step 5: Update metric_static_info
-        self.adjust_seq_val()
-        query = f"""
-        INSERT INTO metric_static_info (english_name, source_code, chinese_name, unit)
-        VALUES ('{new_english_name}', 'calculated from {english_name_a} and {english_name_b} using {function_name}', '{new_chinese_name}', '{new_unit}')
-        ON CONFLICT (english_name, source_code) DO UPDATE
-        SET source_code = EXCLUDED.source_code, chinese_name = EXCLUDED.chinese_name, unit = EXCLUDED.unit
-        """
-        self.alch_conn.execute(text(query))
-        self.alch_conn.commit()
-
-    def divide(self, a, b):
-        return a / b
+    # def calculate_custom_metric(self, english_name_a, english_name_b, calculation_function, new_english_name,
+    #                             new_chinese_name, new_unit):
+    #     """
+    #     只能一条一条计算
+    #     :param english_name_a:
+    #     :param english_name_b:
+    #     :param calculation_function:
+    #     :param new_english_name:
+    #     :param new_chinese_name:
+    #     :return:
+    #     """
+    #     # Check if calculation_function has a name
+    #     function_name = getattr(calculation_function, '__name__', None)
+    #     if function_name is None:
+    #         raise ValueError("calculation_function must have a name, use regular function definition.")
+    #
+    #     # Step 1: Get data for the specified columns
+    #     query_a = f"SELECT date, value as value_a FROM low_freq_long WHERE metric_name = '{english_name_a}'"
+    #     query_b = f"SELECT date, value as value_b FROM low_freq_long WHERE metric_name = '{english_name_b}'"
+    #     df_a = pd.read_sql_query(text(query_a), self.alch_conn)
+    #     df_b = pd.read_sql_query(text(query_b), self.alch_conn)
+    #
+    #     # Step 2: Merge data on date
+    #     df = df_a.merge(df_b, on='date')
+    #
+    #     # Step 3: Calculate the custom metric using the calculation_function
+    #     df['calculated_value'] = df.apply(lambda row: calculation_function(row['value_a'], row['value_b']), axis=1)
+    #
+    #     # Step 4: Insert calculated values into low_freq_long
+    #     for _, row in df.iterrows():
+    #         query = f"""
+    #         INSERT INTO low_freq_long (date, metric_name, value)
+    #         VALUES ('{row['date']}', '{new_english_name}', {row['calculated_value']})
+    #         ON CONFLICT (date, metric_name) DO UPDATE SET value = EXCLUDED.value
+    #         """
+    #         self.alch_conn.execute(text(query))
+    #
+    #     # Step 5: Update metric_static_info
+    #     self.adjust_seq_val()
+    #     query = f"""
+    #     INSERT INTO metric_static_info (english_name, source_code, chinese_name, unit)
+    #     VALUES ('{new_english_name}', 'calculated from {english_name_a} and {english_name_b} using {function_name}', '{new_chinese_name}', '{new_unit}')
+    #     ON CONFLICT (english_name, source_code) DO UPDATE
+    #     SET source_code = EXCLUDED.source_code, chinese_name = EXCLUDED.chinese_name, unit = EXCLUDED.unit
+    #     """
+    #     self.alch_conn.execute(text(query))
+    #     self.alch_conn.commit()
+    #
+    # def divide(self, a, b):
+    #     return a / b
