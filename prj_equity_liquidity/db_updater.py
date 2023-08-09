@@ -179,8 +179,6 @@ class DatabaseUpdater(PgDbUpdaterBase):
 
             df_upload.to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
 
-
-
     def logic_north_inflow_by_industry(self):
         # 检查或更新meta_table
         need_update_meta_table = self._check_meta_table('metric_static_info', 'chinese_name',
@@ -510,7 +508,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
                              "AND fund_fullname NOT LIKE '%联接%'")
         # 有一些发行时间较早的行业ETF数据库中没有收录，从excel中读取并更新到数据库
         # 读取行业资金周流入规模文件
-        file_path = os.path.join(self.base_config.excels_path, '行业资金周流入规模（5.8-5.13).xlsx')
+        file_path = os.path.join(self.base_config.excels_path, '行业资金周流入规模（7.24-7.29）.xlsx')
         df_excel = pd.read_excel(file_path, sheet_name='行业ETF当周净流入统计', index_col=None)
         # 筛选出 df_excel 中存在但 etf_funds_df 中不存在的代码
         missing_codes = df_excel['代码'][~df_excel['代码'].isin(etf_funds_df['code'])]
