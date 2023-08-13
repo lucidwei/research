@@ -142,8 +142,8 @@ class DatabaseUpdater(PgDbUpdaterBase):
         # 检查或更新data_table
         missing_dates = self._check_data_table(table_name='markets_daily_long',
                                                type_identifier='margin_by_industry')
-        self._upload_missing_data_industry_margin(missing_dates)
-        # self._upload_wide_data_industry_margin()
+        missing_dates_filtered = self.remove_today_if_trading_day(missing_dates)
+        self._upload_missing_data_industry_margin(missing_dates_filtered)
 
     def _upload_missing_data_industry_margin(self, missing_dates):
         if len(missing_dates) == 0:
@@ -191,7 +191,8 @@ class DatabaseUpdater(PgDbUpdaterBase):
         # 检查或更新data_table
         missing_dates = self._check_data_table(table_name='markets_daily_long',
                                                type_identifier='north_inflow')
-        self._upload_missing_data_north_inflow(missing_dates)
+        missing_dates_filtered = self.remove_today_if_trading_day(missing_dates)
+        self._upload_missing_data_north_inflow(missing_dates_filtered)
 
     def _upload_missing_data_north_inflow(self, missing_dates):
         if len(missing_dates) == 0:
@@ -224,11 +225,13 @@ class DatabaseUpdater(PgDbUpdaterBase):
         need_update_meta_table = self._check_meta_table('product_static_info', 'code', type_identifier='major_holder')
         missing_dates = self._check_data_table(table_name='markets_daily_long',
                                                type_identifier='major_holder')
+        missing_dates_filtered = self.remove_today_if_trading_day(missing_dates)
+
         if need_update_meta_table:
             # 检查或更新data_table
-            self._upload_missing_meta_major_holder(missing_dates)
+            self._upload_missing_meta_major_holder(missing_dates_filtered)
         if missing_dates:
-            self._upload_missing_data_major_holder(missing_dates)
+            self._upload_missing_data_major_holder(missing_dates_filtered)
 
     def _upload_missing_meta_major_holder(self, missing_dates):
         if len(missing_dates) == 0:
@@ -370,11 +373,13 @@ class DatabaseUpdater(PgDbUpdaterBase):
                                                         type_identifier='price_valuation')
         missing_dates = self._check_data_table(table_name='markets_daily_long',
                                                type_identifier='price_valuation')
+        missing_dates_filtered = self.remove_today_if_trading_time(missing_dates)
+
         if need_update_meta_table:
             # 检查或更新data_table
             self._upload_missing_meta_price_valuation()
         if missing_dates:
-            self._upload_missing_data_price_valuation(missing_dates)
+            self._upload_missing_data_price_valuation(missing_dates_filtered)
 
     def _upload_missing_meta_price_valuation(self):
         required_codes_df = self._price_valuation_required_codes_df
@@ -581,6 +586,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
         downloaded_filtered = downloaded_filtered.reset_index().rename(
             columns={'index': 'date', 'MF_NETINFLOW': '净流入额'})
         # 去除已经存在的日期
+        # 这段代码可以成为范例引入其他函数防止报错
         existing_dates = self.select_existing_dates_from_long_table('markets_daily_long',
                                                                     product_name=etf_info_row['chinese_name'],
                                                                     field='净流入额')
@@ -595,17 +601,21 @@ class DatabaseUpdater(PgDbUpdaterBase):
         info = w.wsd(code,
                      "fund_fullname,fund_info_name,fund_fullnameen",
                      self.all_dates_str[-1], self.all_dates_str[-1], "unit=1", usedf=True)[1]
-        row = {
-            'code': code,
-            'fund_fullname': info.iloc[0]['FUND_FULLNAME'],
-            'chinese_name': info.iloc[0]['FUND_INFO_NAME'],
-            'english_name': info.iloc[0]['FUND_FULLNAMEEN'],
-            'product_type': 'fund',
-            'source': 'wind',
-            'fundfounddate': None,
-            'buystartdate': None,
-            'issueshare': None
-        }
+        try:
+            row = {
+                'code': code,
+                'fund_fullname': info.iloc[0]['FUND_FULLNAME'],
+                'chinese_name': info.iloc[0]['FUND_INFO_NAME'],
+                'english_name': info.iloc[0]['FUND_FULLNAMEEN'],
+                'product_type': 'fund',
+                'source': 'wind',
+                'fundfounddate': None,
+                'buystartdate': None,
+                'issueshare': None
+            }
+        except:
+            print(f"Error processing _update_specific_funds_meta {code}, passes")
+            return
         self.insert_product_static_info(row)
 
     def update_all_funds_info(self):

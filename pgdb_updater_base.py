@@ -33,6 +33,28 @@ class PgDbUpdaterBase(PgDbManager):
         self.months_ends = self.base_config.month_ends
         self.months_ends_str = self.base_config.month_ends_str
 
+    def remove_today_if_trading_day(self, dates):
+        today = datetime.date.today()
+
+        if today in self.tradedays:
+            filtered_dates = [date for date in dates if date != today]
+        else:
+            filtered_dates = dates
+
+        return filtered_dates
+
+    def remove_today_if_trading_time(self, dates):
+        today = datetime.date.today()
+        now = datetime.datetime.now().time()
+        closing_time = datetime.datetime.strptime("17:00", "%H:%M").time()
+
+        if today in self.tradedays and now < closing_time:
+            filtered_dates = [date for date in dates if date != today]
+        else:
+            filtered_dates = dates
+
+        return filtered_dates
+
     @property
     def conversion_dicts(self):
         """
@@ -722,6 +744,7 @@ class PgDbUpdaterBase(PgDbManager):
         return sorted(list(missing_values))
 
     def is_markets_daily_long_updated_today(self, field: str, product_name_key_word: str):
+        # TODO: 此函数的存在不太合理 不应该有使用它的情境
         # 获取今天的日期
         today = self.all_dates[-1]
 

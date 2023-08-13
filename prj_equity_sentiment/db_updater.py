@@ -72,11 +72,11 @@ class DatabaseUpdater(PgDbUpdaterBase):
                     filter_condition=filter_condition
                 )
             case 'price_volume':
-                filter_condition = f"product_static_info.product_type='stock' AND markets_daily_long.field='收盘价'"
+                filter_condition = f"stocks_daily_long.field='收盘价'"
                 existing_dates = self.select_column_from_joined_table(
                     target_table_name='product_static_info',
                     target_join_column='internal_id',
-                    join_table_name='markets_daily_long',
+                    join_table_name='stocks_daily_long',
                     join_column='product_static_info_id',
                     selected_column=f'date',
                     filter_condition=filter_condition
@@ -143,8 +143,9 @@ class DatabaseUpdater(PgDbUpdaterBase):
         # 直接检查或更新data_table
         missing_dates = self._check_data_table(type_identifier='industry_volume',
                                                additional_filter=f"field='成交额'")
-        if missing_dates:
-            self._upload_missing_data_industry_volume(missing_dates)
+        missing_dates_filtered = self.remove_today_if_trading_day(missing_dates)
+        if missing_dates_filtered:
+            self._upload_missing_data_industry_volume(missing_dates_filtered)
 
     def _upload_missing_data_industry_volume(self, missing_dates):
         industry_codes = self.select_existing_values_in_target_column(
@@ -185,8 +186,10 @@ class DatabaseUpdater(PgDbUpdaterBase):
         # 不需检查或更新meta_table，因为行业指数和全A已经存在于product_static_info
         missing_dates = self._check_data_table(type_identifier='industry_large_order',
                                                additional_filter=f"field='主力净流入额'")
-        if missing_dates:
-            self._upload_missing_data_industry_large_order(missing_dates)
+        missing_dates_filtered = self.remove_today_if_trading_day(missing_dates)
+
+        if missing_dates_filtered:
+            self._upload_missing_data_industry_large_order(missing_dates_filtered)
 
     def _upload_missing_data_industry_large_order(self, missing_dates):
         industry_codes = self.select_existing_values_in_target_column(
@@ -235,10 +238,14 @@ class DatabaseUpdater(PgDbUpdaterBase):
         # need_update_meta_table = True
         # 检查或更新data_table
         missing_dates = self._check_data_table(type_identifier='price_volume')
-        if need_update_meta_table:
-            self._upload_missing_meta_stk_industry_price_volume()
-        if missing_dates:
-            self._upload_missing_data_stk_price_volume()
+        missing_dates_filtered = self.remove_today_if_trading_time(missing_dates)
+
+        # if need_update_meta_table:
+        #     self._upload_missing_meta_stk_industry_price_volume()
+        if missing_dates_filtered:
+            self._upload_whole_market_data_by_missing_dates(missing_dates_filtered)
+
+        self._upload_missing_data_stk_price_volume()
 
     def _upload_missing_meta_stk_industry_price_volume(self):
         sector_codes = self.select_existing_values_in_target_column('product_static_info', ['code', 'chinese_name'],
@@ -278,13 +285,50 @@ class DatabaseUpdater(PgDbUpdaterBase):
                 self.adjust_seq_val(seq_name='product_static_info_internal_id_seq')
                 self.insert_product_static_info(row_stk)
 
+    def _upload_whole_market_data_by_missing_dates(self, missing_dates: list):
+        for date in missing_dates:
+            print(f"tushare downloading 全市场行情 for {date}")
+            df = self.pro.daily(**{
+                "ts_code": "",
+                "trade_date": "",
+                "start_date": date,
+                "end_date": date,
+                "offset": "",
+                "limit": ""
+            }, fields=[
+                "ts_code",
+                "trade_date",
+                "open",
+                "high",
+                "low",
+                "close",
+                "pct_chg",
+                "vol",
+                "amount"
+            ])
+            df = df.rename(columns={
+                "ts_code": 'product_name',
+                "trade_date": 'date',
+                "open": '开盘价',
+                "high": '最高价',
+                "low": '最低价',
+                "close": '收盘价',
+                "pct_chg": '当日涨跌幅',
+                "vol": '成交量',
+                "amount": '成交额'
+            })
+            # 转换为长格式数据框
+            df_long = pd.melt(df, id_vars=['date', 'product_name'], var_name='field', value_name='value')
+            df_long.to_sql('stocks_daily_long', self.alch_engine, if_exists='append', index=False)
+
     def _upload_missing_data_stk_price_volume(self):
         existing_codes = self.select_existing_values_in_target_column('product_static_info', 'code',
                                                                       f"product_type='stock'")
         for code in existing_codes[3810:]:
             missing_dates = self._check_data_table(type_identifier='stk_price_volume',
                                                    stock_code=code)
-            missing_dates_str_list = [date_obj.strftime('%Y%m%d') for date_obj in missing_dates]
+            missing_dates_filtered = self.remove_today_if_trading_time(missing_dates)
+            missing_dates_str_list = [date_obj.strftime('%Y%m%d') for date_obj in missing_dates_filtered]
             if missing_dates[0] == self.tradedays[-1]:
                 print(f'{code} Only today is missing, skipping update _upload_missing_data_stk_price_volume')
                 continue
