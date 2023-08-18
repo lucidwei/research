@@ -17,14 +17,22 @@ from pgdb_updater_base import PgDbUpdaterBase
 class DatabaseUpdater(PgDbUpdaterBase):
     def __init__(self, base_config: BaseConfig):
         super().__init__(base_config)
-        AllFundsInfoUpdater(self)
+        self.all_funds_info_updater = AllFundsInfoUpdater(self)
         ## self.logic_reopened_dk_funds()
         ## self.logic_reopened_cyq_funds()
-        EtfLofUpdater(self)
-        MarginTradeByIndustryUpdater(self)
-        NorthInflowUpdater(self)
-        MajorHolderUpdater(self)
-        PriceValuationUpdater(self)
+        self.etf_lof_updater = EtfLofUpdater(self)
+        self.margin_trade_by_industry_updater = MarginTradeByIndustryUpdater(self)
+        self.north_inflow_updater = NorthInflowUpdater(self)
+        self.major_holder_updater = MajorHolderUpdater(self)
+        self.price_valuation_updater = PriceValuationUpdater(self)
+
+    def run_all_updater(self):
+        self.all_funds_info_updater.update_all_funds_info()
+        self.etf_lof_updater.logic_etf_lof_funds()
+        self.margin_trade_by_industry_updater.logic_margin_trade_by_industry()
+        self.north_inflow_updater.logic_north_inflow_by_industry()
+        self.major_holder_updater.logic_major_holder()
+        self.price_valuation_updater.logic_price_valuation()
 
     def _check_data_table(self, table_name, type_identifier, **kwargs):
         # Retrieve the optional filter condition
