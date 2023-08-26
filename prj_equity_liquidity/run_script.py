@@ -9,4 +9,5 @@ from prj_equity_liquidity.plotter import Plotter
 
 base_config = BaseConfig('equity_liquidity')
 data_updater = DatabaseUpdater(base_config)
+data_updater.run_all_updater()
 # plotter = Plotter(base_config)
