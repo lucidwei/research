@@ -67,15 +67,15 @@ if __name__ == "__main__":
     # start_date = input("请输入开始日期 (格式: YYYY-MM-DD): ")
     # end_date = input("请输入结束日期 (格式: YYYY-MM-DD): ")
     # category = input("请选择要绘制的类别 ('style' 或 'industry'): ")
-    start_date = "2019-12-31"
-    end_date = "2020-03-23"
+    start_date = "2020-10-30"
+    end_date = "2020-12-31"
     category = "industry"
 
     specific_categories = None
     if category == 'industry':
         # specific_categories = input(
         #     "请输入要绘制的行业，用逗号分隔 (例如: '石油石化,煤炭'). 如果要绘制所有行业，请直接按回车: ")
-        specific_categories = "煤炭,钢铁,计算机,电子,电力设备及新能源,医药,银行"
+        specific_categories = "有色,煤炭,石油石化,食品饮料,电力设备及新能源,家电,计算机,电子,建筑"
         if specific_categories:
             specific_categories = specific_categories.split(',')
 

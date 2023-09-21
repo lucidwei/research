@@ -94,6 +94,28 @@ def get_tradedays(start, end):
     return sorted(tradedays)
 
 
+def split_tradedays_into_weekly_ranges(tradedays):
+    if not tradedays:
+        return []
+
+    date_ranges = []
+    start_date = end_date = tradedays[0]
+
+    for i in range(1, len(tradedays)):
+        if (tradedays[i] - tradedays[i - 1]) == timedelta(days=1):
+            # 连续的交易日，扩展日期区间
+            end_date = tradedays[i]
+        else:
+            # 非连续的交易日，添加当前日期区间并重新开始
+            date_ranges.append((start_date, end_date))
+            start_date = end_date = tradedays[i]
+
+    # 添加最后一个日期区间
+    date_ranges.append((start_date, end_date))
+
+    return date_ranges
+
+
 def check_wind():
     # 插件可以配置到虚拟环境，方法：量化-数据接口-API接口-手册-python接口-接口手册，添加路径指定python，配置后检查是否登陆成功
     while not w.isconnected():

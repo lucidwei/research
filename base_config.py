@@ -4,7 +4,7 @@
 # FileName: base_config.py
 # Software: PyCharm
 import platform, os, datetime
-from utils import get_tradedays, is_date, get_month_end_dates
+from utils import get_tradedays, is_date, get_month_end_dates, split_tradedays_into_weekly_ranges
 import configparser
 import pandas as pd
 
@@ -48,6 +48,8 @@ class BaseConfig:
 
         # 对于低频数据获取月末日期
         self.month_ends, self.month_ends_str = get_month_end_dates(date_start, date_end)
+
+        self.weekly_date_ranges = split_tradedays_into_weekly_ranges(self.tradedays)
 
     def config_db(self):
         # 获取 db_config 部分的配置信息

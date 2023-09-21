@@ -5,34 +5,37 @@
 # Software: PyCharm
 import datetime
 import os
-
 import numpy as np
 import pandas as pd
+from datetime import timedelta
 from WindPy import w
 
 from base_config import BaseConfig
 from pgdb_updater_base import PgDbUpdaterBase
+from utils import split_tradedays_into_weekly_ranges
 
 
 class DatabaseUpdater(PgDbUpdaterBase):
     def __init__(self, base_config: BaseConfig):
         super().__init__(base_config)
-        self.all_funds_info_updater = AllFundsInfoUpdater(self)
-        ## self.logic_reopened_dk_funds()
-        ## self.logic_reopened_cyq_funds()
-        self.etf_lof_updater = EtfLofUpdater(self)
-        self.margin_trade_by_industry_updater = MarginTradeByIndustryUpdater(self)
-        self.north_inflow_updater = NorthInflowUpdater(self)
-        self.major_holder_updater = MajorHolderUpdater(self)
-        self.price_valuation_updater = PriceValuationUpdater(self)
+        # self.all_funds_info_updater = AllFundsInfoUpdater(self)
+        # ## self.logic_reopened_dk_funds()
+        # ## self.logic_reopened_cyq_funds()
+        # self.etf_lof_updater = EtfLofUpdater(self)
+        # self.margin_trade_by_industry_updater = MarginTradeByIndustryUpdater(self)
+        # self.north_inflow_updater = NorthInflowUpdater(self)
+        # self.major_holder_updater = MajorHolderUpdater(self)
+        # self.price_valuation_updater = PriceValuationUpdater(self)
+        self.repo_updater = RepoUpdater(self)
 
     def run_all_updater(self):
-        self.all_funds_info_updater.update_all_funds_info()
-        self.etf_lof_updater.logic_etf_lof_funds()
-        self.margin_trade_by_industry_updater.logic_margin_trade_by_industry()
-        self.north_inflow_updater.logic_north_inflow_by_industry()
-        self.major_holder_updater.logic_major_holder()
-        self.price_valuation_updater.logic_price_valuation()
+        # self.all_funds_info_updater.update_all_funds_info()
+        # self.etf_lof_updater.logic_etf_lof_funds()
+        # self.margin_trade_by_industry_updater.logic_margin_trade_by_industry()
+        # self.north_inflow_updater.logic_north_inflow_by_industry()
+        # self.major_holder_updater.logic_major_holder()
+        # self.price_valuation_updater.logic_price_valuation()
+        self.repo_updater.logic_repo()
 
     def _check_data_table(self, table_name, type_identifier, **kwargs):
         # Retrieve the optional filter condition
@@ -114,7 +117,10 @@ class DatabaseUpdater(PgDbUpdaterBase):
                 downloaded_df = w.wset("shareplanincreasereduce",
                                        f"startdate={self.tradedays_str[-1]};enddate={self.tradedays_str[-1]};"
                                        f"datetype=firstannouncementdate;type=all;field=windcode", usedf=True)[1]
-                required_value = downloaded_df['windcode'].drop_duplicates().tolist()
+                if downloaded_df.empty:
+                    required_value = []
+                else:
+                    required_value = downloaded_df['windcode'].drop_duplicates().tolist()
 
             case 'price_valuation':
                 # 获取中信一级行业的指数代码和名称
@@ -614,6 +620,120 @@ class PriceValuationUpdater:
                                            value_name='value').dropna()
 
                 df_upload.to_sql('markets_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
+
+
+class RepoUpdater:
+    def __init__(self, db_updater):
+        self.db_updater = db_updater
+
+    def logic_repo(self):
+        # 1、用“股票回购统计2000-202309”文件中的证券代码检查meta_table是否需要更新个股和行业信息
+        # 2、把日期序列划分成周度区间，第一层loop股票，第二层loop日期区间。按交易日中连续的几天，分段更新（一般是周度）
+        # 3、处理完历史数据后，获取全部A股代码，按周度更新取非空值
+        self.existing_dates = self.db_updater.select_column_from_joined_table(
+            target_table_name='product_static_info',
+            target_join_column='internal_id',
+            join_table_name='markets_daily_long',
+            join_column='product_static_info_id',
+            selected_column=f'date',
+            filter_condition="field='区间回购金额(周度末)'"
+        )
+        # self.process_historic_repo() #运行一次后不必再运行
+        self.weekly_update_repo()
+
+    def process_historic_repo(self):
+        historic_repo_stats = pd.read_excel(self.db_updater.base_config.excels_path + '股票回购统计2000-202309.xlsx', header=0,
+                                  engine='openpyxl')
+        historic_stk_codes = historic_repo_stats.dropna(subset='证券简称')[['证券代码', '证券简称']]
+        self._process_meta_data(historic_stk_codes)
+
+        historic_stk_codes_list = historic_repo_stats.dropna(subset='证券简称')['证券代码'].to_list()
+
+        latest_date = max(self.existing_dates)
+        filtered_date_ranges = [date_range for date_range in self.db_updater.base_config.weekly_date_ranges if date_range[1] > latest_date]
+        for date_range in filtered_date_ranges:
+            print(
+                f'Wind downloading cac_repoamt from {date_range[0] - timedelta(days=1)} to {date_range[1] + timedelta(days=1)}')
+            repo_amount = w.wss(historic_stk_codes_list, "cac_repoamt",
+                                f"unit=1;startDate={date_range[0]-timedelta(days=1)};"
+                                f"endDate={date_range[1]+timedelta(days=1)};currencyType=",
+                                usedf=True)[1]
+            repo_amount = repo_amount.dropna()
+            df_upload = repo_amount.reset_index(names='product_name').rename(columns={'CAC_REPOAMT': '区间回购金额(周度末)'})
+            df_upload['date'] = date_range[1]
+            df_upload = df_upload.melt(id_vars=['date', 'product_name'], var_name='field',
+                                       value_name='value').dropna()
+
+            df_upload.to_sql('markets_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
+
+    def weekly_update_repo(self):
+        # 判断是否需要更新
+        latest_date = max(self.existing_dates)
+        filtered_dates = [date for date in self.db_updater.tradedays if date > latest_date]
+        if not filtered_dates:
+            return
+        date_ranges = split_tradedays_into_weekly_ranges(filtered_dates)
+
+        # get all stocks list
+        all_stks = w.wset("sectorconstituent",f"date={self.db_updater.tradedays_str[-1]};sectorid=a001010100000000",
+                                usedf=True)[1]
+        all_stks_info = all_stks[['wind_code', 'sec_name']].rename(columns={'wind_code': '证券代码', 'sec_name': '证券简称'})
+        self._process_meta_data(all_stks_info)
+
+        # update new data
+        all_stks_codes_list = all_stks['wind_code'].tolist()
+
+        for date_range in date_ranges:
+            print(f'Wind downloading cac_repoamt from {date_range[0]-timedelta(days=1)} to {date_range[1]+timedelta(days=1)}')
+            repo_amount = w.wss(str(all_stks_codes_list), "cac_repoamt",
+                                f"unit=1;startDate={date_range[0]-timedelta(days=1)};"
+                                f"endDate={date_range[1]+timedelta(days=1)};currencyType=",
+                                usedf=True)[1]
+            repo_amount = repo_amount.dropna()
+            df_upload = repo_amount.rename(
+                columns={'WindCodes': 'product_name',
+                         'CAC_REPOAMT': '区间回购金额(周度末)',
+                         })
+            df_upload['date'] = date_range[1]
+            df_upload = df_upload.melt(id_vars=['date', 'product_name'], var_name='field',
+                                       value_name='value').dropna()
+
+            df_upload.to_sql('markets_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
+
+    def _process_meta_data(self, stk_info_to_add):
+        # check all historic_stocks in meta table (and have industry label，检查过了基本都有)
+        existing_stks_df = self.db_updater.select_existing_values_in_target_column('product_static_info',
+                                                                                 ['code', 'stk_industry_cs', 'chinese_name'],
+                                                                                 ('product_type', 'stock'))
+        existing_value = existing_stks_df['code'].tolist()
+        missing_value = set(stk_info_to_add['证券代码'].tolist()) - set(existing_value)
+
+        stk_info_to_add = pd.DataFrame(stk_info_to_add)
+        df_meta = stk_info_to_add[~stk_info_to_add['证券代码'].isin(existing_value)]
+        if df_meta.empty:
+            pass
+        else:
+            df_meta = df_meta.set_index('证券代码').rename(columns={'A': 'B'})
+            for code in missing_value:
+                date = self.db_updater.tradedays_str[-1]
+                print(f'Wind downloading industry_citic for {code} on {date}')
+                info_df = w.wsd(code, "industry_citic", f'{date}', f'{date}', "unit=1;industryType=1",
+                                usedf=True)[1]
+                if info_df.empty:
+                    print(f"Missing data for {code} on {date}, no data downloaded for industry_citic")
+                    continue
+                industry = info_df.iloc[0]['INDUSTRY_CITIC']
+                df_meta.loc[code, 'stk_industry_cs'] = industry
+                df_meta.loc[code, 'chinese_name'] = stk_info_to_add[stk_info_to_add['证券代码'] == code]['证券简称'].values[0]
+                df_meta.loc[code, 'update_date'] = date
+            # 上传metadata
+            df_meta['source'] = 'wind'
+            df_meta['product_type'] = 'stock'
+            df_meta.reset_index(names='code', inplace=True)
+
+            self.db_updater.adjust_seq_val(seq_name='product_static_info_internal_id_seq')
+            for _, row in df_meta.iterrows():
+                self.db_updater.insert_product_static_info(row)
 
 
 class MajorHolderUpdater:
