@@ -31,7 +31,7 @@ def process_excel(input_path, output_path):
 if __name__ == "__main__":
     # input_file = input("Please enter the path to the input Excel file: ")
     # output_file = input("Please enter the path where you want to save the processed Excel file: ")
-    input_file = "E:\Downloads\股票回购明细.xlsx"
-    output_file = "E:\Downloads\股票回购明细result.xlsx"
+    input_file = "E:\Downloads\股票回购明细0909.xlsx"
+    output_file = "E:\Downloads\股票回购明细0909result.xlsx"
     process_excel(input_file, output_file)
     print(f"Processed data saved to: {output_file}")
