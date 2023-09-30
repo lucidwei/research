@@ -43,7 +43,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
 
         # 获取需要更新的日期区间
         match type_identifier:
-            case 'major_holder' | 'fund':
+            case 'fund':
                 filter_condition = f"product_static_info.type_identifier = '{type_identifier}'"
                 if additional_filter:
                     filter_condition += f" AND {additional_filter}"
@@ -685,15 +685,13 @@ class RepoUpdater:
 
         for date_range in date_ranges:
             print(f'Wind downloading cac_repoamt from {date_range[0]-timedelta(days=1)} to {date_range[1]+timedelta(days=1)}')
-            repo_amount = w.wss(str(all_stks_codes_list), "cac_repoamt",
+            repo_amount = w.wss(",".join(all_stks_codes_list), "cac_repoamt",
                                 f"unit=1;startDate={date_range[0]-timedelta(days=1)};"
                                 f"endDate={date_range[1]+timedelta(days=1)};currencyType=",
                                 usedf=True)[1]
             repo_amount = repo_amount.dropna()
-            df_upload = repo_amount.rename(
-                columns={'WindCodes': 'product_name',
-                         'CAC_REPOAMT': '区间回购金额(周度末)',
-                         })
+            df_upload = repo_amount.reset_index(names='product_name').rename(
+                columns={'CAC_REPOAMT': '区间回购金额(周度末)'})
             df_upload['date'] = date_range[1]
             df_upload = df_upload.melt(id_vars=['date', 'product_name'], var_name='field',
                                        value_name='value').dropna()
@@ -744,8 +742,7 @@ class MajorHolderUpdater:
         # 检查或更新meta_table
         need_update_meta_table = self.db_updater._check_meta_table('product_static_info', 'code',
                                                                    type_identifier='major_holder')
-        missing_dates = self.db_updater._check_data_table(table_name='markets_daily_long',
-                                                          type_identifier='major_holder')
+        missing_dates = self._check_data_table()
         missing_dates_filtered = self.db_updater.remove_today_if_trading_day(missing_dates)
 
         if need_update_meta_table:
@@ -753,6 +750,29 @@ class MajorHolderUpdater:
             self._upload_missing_meta_major_holder(missing_dates_filtered)
         if missing_dates:
             self._upload_missing_data_major_holder(missing_dates_filtered)
+
+    def _check_data_table(self):
+        # 获取需要更新的日期区间
+        filter_condition = f"product_static_info.type_identifier = 'major_holder'" \
+                           f"OR markets_daily_long.field like '%持金额'"
+        existing_dates = self.db_updater.select_column_from_joined_table(
+            target_table_name='product_static_info',
+            target_join_column='internal_id',
+            join_table_name='markets_daily_long',
+            join_column='product_static_info_id',
+            selected_column=f'date',
+            filter_condition=filter_condition
+        )
+
+        if len(existing_dates) == 0:
+            missing_dates = self.db_updater.tradedays
+        else:
+            missing_dates = self.db_updater.get_missing_dates(all_dates=self.db_updater.tradedays, existing_dates=existing_dates)
+
+        if not missing_dates:
+            print(f"No missing dates for check_data_table, type_identifier=major_holder")
+            return []
+        return missing_dates
 
     def _upload_missing_meta_major_holder(self, missing_dates):
         if len(missing_dates) == 0:
