@@ -1,0 +1,4 @@
+CREATE TRIGGER update_product_static_info_id_trigger
+BEFORE INSERT ON stocks_daily_long
+FOR EACH ROW
+EXECUTE FUNCTION processed_data.update_stocks_long_product_info_id();
