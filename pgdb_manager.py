@@ -88,11 +88,25 @@ class PgDbManager:
             print("PostgreSQL database server is running.")
             self.db_running = True
             return True
-        except subprocess.CalledProcessError:
-            # 如果连接失败，说明 PostgreSQL server 未运行
-            print("PostgreSQL database server is NOT running.")
-            self.db_running = False
-            return False
+        except:
+            # 如果pg_isready检查失败，尝试检查Docker容器
+            try:
+                result = subprocess.check_output(['docker', 'ps', '--filter', 'publish=5432', '--format', '{{.Names}}'])
+
+                # 如果输出不为空，说明有容器在运行并发布到5432端口
+                if result:
+                    print("PostgreSQL database container is running.")
+                    self.db_running = True
+                    return True
+                else:
+                    print("PostgreSQL database container is NOT running.")
+                    self.db_running = False
+                    return False
+
+            except subprocess.CalledProcessError:
+                print("Error checking Docker container.")
+                self.db_running = False
+                return False
 
     def start_sql_server(self):
         """
