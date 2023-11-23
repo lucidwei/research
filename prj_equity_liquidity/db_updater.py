@@ -249,9 +249,9 @@ class AllFundsInfoUpdater:
         # 因为缺失成立日的基金本来就不多，因此可行，不浪费quota。
         self._update_special_funds_missing_buystartdate(process_historical=True)
         self._update_funds_missing_fundfounddate()
+        self._update_missing_old_funds()
 
         self._update_funds_name()
-        self._update_missing_old_funds()
         # 取不到数，暂不更新
         # self._update_funds_issueshare()
 
