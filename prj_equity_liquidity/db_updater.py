@@ -401,7 +401,7 @@ class AllFundsInfoUpdater:
         equity_funds = pd.read_excel(self.db_updater.base_config.excels_path + '股票开放式基金.xls', header=0,
                                   engine='xlrd').iloc[:, :2]
 
-        df_cleaned = equity_funds.drop(equity_funds[~equity_funds['证券代码'].isin(existing_codes)].index)
+        df_cleaned = equity_funds.drop(equity_funds[equity_funds['证券代码'].isin(existing_codes)].index)
         for code in df_cleaned['证券代码'].tolist():
             print(f'Downloading fund info {code} for _update_missing_old_funds')
             downloaded_df = \
