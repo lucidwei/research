@@ -251,6 +251,7 @@ class AllFundsInfoUpdater:
         self._update_funds_missing_fundfounddate()
 
         self._update_funds_name()
+        self._update_missing_old_funds()
         # 取不到数，暂不更新
         # self._update_funds_issueshare()
 
@@ -393,6 +394,35 @@ class AllFundsInfoUpdater:
                 for _, row in upload_df.iterrows():
                     self.db_updater.insert_product_static_info(row)
 
+    def _update_missing_old_funds(self):
+        existing_codes = self.db_updater.select_existing_values_in_target_column('product_static_info',
+                                                                                 'code',
+                                                                                 "product_type='fund'")
+        equity_funds = pd.read_excel(self.db_updater.base_config.excels_path + '股票开放式基金.xls', header=0,
+                                  engine='xlrd').iloc[:, :2]
+
+        df_cleaned = equity_funds.drop(equity_funds[~equity_funds['证券代码'].isin(existing_codes)].index)
+        for code in df_cleaned['证券代码'].tolist():
+            print(f'Downloading fund info {code} for _update_missing_old_funds')
+            downloaded_df = \
+                w.wsd(code, "issue_date,fund_setupdate,sec_name,fund_fullname,fund_fullnameen,issue_unit",
+                      self.db_updater.tradedays_str[-1], self.db_updater.tradedays_str[-1], "", usedf=True)[1]
+            if downloaded_df.empty:
+                print(
+                    f"Empty data downloaded for {code}, in _update_funds_by_buystartdate")
+                continue
+
+            # 解析下载的数据并上传至product_static_info
+            upload_df = downloaded_df.reset_index().rename(
+                columns={'index': 'code', 'SEC_NAME': 'chinese_name', 'ISSUE_DATE': 'buystartdate',
+                         'FUND_SETUPDATE': 'fundfounddate', 'FUND_FULLNAME': 'fund_fullname',
+                         'FUND_FULLNAMEEN': 'english_name', 'ISSUE_UNIT': 'issueshare'})
+            upload_df['issueshare'] = upload_df['issueshare'] / 1e8
+            upload_df['source'] = 'wind'
+            upload_df['product_type'] = 'fund'
+            for _, row in upload_df.iterrows():
+                self.db_updater.insert_product_static_info(row)
+
     def _update_funds_missing_fundfounddate(self):
         # 用于更新基金成立后的信息
         funds_missing_fundfounddate = self.db_updater.select_existing_values_in_target_column('product_static_info',
@@ -502,7 +532,7 @@ class EtfLofUpdater:
             missing_start_date = max(gross_missing_dates[0], fund_found_date[0])
             missing_dates = gross_missing_dates
 
-        # 这个净流入额的变动日期和基金份额-本分级份额变动日期一样，应该就是份额变动乘以净值
+        # 这个净流入额的变动日期和基金份额-本分级份额变动日期一样，其实就是份额变动乘以净值
         print(f"_update_etf_inflow Downloading mf_netinflow for {etf_info_row['code']} "
               f"b/t {missing_start_date} and {missing_dates[-1]}")
         downloaded = w.wsd(etf_info_row['code'], "mf_netinflow",
