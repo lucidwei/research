@@ -505,14 +505,9 @@ class EtfLofUpdater:
             selected_column=f'date',
             filter_condition=f"code='{etf_info_row['code']}' ORDER BY date ASC"
         )
-        fund_found_date = self.db_updater.select_column_from_joined_table(
-            filter_condition=f"code='{etf_info_row['code']}'",
-            target_table_name='product_static_info',
-            target_join_column='internal_id',
-            join_table_name='markets_daily_long',
-            join_column='product_static_info_id',
-            selected_column=f'fundfounddate',
-        )
+        fund_found_date = self.db_updater.select_existing_values_in_target_column('product_static_info',
+                                                                                  'fundfounddate',
+                                                                                  ('code', etf_info_row['code']))
 
         # 没有基金成立日，说明基金未发行成功或尚未发行，跳过
         if not fund_found_date:
@@ -522,15 +517,13 @@ class EtfLofUpdater:
         gross_missing_dates = self.db_updater._check_data_table('markets_daily_long', 'fund',
                                                                 additional_filter=f"code='{etf_info_row['code']}'")
         # 检查最早的 existing_date 是否在 fund_found_date 的3个月之内
-        earliest_existing_date = min(existing_dates)
-        if earliest_existing_date < (fund_found_date[0] + datetime.timedelta(days=100)):
-            # 缺失日期设为最近2周的日期序列
-            missing_dates = self.db_updater.tradedays[-10:]
-            missing_start_date = missing_dates[0]
-        else:
+        if not existing_dates or min(existing_dates) > (fund_found_date[0] + datetime.timedelta(days=100)):
             # 否则说明该etf没有历史数据
             missing_start_date = max(gross_missing_dates[0], fund_found_date[0])
             missing_dates = gross_missing_dates
+        else:
+            missing_dates = self.db_updater.tradedays[-10:]
+            missing_start_date = missing_dates[0]
 
         # 这个净流入额的变动日期和基金份额-本分级份额变动日期一样，其实就是份额变动乘以净值
         print(f"_update_etf_inflow Downloading mf_netinflow for {etf_info_row['code']} "
