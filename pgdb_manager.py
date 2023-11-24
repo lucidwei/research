@@ -3,7 +3,7 @@
 # Author  : Lucid
 # FileName: pg_database.py
 # Software: PyCharm
-from typing import Union
+from typing import Union, List
 from base_config import BaseConfig
 import psycopg2, sqlalchemy, subprocess
 from sqlalchemy import create_engine, text, select, case, String, cast, and_, column
