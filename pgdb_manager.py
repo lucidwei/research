@@ -213,7 +213,7 @@ class PgDbManager:
             existing_values = sorted(set(row[0] for row in result if row[0] is not None))
             return existing_values
 
-    def select_existing_dates_from_long_table(self, table_name, metric_name=None, product_name=None, field=None,
+    def select_existing_dates_from_long_table(self, table_name, metric_name=None, product_name=None, code=None, field=None,
                                               return_df=False):
         """
         从数据库中获取现有的日期列表。
@@ -238,6 +238,8 @@ class PgDbManager:
             conditions.append(f"metric_name = '{metric_name}'")
         if product_name:
             conditions.append(f"product_name = '{product_name}'")
+        if code:
+            conditions.append(f"code = '{code}'")
         if field and 'field' in columns:
             conditions.append(f"field = '{field}'")
 

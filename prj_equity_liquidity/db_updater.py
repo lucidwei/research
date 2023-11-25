@@ -274,7 +274,7 @@ class AllFundsInfoUpdater:
                                                                   'FUND_FULLNAMEEN': 'english_name'})
             print(f'Updating {code} name')
             self.db_updater.upload_product_static_info(downloaded.squeeze(), task='fund_name')
-
+#TODO:23-11-25 今日发现有些基金的发行份额和日期是错的，因为同名基金（不同代码不同全称）数据被刷了。但因为数量不大且这个数据用不上，另外节省quota，所以先不改了
     def _update_funds_issueshare(self):
         code_set = self.db_updater.select_existing_values_in_target_column(
             'product_static_info',
@@ -503,7 +503,7 @@ class EtfLofUpdater:
             join_table_name='markets_daily_long',
             join_column='product_static_info_id',
             selected_column=f'date',
-            filter_condition=f"code='{etf_info_row['code']}' ORDER BY date ASC"
+            filter_condition=f"product_static_info.code='{etf_info_row['code']}' ORDER BY date ASC"
         )
         fund_found_date = self.db_updater.select_existing_values_in_target_column('product_static_info',
                                                                                   'fundfounddate',
@@ -515,7 +515,7 @@ class EtfLofUpdater:
 
         # 对于有fund_found_date的情况
         gross_missing_dates = self.db_updater._check_data_table('markets_daily_long', 'fund',
-                                                                additional_filter=f"code='{etf_info_row['code']}'")
+                                                                additional_filter=f"product_static_info.code='{etf_info_row['code']}'")
         # 检查最早的 existing_date 是否在 fund_found_date 的3个月之内
         if not existing_dates or min(existing_dates) > (fund_found_date[0] + datetime.timedelta(days=100)):
             # 否则说明该etf没有历史数据
@@ -531,18 +531,23 @@ class EtfLofUpdater:
         downloaded = w.wsd(etf_info_row['code'], "mf_netinflow",
                            missing_start_date, missing_dates[-1], "unit=1", usedf=True)[1]
         downloaded_filtered = downloaded[downloaded['MF_NETINFLOW'] != 0]
+        downloaded_filtered = downloaded_filtered[downloaded_filtered['MF_NETINFLOW'].notna()]
         downloaded_filtered = downloaded_filtered.reset_index().rename(
             columns={'index': 'date', 'MF_NETINFLOW': '净流入额'})
         # 去除已经存在的日期
         # 这段代码可以成为范例引入其他函数防止报错
         existing_dates = self.db_updater.select_existing_dates_from_long_table('markets_daily_long',
-                                                                               product_name=etf_info_row[
-                                                                                   'chinese_name'],
+                                                                               code=etf_info_row[
+                                                                                   'code'],
                                                                                field='净流入额')
         downloaded_filtered = downloaded_filtered[~downloaded_filtered['date'].isin(existing_dates)]
+        if downloaded_filtered.empty:
+            return
+
         downloaded_filtered['product_name'] = etf_info_row['chinese_name']
-        upload_value = downloaded_filtered[['product_name', 'date', '净流入额']].melt(
-            id_vars=['product_name', 'date'], var_name='field', value_name='value')
+        downloaded_filtered['code'] = etf_info_row['code']
+        upload_value = downloaded_filtered.melt(
+            id_vars=['code', 'product_name', 'date'], var_name='field', value_name='value')
 
         upload_value.dropna().to_sql('markets_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
 
