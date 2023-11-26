@@ -274,7 +274,9 @@ class AllFundsInfoUpdater:
                                                                   'FUND_FULLNAMEEN': 'english_name'})
             print(f'Updating {code} name')
             self.db_updater.upload_product_static_info(downloaded.squeeze(), task='fund_name')
-#TODO:23-11-25 今日发现有些基金的发行份额和日期是错的，因为同名基金（不同代码不同全称）数据被刷了。但因为数量不大且这个数据用不上，另外节省quota，所以先不改了
+
+    #TODO:23-11-25 今日发现有些基金的发行份额和日期是错的，因为同名基金（不同代码不同全称）数据被刷了。
+    # 但因为数量不大且这个数据用不上，另外节省quota，所以先不改了
     def _update_funds_issueshare(self):
         code_set = self.db_updater.select_existing_values_in_target_column(
             'product_static_info',
