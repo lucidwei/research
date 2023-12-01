@@ -39,10 +39,6 @@ for year in years:
                 rank_percentile = data_top_203[other_year].rank(pct=True, method='min')[data_top_203['Fund Code'] == fund].iloc[0]
                 yearly_percentile_ranks_df[year].loc[index_name, other_year] = rank_percentile
 
-
-
-# Calculate the average percentile rank for the top 5 funds in other years
-
 # Convert the dictionary of DataFrames into a single DataFrame
 combined_df = pd.concat(yearly_percentile_ranks_df, axis=0)
 
@@ -57,12 +53,47 @@ for year in years:
             summary_table_yearly.at[year, other_year] = combined_df.loc[combined_df.index.get_level_values(0) == year, other_year].mean()
         else:
             summary_table_yearly.at[year, other_year] = None  # No value for the same year
-
+summary_table_yearly = 1 - summary_table_yearly
 # Saving the summary table to an Excel file
 output_file_path = rf'D:\WPS云盘\WPS云盘\工作-麦高\杂活\固收加基金阶段性总结\average_percentile_ranks_summary_by_year.xlsx'
-# summary_table_yearly.to_excel(output_file_path)
+summary_table_yearly.to_excel(output_file_path)
 
 print("Summary table saved to:", output_file_path)
+
+
+# Compute the absolute returns of top 5 funds in all other years
+yearly_absolute_returns_df = {year: pd.DataFrame(columns=years) for year in years}
+
+for year in years:
+    for fund in top_5_funds_per_year[year]:
+        fund_row = data_top_203[data_top_203['Fund Code'] == fund]
+        fund_name = fund_row['Fund Name'].iloc[0]
+        index_name = f"{fund}-{fund_name}"
+
+        for other_year in years:
+            if year != other_year:
+                absolute_return = fund_row[other_year].iloc[0]
+                yearly_absolute_returns_df[year].loc[index_name, other_year] = absolute_return
+
+# Convert the dictionary of DataFrames into a single DataFrame for absolute returns
+combined_absolute_returns_df = pd.concat(yearly_absolute_returns_df, axis=0)
+
+# Calculate the average absolute return for each fund across years
+average_absolute_returns_df = combined_absolute_returns_df.mean(axis=1)
+
+# Creating the summary table with years as both rows and columns for absolute returns
+summary_table_yearly_absolute_returns = pd.DataFrame(index=years, columns=years)
+for year in years:
+    for other_year in years:
+        if year != other_year:
+            summary_table_yearly_absolute_returns.at[year, other_year] = combined_absolute_returns_df.loc[combined_absolute_returns_df.index.get_level_values(0) == year, other_year].mean()
+        else:
+            summary_table_yearly_absolute_returns.at[year, other_year] = None  # No value for the same year
+# Saving the summary table to an Excel file
+output_file_path = rf'D:\WPS云盘\WPS云盘\工作-麦高\杂活\固收加基金阶段性总结\average_absolute_summary_by_year.xlsx'
+summary_table_yearly_absolute_returns.to_excel(output_file_path)
+print("Summary table saved to:", output_file_path)
+
 
 
 # Calculate cumulative returns
@@ -77,8 +108,39 @@ funds_percentile_rank = pd.DataFrame(index=top_10_funds['Fund Name'], columns=ye
 for year in years_last_five:
     for index, row in top_10_funds.iterrows():
         fund_name = row['Fund Name']
-        rank_percentile = data_top_203[year].rank(pct=True, method='min')[index]
+        rank_percentile = 1 - data_top_203[year].rank(pct=True, method='min')[index]
         funds_percentile_rank.at[fund_name, year] = rank_percentile
 
 output_file_path = rf'D:\WPS云盘\WPS云盘\工作-麦高\杂活\固收加基金阶段性总结\top_funds_percentile_rank.xlsx'
 funds_percentile_rank.to_excel(output_file_path)
+
+# Step 3: Calculate the absolute returns for these funds in each year
+funds_absolute_return = pd.DataFrame(index=top_10_funds['Fund Name'], columns=years_last_five)
+# Fill the DataFrame with the absolute returns for each fund and year
+for year in years_last_five:
+    for index, row in top_10_funds.iterrows():
+        fund_name = row['Fund Name']
+        # Get the absolute return for the fund in the specific year
+        absolute_return = data_top_203.at[index, year]
+        funds_absolute_return.at[fund_name, year] = absolute_return
+output_file_path = rf'D:\WPS云盘\WPS云盘\工作-麦高\杂活\固收加基金阶段性总结\top_funds_absolute_return.xlsx'
+funds_absolute_return.to_excel(output_file_path)
+
+
+# Define the years to consider
+years = ["Return 2023", "Return 2022", "Return 2021", "Return 2020", "Return 2019", "Return 2018", "Return 2017"]
+
+# 1. Filter funds with positive returns every year
+positive_returns_filter = (data_renamed[years] > 0).all(axis=1)
+positive_returns_funds = data_renamed[positive_returns_filter].sort_values(by="Fund Name")
+
+# 2. Filter funds with returns greater than 5% every year
+greater_than_5_percent_filter = (data_renamed[years] > 2).all(axis=1)
+greater_than_5_percent_funds = data_renamed[greater_than_5_percent_filter]
+
+# Output the results
+print("Funds with positive returns every year:")
+print(positive_returns_funds[['Fund Code', 'Fund Name']])
+
+print("\nFunds with returns greater than 5% every year:")
+print(greater_than_5_percent_funds[['Fund Code', 'Fund Name']])
