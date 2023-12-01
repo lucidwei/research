@@ -549,7 +549,7 @@ class PgDbUpdaterBase(PgDbManager):
                                  'internal_id': internal_id
                              })
             conn.commit()
-        return internal_id
+            return internal_id
 
     def insert_product_static_info(self, row: pd.Series):
         """
@@ -803,105 +803,105 @@ class PgDbUpdaterBase(PgDbManager):
             df_wide.to_sql('funds_cyq_nobond_wide', self.alch_engine, schema='processed_data', if_exists='replace',
                            index=False)
 
-    def calculate_yoy(self, value_str, yoy_str, cn_value_str, cn_yoy_str, cn_names_to_exhibit):
-        """
-        Calculates the year-over-year (YoY) change for specified metrics and inserts the calculated data into the low_freq_long table.
-
-        Args:
-            value_str (str): The string used to identify e.g."*CurrentMonthValue" data in the low_freq_long table.
-            yoy_str (str): The string used to identify the corresponding YoY change data in the low_freq_long table.
-            cn_value_str (str): The Chinese translation string for the value_str.
-            cn_yoy_str (str): The Chinese translation string for the yoy_str.
-
-        Performs the following steps:
-        1. Selects the "*CurrentMonthValue" data from the low_freq_long table, excluding already calculated rows.
-        2. Matches the value data with the corresponding YoY change data based on metric names and dates.
-        3. Calculates the YoY change by comparing the current value with the value from the same period last year.
-        4. Inserts the calculated YoY data into the low_freq_long table, updating the value if a conflict occurs.
-        5. Updates the source_code in the metric_static_info table for the corresponding YoY metric.
-        6. Commits the changes to the database.
-
-        Note: This method assumes that the necessary data is present in the low_freq_long and metric_static_info tables.
-        """
-        # Step 1: Select all "*CurrentMonthValue" data from low_freq_long, bypass already-calculated rows
-        # Step 1.1: Get the two dataframes
-        query_value = f"SELECT * FROM low_freq_long WHERE metric_name LIKE '%{value_str}'"
-        df_value = pd.read_sql_query(text(query_value), self.alch_conn)
-
-        query_yoy = f"SELECT * FROM low_freq_long WHERE metric_name LIKE '%{yoy_str}'"
-        df_yoy = pd.read_sql_query(text(query_yoy), self.alch_conn)
-
-        # Step 1.2: Create new columns for matching
-        df_value['metric_base'] = df_value['metric_name'].str.replace(value_str, '')
-        df_yoy['metric_base'] = df_yoy['metric_name'].str.replace(yoy_str, '')
-
-        # Step 1.3: Find the rows in df_value that have a match in df_yoy
-        mask = df_value['metric_base'].isin(df_yoy['metric_base']) & df_value['date'].isin(df_yoy['date'])
-
-        # Step 1.4: Remove the matching rows from df_value
-        df = df_value[~mask]
-
-        for _, row in df.iterrows():
-            metric_name_value = row['metric_name']
-            metric_name_yoy = metric_name_value.replace(value_str, yoy_str)
-
-            # Step 2: Find the value from the same period last year
-            query = f"""
-            SELECT value
-            FROM low_freq_long
-            WHERE metric_name = '{metric_name_value}'
-            AND EXTRACT(YEAR FROM date) = EXTRACT(YEAR FROM CAST('{row['date']}' AS DATE)) - 1
-            AND EXTRACT(MONTH FROM date) = EXTRACT(MONTH FROM CAST('{row['date']}' AS DATE))
-            """
-            df_last_year = pd.read_sql_query(text(query), self.alch_conn)
-
-            if df_last_year.empty or pd.isnull(df_last_year.loc[0, 'value']):
-                # print(f"No data for {metric_name_value} '{row['date']}' from the same period last year.")
-                continue
-
-            # Calculate YoY change
-            current_value = row['value']
-            last_year_value = df_last_year.loc[0, 'value']
-            yoy_change = (current_value - last_year_value) / last_year_value * 100
-
-            # Step 3: Insert the calculated YoY data into low_freq_long
-            query = f"""
-            INSERT INTO low_freq_long (date, metric_name, value)
-            VALUES ('{row['date']}', '{metric_name_yoy}', {yoy_change})
-            ON CONFLICT (date, metric_name) DO UPDATE SET value = EXCLUDED.value
-            """
-            self.alch_conn.execute(text(query))
-
-            # Step 4.1: Get the source_code of the corresponding Value variable
-            query = f"""
-            SELECT source_code, chinese_name
-            FROM metric_static_info
-            WHERE english_name = '{metric_name_value}'
-            """
-            df = pd.read_sql_query(text(query), self.alch_conn)
-            if df.empty:
-                # 数据库中存在一些老旧的不需要的数据，它们在metric_static_info没有记录
-                continue
-
-            source_code_value = df.loc[0, 'source_code']
-            chinese_name_value = df.loc[0, 'chinese_name']
-            if chinese_name_value not in cn_names_to_exhibit:
-                # 跳过不需展示的metric
-                continue
-
-            # Step 4.2: Update source_code in metric_static_info
-            self.adjust_seq_val()
-            new_source_code = f'calculated from {source_code_value}'
-            chinese_name_yoy = chinese_name_value.replace(cn_value_str, cn_yoy_str)
-            query = f"""
-            INSERT INTO metric_static_info (english_name, source_code, chinese_name, unit)
-            VALUES ('{metric_name_yoy}', '{new_source_code}', '{chinese_name_yoy}', '%')
-            ON CONFLICT (english_name, source_code) DO UPDATE
-            SET source_code = EXCLUDED.source_code, chinese_name = EXCLUDED.chinese_name, unit = EXCLUDED.unit
-            """
-
-            self.alch_conn.execute(text(query))
-            self.alch_conn.commit()
+    # def calculate_yoy(self, value_str, yoy_str, cn_value_str, cn_yoy_str, cn_names_to_exhibit):
+    #     """
+    #     Calculates the year-over-year (YoY) change for specified metrics and inserts the calculated data into the low_freq_long table.
+    #
+    #     Args:
+    #         value_str (str): The string used to identify e.g."*CurrentMonthValue" data in the low_freq_long table.
+    #         yoy_str (str): The string used to identify the corresponding YoY change data in the low_freq_long table.
+    #         cn_value_str (str): The Chinese translation string for the value_str.
+    #         cn_yoy_str (str): The Chinese translation string for the yoy_str.
+    #
+    #     Performs the following steps:
+    #     1. Selects the "*CurrentMonthValue" data from the low_freq_long table, excluding already calculated rows.
+    #     2. Matches the value data with the corresponding YoY change data based on metric names and dates.
+    #     3. Calculates the YoY change by comparing the current value with the value from the same period last year.
+    #     4. Inserts the calculated YoY data into the low_freq_long table, updating the value if a conflict occurs.
+    #     5. Updates the source_code in the metric_static_info table for the corresponding YoY metric.
+    #     6. Commits the changes to the database.
+    #
+    #     Note: This method assumes that the necessary data is present in the low_freq_long and metric_static_info tables.
+    #     """
+    #     # Step 1: Select all "*CurrentMonthValue" data from low_freq_long, bypass already-calculated rows
+    #     # Step 1.1: Get the two dataframes
+    #     query_value = f"SELECT * FROM low_freq_long WHERE metric_name LIKE '%{value_str}'"
+    #     df_value = pd.read_sql_query(text(query_value), self.alch_conn)
+    #
+    #     query_yoy = f"SELECT * FROM low_freq_long WHERE metric_name LIKE '%{yoy_str}'"
+    #     df_yoy = pd.read_sql_query(text(query_yoy), self.alch_conn)
+    #
+    #     # Step 1.2: Create new columns for matching
+    #     df_value['metric_base'] = df_value['metric_name'].str.replace(value_str, '')
+    #     df_yoy['metric_base'] = df_yoy['metric_name'].str.replace(yoy_str, '')
+    #
+    #     # Step 1.3: Find the rows in df_value that have a match in df_yoy
+    #     mask = df_value['metric_base'].isin(df_yoy['metric_base']) & df_value['date'].isin(df_yoy['date'])
+    #
+    #     # Step 1.4: Remove the matching rows from df_value
+    #     df = df_value[~mask]
+    #
+    #     for _, row in df.iterrows():
+    #         metric_name_value = row['metric_name']
+    #         metric_name_yoy = metric_name_value.replace(value_str, yoy_str)
+    #
+    #         # Step 2: Find the value from the same period last year
+    #         query = f"""
+    #         SELECT value
+    #         FROM low_freq_long
+    #         WHERE metric_name = '{metric_name_value}'
+    #         AND EXTRACT(YEAR FROM date) = EXTRACT(YEAR FROM CAST('{row['date']}' AS DATE)) - 1
+    #         AND EXTRACT(MONTH FROM date) = EXTRACT(MONTH FROM CAST('{row['date']}' AS DATE))
+    #         """
+    #         df_last_year = pd.read_sql_query(text(query), self.alch_conn)
+    #
+    #         if df_last_year.empty or pd.isnull(df_last_year.loc[0, 'value']):
+    #             # print(f"No data for {metric_name_value} '{row['date']}' from the same period last year.")
+    #             continue
+    #
+    #         # Calculate YoY change
+    #         current_value = row['value']
+    #         last_year_value = df_last_year.loc[0, 'value']
+    #         yoy_change = (current_value - last_year_value) / last_year_value * 100
+    #
+    #         # Step 3: Insert the calculated YoY data into low_freq_long
+    #         query = f"""
+    #         INSERT INTO low_freq_long (date, metric_name, value)
+    #         VALUES ('{row['date']}', '{metric_name_yoy}', {yoy_change})
+    #         ON CONFLICT (date, metric_name) DO UPDATE SET value = EXCLUDED.value
+    #         """
+    #         self.alch_conn.execute(text(query))
+    #
+    #         # Step 4.1: Get the source_code of the corresponding Value variable
+    #         query = f"""
+    #         SELECT source_code, chinese_name
+    #         FROM metric_static_info
+    #         WHERE english_name = '{metric_name_value}'
+    #         """
+    #         df = pd.read_sql_query(text(query), self.alch_conn)
+    #         if df.empty:
+    #             # 数据库中存在一些老旧的不需要的数据，它们在metric_static_info没有记录
+    #             continue
+    #
+    #         source_code_value = df.loc[0, 'source_code']
+    #         chinese_name_value = df.loc[0, 'chinese_name']
+    #         if chinese_name_value not in cn_names_to_exhibit:
+    #             # 跳过不需展示的metric
+    #             continue
+    #
+    #         # Step 4.2: Update source_code in metric_static_info
+    #         self.adjust_seq_val()
+    #         new_source_code = f'calculated from {source_code_value}'
+    #         chinese_name_yoy = chinese_name_value.replace(cn_value_str, cn_yoy_str)
+    #         query = f"""
+    #         INSERT INTO metric_static_info (english_name, source_code, chinese_name, unit)
+    #         VALUES ('{metric_name_yoy}', '{new_source_code}', '{chinese_name_yoy}', '%')
+    #         ON CONFLICT (english_name, source_code) DO UPDATE
+    #         SET source_code = EXCLUDED.source_code, chinese_name = EXCLUDED.chinese_name, unit = EXCLUDED.unit
+    #         """
+    #
+    #         self.alch_conn.execute(text(query))
+    #         self.alch_conn.commit()
 
     # def calculate_custom_metric(self, english_name_a, english_name_b, calculation_function, new_english_name,
     #                             new_chinese_name, new_unit):
