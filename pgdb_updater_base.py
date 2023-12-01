@@ -560,8 +560,9 @@ class PgDbUpdaterBase(PgDbManager):
                 query = text("""
                             INSERT INTO product_static_info (code, chinese_name, source, product_type, issueshare, buystartdate, fundfounddate)
                             VALUES (:code, :chinese_name, :source, :product_type, :issueshare, :buystartdate, :fundfounddate)
-                            ON CONFLICT (code, chinese_name, product_type) DO UPDATE 
-                            SET buystartdate = EXCLUDED.buystartdate,
+                            ON CONFLICT (code, product_type) DO UPDATE 
+                            SET chinese_name = EXCLUDED.chinese_name,
+                                buystartdate = EXCLUDED.buystartdate,
                                 fundfounddate = EXCLUDED.fundfounddate,
                                 issueshare = EXCLUDED.issueshare
                             RETURNING internal_id;

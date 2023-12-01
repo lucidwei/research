@@ -363,9 +363,6 @@ class AllFundsInfoUpdater:
                 ~markets_daily_long_upload_df['product_name'].isin(existing_products)]
             filtered_df.to_sql('markets_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
 
-    def _refactor_fund_product_static_info_table(self):
-        pass
-
     def _update_special_funds_missing_buystartdate(self, process_historical=False):
         if not process_historical:
             print('Skipping _update_special_funds_missing_buystartdate')
@@ -459,6 +456,32 @@ class AllFundsInfoUpdater:
             upload_df['chinese_name'] = row['chinese_name']
             for _, info in upload_df.iterrows():
                 self.db_updater.insert_product_static_info(info)
+
+    # temporary method, use '__' prefix
+    def _refactor_fund_product_static_info_table(self):
+        existing_codes = self.db_updater.select_existing_values_in_target_column('product_static_info',
+                                                                                 'code',
+                                                                                 "product_type='fund'")
+        for code in existing_codes:
+            print(f'Downloading fund info {code} for __refactor_fund_product_static_info_table')
+            downloaded_df = \
+                w.wsd(code, "issue_date,fund_setupdate,sec_name,fund_fullname,fund_fullnameen,issue_unit",
+                      self.db_updater.tradedays_str[-1], self.db_updater.tradedays_str[-1], "", usedf=True)[1]
+            if downloaded_df.empty:
+                print(
+                    f"Empty data downloaded for {code}, in _update_funds_by_buystartdate")
+                continue
+
+            # 解析下载的数据并上传至product_static_info
+            upload_df = downloaded_df.reset_index().rename(
+                columns={'index': 'code', 'SEC_NAME': 'chinese_name', 'ISSUE_DATE': 'buystartdate',
+                         'FUND_SETUPDATE': 'fundfounddate', 'FUND_FULLNAME': 'fund_fullname',
+                         'FUND_FULLNAMEEN': 'english_name', 'ISSUE_UNIT': 'issueshare'})
+            upload_df['issueshare'] = upload_df['issueshare'] / 1e8
+            upload_df['source'] = 'wind'
+            upload_df['product_type'] = 'fund'
+            for _, row in upload_df.iterrows():
+                self.db_updater.insert_product_static_info(row)
 
 
 class EtfLofUpdater:
