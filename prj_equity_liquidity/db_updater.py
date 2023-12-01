@@ -275,8 +275,8 @@ class AllFundsInfoUpdater:
             print(f'Updating {code} name')
             self.db_updater.upload_product_static_info(downloaded.squeeze(), task='fund_name')
 
-    #TODO:23-11-25 今日发现有些基金的发行份额和日期是错的，因为同名基金（不同代码不同全称）数据被刷了。
-    # 但因为数量不大且这个数据用不上，另外节省quota，所以先不改了
+    #23-11-25 今日发现有些基金的发行份额和日期是错的，因为同名基金（不同代码不同全称）数据被刷了。
+    # _refactor_fund_product_static_info_table来解决这个问题
     def _update_funds_issueshare(self):
         code_set = self.db_updater.select_existing_values_in_target_column(
             'product_static_info',
@@ -335,15 +335,16 @@ class AllFundsInfoUpdater:
 
             # 将非静态数据上传至markets_daily_long
             markets_daily_long_upload_df = downloaded_df[
-                ['name', 'openbuystartdate', 'openrepurchasestartdate']].rename(
-                columns={'name': 'chinese_name',
+                ['windcode', 'name', 'openbuystartdate', 'openrepurchasestartdate']].rename(
+                columns={'windcode': 'code',
+                         'name': 'product_name',
                          'openbuystartdate': '开放申购起始日',
                          'openrepurchasestartdate': '开放赎回起始日'
                          })
-            markets_daily_long_upload_df = markets_daily_long_upload_df.melt(id_vars=['chinese_name'], var_name='field',
+            markets_daily_long_upload_df = markets_daily_long_upload_df.melt(id_vars=['code', 'product_name'],
+                                                                             var_name='field',
                                                                              value_name='date_value')
-            markets_daily_long_upload_df = markets_daily_long_upload_df.dropna(subset=['date_value']).rename(
-                columns={'chinese_name': 'product_name'})
+            markets_daily_long_upload_df = markets_daily_long_upload_df.dropna(subset=['date_value'])
             # 这里date的含义是信息记录日
             markets_daily_long_upload_df['date'] = self.db_updater.all_dates[-1]
 
@@ -361,6 +362,9 @@ class AllFundsInfoUpdater:
             filtered_df = markets_daily_long_upload_df[
                 ~markets_daily_long_upload_df['product_name'].isin(existing_products)]
             filtered_df.to_sql('markets_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
+
+    def _refactor_fund_product_static_info_table(self):
+        pass
 
     def _update_special_funds_missing_buystartdate(self, process_historical=False):
         if not process_historical:
