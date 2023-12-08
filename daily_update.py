@@ -12,7 +12,6 @@ base_config_liquidity = BaseConfig('equity_liquidity')
 data_updater = LiquidityDatabaseUpdater(base_config_liquidity)
 # 仅运行部分更新逻辑
 data_updater.all_funds_info_updater.update_all_funds_info()
-# data_updater.all_funds_info_updater._refactor_fund_product_static_info_table()
 data_updater.etf_lof_updater.logic_etf_lof_funds()
 
 # base_config_sentiment = BaseConfig('equity_sentiment')

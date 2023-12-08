@@ -494,7 +494,8 @@ class EtfLofUpdater:
             search_value='交易型开放式',
             selected_columns=['code', 'chinese_name', 'fund_fullname', 'fundfounddate', 'issueshare', 'etf_type'],
             filter_condition="product_type='fund' AND fund_fullname NOT LIKE '%债%' "
-                             "AND fund_fullname NOT LIKE '%联接%'")
+                             "AND fund_fullname NOT LIKE '%联接%'"
+                             "AND etf_type != '重复'")
         # 有一些发行时间较早的行业ETF数据库中没有收录，从excel中读取并更新到数据库
         # 读取行业资金周流入规模文件
         file_path = os.path.join(self.db_updater.base_config.excels_path, '行业资金周流入规模（7.24-7.29）.xlsx')

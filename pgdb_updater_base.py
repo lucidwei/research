@@ -605,7 +605,7 @@ class PgDbUpdaterBase(PgDbManager):
                 query = text("""
                             INSERT INTO product_static_info (code, chinese_name, stk_industry_cs, source, type_identifier, product_type)
                             VALUES (:code, :chinese_name, :stk_industry_cs, :source, :type_identifier, :product_type)
-                            ON CONFLICT (chinese_name, product_type) DO NOTHING
+                            ON CONFLICT (code, chinese_name, product_type) DO NOTHING
                             RETURNING internal_id;
                             """)
                 self.alch_conn.execute(query,
