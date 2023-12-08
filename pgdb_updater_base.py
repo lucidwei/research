@@ -43,6 +43,19 @@ class PgDbUpdaterBase(PgDbManager):
 
         return filtered_dates
 
+    def remove_friday_afterwards_if_weekend(self, dates):
+        today = datetime.date.today()
+        weekday = today.weekday()  # 周一为0，周日为6
+
+        # 如果今天是周六（5）或周日（6），移除列表中的周五（4）以及之后的日期
+        if weekday == 5 or weekday == 6:
+            last_friday = today - datetime.timedelta(days=weekday - 4)
+            filtered_dates = [date for date in dates if date < last_friday]
+        else:
+            filtered_dates = dates
+
+        return filtered_dates
+
     def remove_today_if_trading_time(self, dates):
         today = datetime.date.today()
         now = datetime.datetime.now().time()

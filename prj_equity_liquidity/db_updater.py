@@ -1012,7 +1012,7 @@ class NorthInflowUpdater:
 
 
 class MarginTradeByIndustryUpdater:
-    def __init__(self, db_updater):
+    def __init__(self, db_updater: DatabaseUpdater):
         self.db_updater = db_updater
 
     def logic_margin_trade_by_industry(self):
@@ -1033,41 +1033,68 @@ class MarginTradeByIndustryUpdater:
         missing_dates = self.db_updater._check_data_table(table_name='markets_daily_long',
                                                           type_identifier='margin_by_industry')
         missing_dates_filtered = self.db_updater.remove_today_if_trading_day(missing_dates)
+        missing_dates_filtered = self.db_updater.remove_friday_afterwards_if_weekend(missing_dates_filtered)
         self._upload_missing_data_industry_margin(missing_dates_filtered)
+
+    def _update_past_friday_wrong_data(self):
+        ## 如果在周一之前拉数据，周五的数据只包含上交所，也就是数是错的，这里一并更新掉
+        existing_dates = self.db_updater.select_column_from_joined_table(
+            target_table_name='metric_static_info',
+            target_join_column='internal_id',
+            join_table_name='markets_daily_long',
+            join_column='metric_static_info_id',
+            selected_column=f'date',
+            filter_condition=f"metric_static_info.type_identifier = 'margin_by_industry'"
+        )
+        fridays_needing_update = [date for date in existing_dates if date.weekday() == 4]
+        for date in fridays_needing_update:
+            df_upload = self.download_and_process_data(date)
+            if df_upload is not None:
+                for index, row in df_upload.iterrows():
+                    sql = f"""
+                    UPDATE markets_daily_long
+                    SET value = '{row['value']}'
+                    WHERE date = '{row['date']}' AND
+                          product_name = '{row['product_name']}' AND
+                          field = '{row['field']}';
+                    """
+                    self.db_updater.alch_engine.execute(sql)
 
     def _upload_missing_data_industry_margin(self, missing_dates):
         if len(missing_dates) == 0:
             return
 
         for date in missing_dates:  # 不更新当天数据，以防下载到未更新的昨天数据
-            print(f'Wind downloading tradingstatisticsbyindustry for {date}')
-            downloaded_df = w.wset("tradingstatisticsbyindustry",
-                                   f"exchange=citic;startdate={date};enddate={date};"
-                                   "field=industryname,totalbalance,financingbuybetween,"
-                                   "securiesnetsellvolume,financingbuybetweenrate,securiesnetsellvolumerate,"
-                                   "balancenegotiablepercent,totaltradevolumepercent,netbuyvolumebetween",
-                                   usedf=True)[1]
-            if downloaded_df.empty:
-                print(f"Missing data for {date}, no data downloaded for _upload_missing_data_industry_margin")
-                continue
+            df_upload = self.download_and_process_data(date)
+            if df_upload is not None:
+                df_upload.to_sql('markets_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
 
-            # Parse the downloaded data and upload it to the database
-            df_upload = downloaded_df.rename(
-                columns={'totalbalance': '两融余额',
-                         'financingbuybetween': '融资净买入额',
-                         'securiesnetsellvolume': '融券净卖出额',
-                         'financingbuybetweenrate': '融资净买入额占比',
-                         'securiesnetsellvolumerate': '融券净卖出额占比',
-                         'balancenegotiablepercent': '两融余额占流通市值',
-                         'totaltradevolumepercent': '两融交易额占成交额占比',
-                         'netbuyvolumebetween': '两融净买入额',
-                         })
-            df_upload['date'] = date
-            df_upload['product_name'] = '融资融券行业交易统计_' + downloaded_df['industryname']
-            df_upload.drop("industryname", axis=1, inplace=True)
-            df_upload = df_upload.melt(id_vars=['date', 'product_name'], var_name='field', value_name='value').dropna()
+    def download_and_process_data(self, date):
+        print(f'Wind downloading tradingstatisticsbyindustry for {date}')
+        downloaded_df = w.wset("tradingstatisticsbyindustry",
+                               f"exchange=citic;startdate={date};enddate={date};"
+                               "field=industryname,totalbalance,financingbuybetween,"
+                               "securiesnetsellvolume,financingbuybetweenrate,securiesnetsellvolumerate,"
+                               "balancenegotiablepercent,totaltradevolumepercent,netbuyvolumebetween",
+                               usedf=True)[1]
+        if downloaded_df.empty:
+            print(f"Missing data for {date}, no data downloaded for _upload_missing_data_industry_margin")
+            return None
 
-            df_upload.to_sql('markets_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
+        df_upload = downloaded_df.rename(
+            columns={'totalbalance': '两融余额',
+                     'financingbuybetween': '融资净买入额',
+                     'securiesnetsellvolume': '融券净卖出额',
+                     'financingbuybetweenrate': '融资净买入额占比',
+                     'securiesnetsellvolumerate': '融券净卖出额占比',
+                     'balancenegotiablepercent': '两融余额占流通市值',
+                     'totaltradevolumepercent': '两融交易额占成交额占比',
+                     'netbuyvolumebetween': '两融净买入额',
+                     })
+        df_upload['date'] = date
+        df_upload['product_name'] = '融资融券行业交易统计_' + downloaded_df['industryname']
+        df_upload.drop("industryname", axis=1, inplace=True)
+        return df_upload.melt(id_vars=['date', 'product_name'], var_name='field', value_name='value').dropna()
 
 
 class BuyBackUpdater:
