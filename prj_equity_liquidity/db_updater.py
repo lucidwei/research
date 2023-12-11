@@ -8,6 +8,7 @@ import os
 import numpy as np
 import pandas as pd
 from datetime import timedelta
+from sqlalchemy import text
 from WindPy import w
 
 from base_config import BaseConfig
@@ -554,6 +555,7 @@ class EtfLofUpdater:
         else:
             missing_dates = self.db_updater.tradedays[-10:]
             missing_start_date = missing_dates[0]
+        missing_dates = self.db_updater.remove_today_if_trading_day(missing_dates)
 
         # 这个净流入额的变动日期和基金份额-本分级份额变动日期一样，其实就是份额变动乘以净值
         print(f"_update_etf_inflow Downloading mf_netinflow for {etf_info_row['code']} "
@@ -1046,19 +1048,20 @@ class MarginTradeByIndustryUpdater:
             selected_column=f'date',
             filter_condition=f"metric_static_info.type_identifier = 'margin_by_industry'"
         )
-        fridays_needing_update = [date for date in existing_dates if date.weekday() == 4]
+        fridays_needing_update = [date for date in existing_dates if date.weekday() == 4 and date >= datetime.datetime(2023, 4, 1).date()]
         for date in fridays_needing_update:
             df_upload = self.download_and_process_data(date)
             if df_upload is not None:
                 for index, row in df_upload.iterrows():
-                    sql = f"""
+                    sql = text(f"""
                     UPDATE markets_daily_long
                     SET value = '{row['value']}'
                     WHERE date = '{row['date']}' AND
                           product_name = '{row['product_name']}' AND
                           field = '{row['field']}';
-                    """
-                    self.db_updater.alch_engine.execute(sql)
+                    """)
+                    print(f"updating {row['product_name']} {row['date']}")
+                    self.db_updater.alch_conn.execute(sql)
 
     def _upload_missing_data_industry_margin(self, missing_dates):
         if len(missing_dates) == 0:
