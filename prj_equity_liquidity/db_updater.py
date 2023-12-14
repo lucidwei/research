@@ -404,9 +404,13 @@ class AllFundsInfoUpdater:
                                                                                  "product_type='fund'")
         equity_funds = pd.read_excel(self.db_updater.base_config.excels_path + '股票开放式基金.xls', header=0,
                                   engine='xlrd').iloc[:, :2]
+        equity_etfs = pd.read_excel(self.db_updater.base_config.excels_path + '股票型ETF.xls', header=0,
+                                  engine='xlrd').iloc[:, :2]
 
-        df_cleaned = equity_funds.drop(equity_funds[equity_funds['证券代码'].isin(existing_codes)].index)
-        for code in df_cleaned['证券代码'].tolist():
+        df1_cleaned = equity_funds.drop(equity_funds[equity_funds['证券代码'].isin(existing_codes)].index)
+        df2_cleaned = equity_etfs.drop(equity_etfs[equity_etfs['证券代码'].isin(existing_codes)].index)
+        missing_codes = list(set(df1_cleaned['证券代码'].tolist()).union(set(df2_cleaned['证券代码'].tolist())))
+        for code in missing_codes:
             print(f'Downloading fund info {code} for _update_missing_old_funds')
             downloaded_df = \
                 w.wsd(code, "issue_date,fund_setupdate,sec_name,fund_fullname,fund_fullnameen,issue_unit",
