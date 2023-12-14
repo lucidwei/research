@@ -213,11 +213,18 @@ class DatabaseUpdater(PgDbUpdaterBase):
                     f"Missing data for {code} {missing_dates[0]}~{missing_dates[-1]}, "
                     f"_upload_missing_data_industry_large_order")
                 continue
-            df_upload = df.reset_index().rename(
-                columns={'index': 'date',
-                         'MFD_INFLOW_M': '主力净流入额',
-                         })
-            df_upload['product_name'] = code
+            if len(missing_dates) == 1:
+                df_upload = df.reset_index().rename(
+                    columns={'index': 'product_name',
+                             'MFD_INFLOW_M': '主力净流入额',
+                             })
+                df_upload['date'] = missing_dates[0]
+            else:
+                df_upload = df.reset_index().rename(
+                    columns={'index': 'date',
+                             'MFD_INFLOW_M': '主力净流入额',
+                             })
+                df_upload['product_name'] = code
             df_upload = df_upload.melt(id_vars=['date', 'product_name'], var_name='field',
                                        value_name='value').dropna()
             # 去除已经存在的日期
