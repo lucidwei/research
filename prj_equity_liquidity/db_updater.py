@@ -402,10 +402,11 @@ class AllFundsInfoUpdater:
         existing_codes = self.db_updater.select_existing_values_in_target_column('product_static_info',
                                                                                  'code',
                                                                                  "product_type='fund'")
+        trimmed_code_list = [c[:-3] for c in existing_codes]
         equity_funds = pd.read_excel(self.db_updater.base_config.excels_path + '股票开放式基金.xls', header=0,
                                   engine='xlrd').iloc[:, :2]
         equity_etfs = pd.read_excel(self.db_updater.base_config.excels_path + '股票型ETF.xls', header=0,
-                                  engine='xlrd').iloc[:, :2]
+                                  engine='xlrd').iloc[:, :2].dropna()
 
         df1_cleaned = equity_funds.drop(equity_funds[equity_funds['证券代码'].isin(existing_codes)].index)
         df2_cleaned = equity_etfs.drop(equity_etfs[equity_etfs['证券代码'].isin(existing_codes)].index)
@@ -428,6 +429,9 @@ class AllFundsInfoUpdater:
             upload_df['issueshare'] = upload_df['issueshare'] / 1e8
             upload_df['source'] = 'wind'
             upload_df['product_type'] = 'fund'
+            if code[:-3] in trimmed_code_list:
+                upload_df['etf_type'] = '重复'
+
             for _, row in upload_df.iterrows():
                 self.db_updater.insert_product_static_info(row)
 
