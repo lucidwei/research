@@ -505,31 +505,6 @@ class EtfLofUpdater:
             filter_condition="product_type='fund' AND fund_fullname NOT LIKE '%债%' "
                              "AND fund_fullname NOT LIKE '%联接%'"
                              "AND etf_type != '重复'")
-        # 有一些发行时间较早的行业ETF数据库中没有收录，从excel中读取并更新到数据库
-        # 读取行业资金周流入规模文件
-        file_path = os.path.join(self.db_updater.base_config.excels_path, '行业资金周流入规模（7.24-7.29）.xlsx')
-        df_excel = pd.read_excel(file_path, sheet_name='行业ETF当周净流入统计', index_col=None)
-        # 筛选出 df_excel 中存在但 etf_funds_df 中不存在的代码
-        missing_codes = df_excel['代码'][~df_excel['代码'].isin(etf_funds_df['code'])]
-        for code in missing_codes:
-            self._update_specific_funds_meta(code)
-
-        # update ETF所属行业和ETF分类(excel文件里全部为行业ETF)
-        df_excel = df_excel.rename(columns={'代码': 'code', '中信一级行业': 'stk_industry_cs'})
-        df_excel['etf_type'] = '行业ETF'
-        for _, row in df_excel.iterrows():
-            self.db_updater.upload_product_static_info(row, task='etf_industry_and_type')
-
-        # ETF分成3类：行业ETF和主题ETF和指数ETF
-        # 默认分类为指数ETF
-        etf_funds_df.loc[etf_funds_df['etf_type'].isnull(), 'etf_type'] = '指数ETF'
-        # 根据关键字进行分类
-        theme_keywords = ['主题']
-        etf_funds_df.loc[etf_funds_df['fund_fullname'].str.contains('|'.join(theme_keywords)), 'etf_type'] = '主题ETF'
-        # 根据行业资金周流入规模文件进行分类
-        industry_etf_codes = df_excel['code'].tolist()
-        etf_funds_df.loc[etf_funds_df['code'].isin(industry_etf_codes), 'etf_type'] = '行业ETF'
-        etf_funds_df = etf_funds_df.sort_values(by='etf_type')
 
         # 更新markets_daily_long '净流入额'时间序列
         for _, row in etf_funds_df.iterrows():
@@ -611,6 +586,45 @@ class EtfLofUpdater:
             print(f"Error processing _update_specific_funds_meta {code}, passed")
             return
         self.db_updater.insert_product_static_info(row)
+
+    def _update_some_industry_funds(self):
+        # documentation purpose, not used anymore
+        etf_funds_df = self.db_updater.select_rows_by_column_strvalue(
+            table_name='product_static_info', column_name='fund_fullname',
+            search_value='交易型开放式',
+            selected_columns=['code', 'chinese_name', 'fund_fullname', 'fundfounddate', 'issueshare', 'etf_type'],
+            filter_condition="product_type='fund' AND fund_fullname NOT LIKE '%债%' "
+                             "AND fund_fullname NOT LIKE '%联接%'"
+                             "AND etf_type != '重复'")
+        # 有一些发行时间较早的行业ETF数据库中没有收录，从excel中读取并更新到数据库
+        # 读取行业资金周流入规模文件
+        file_path = os.path.join(self.db_updater.base_config.excels_path, '行业资金周流入规模（7.24-7.29）.xlsx')
+        df_excel = pd.read_excel(file_path, sheet_name='行业ETF当周净流入统计', index_col=None)
+        # 筛选出 df_excel 中存在但 etf_funds_df 中不存在的代码
+        missing_codes = df_excel['代码'][~df_excel['代码'].isin(etf_funds_df['code'])]
+        for code in missing_codes:
+            self._update_specific_funds_meta(code)
+
+        # update ETF所属行业和ETF分类(excel文件里全部为行业ETF)
+        df_excel = df_excel.rename(columns={'代码': 'code', '中信一级行业': 'stk_industry_cs'})
+        df_excel['etf_type'] = '行业ETF'
+        for _, row in df_excel.iterrows():
+            self.db_updater.upload_product_static_info(row, task='etf_industry_and_type')
+
+        # ETF分成3类：行业ETF和主题ETF和指数ETF
+        # 默认分类为指数ETF
+        etf_funds_df.loc[etf_funds_df['etf_type'].isnull(), 'etf_type'] = '指数ETF'
+        # 根据关键字进行分类
+        theme_keywords = ['主题']
+        etf_funds_df.loc[etf_funds_df['fund_fullname'].str.contains('|'.join(theme_keywords)), 'etf_type'] = '主题ETF'
+        # 根据行业资金周流入规模文件进行分类
+        industry_etf_codes = df_excel['code'].tolist()
+        etf_funds_df.loc[etf_funds_df['code'].isin(industry_etf_codes), 'etf_type'] = '行业ETF'
+        etf_funds_df = etf_funds_df.sort_values(by='etf_type')
+
+        # 更新markets_daily_long '净流入额'时间序列
+        for _, row in etf_funds_df.iterrows():
+            self._update_etf_inflow(row)
 
 
 class PriceValuationUpdater:
