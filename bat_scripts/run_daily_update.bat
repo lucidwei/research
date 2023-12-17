@@ -6,8 +6,8 @@ for /F "tokens=*" %%a in ('powershell -Command "(Get-Date).DayOfWeek.value__"') 
 
 echo Day of the week: %dayOfWeek%
 
-:: 检查当前是否为周六(6)或周日(7)
-if "%dayOfWeek%"=="6" goto end
+:: 检查当前是否为周六(7)或周日(0)
+if "%dayOfWeek%"=="0" goto end
 if "%dayOfWeek%"=="7" goto end
 
 :: 设置日志文件路径和名称
