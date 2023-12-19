@@ -59,7 +59,7 @@ def send_email_with_image(image_path, receiver_email):
 
 
 def main():
-    excel_path = 'D:\\WPS云盘\\WPS云盘\\工作-麦高\\定期汇报\\日报模板整理\\融资与北向与全A.xlsx'
+    excel_path = r"H:\bat_used.xlsm"
     image_path = rf'D:\WPS云盘\WPS云盘\工作-麦高\shared_images\北向两融_image.png'
     # receiver_email = 'your_receiver_email@example.com'
 
