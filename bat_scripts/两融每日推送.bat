@@ -11,7 +11,7 @@ if "%dayOfWeek%"=="0" goto end
 if "%dayOfWeek%"=="7" goto end
 
 echo Running the VBScript...
-cscript //Nologo RunVBA.vbs
+cscript //Nologo "E:\BaiduNetdiskWorkspace\FICC_research\bat_scripts\RunVBA.vbs"
 
 echo Running the Python script...
 D:\ProgramData\anaconda3\envs\touyan\python.exe "E:\BaiduNetdiskWorkspace\FICC_research\bat_scripts\两融保存图片.py"
