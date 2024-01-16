@@ -17,43 +17,14 @@ from utils import has_large_date_gap, match_recent_tradedays
 class DatabaseUpdater(PgDbUpdaterBase):
     def __init__(self, base_config: BaseConfig):
         super().__init__(base_config)
-        self.logic_industry_volume()
-        self.logic_industry_large_order()
-        # self.logic_industry_stk_price_volume()
-        # self.logic_analyst()
+        self.industry_data_updater = IndustryDataUpdater(self)
+        self.industry_stk_updater = IndustryStkUpdater(self)
 
-    def _check_meta_table(self, type_identifier):
-        match type_identifier:
-            case 'price_volume':
-                # 剔除掉万德全A
-                sector_codes = self.select_existing_values_in_target_column('product_static_info',
-                                                                            ['code', 'chinese_name'],
-                                                                            "product_type='index'")
-                sector_codes = sector_codes[sector_codes['chinese_name'] != '万德全A']
-                for _, row in sector_codes.iterrows():
-                    industry_name = row['chinese_name']
-                    # 先判断是否需要更新，以防浪费quota
-                    sector_update_date = self.select_existing_values_in_target_column('product_static_info',
-                                                                                      'update_date',
-                                                                                      f"product_type='stock' AND stk_industry_cs='{industry_name}'")
-                    # 如果现在没有数据，或最近更新的时间超过了30天
-                    if not sector_update_date:
-                        print('No sector_update_date, logic_industry_stk_price_volume need update')
-                        return True
-                    elif len(sector_update_date) == 1:
-                        sector_update_datetime = datetime.datetime.strptime(sector_update_date[0], '%Y-%m-%d').date()
-                        if sector_update_datetime < self.tradedays[-1] - pd.Timedelta(days=30):
-                            print('sector_update_date last updated over a month ago, '
-                                  'logic_industry_stk_price_volume need update')
-                            return True
-                        else:
-                            print('sector_update_date last updated less than a month ago, '
-                                  'logic_industry_stk_price_volume not need update')
-                            return False
-                    else:
-                        raise Exception('len(sector_update_date) should be either 0 or 1')
-            case _:
-                raise Exception(f'type_identifier {type_identifier} not supported in _check_meta_table')
+    def run_all_updater(self):
+        self.industry_data_updater.logic_industry_volume()
+        self.industry_data_updater.logic_industry_large_order()
+        self.industry_stk_updater.logic_industry_stk_price_volume()
+        # self.logic_analyst()
 
     def _check_data_table(self, type_identifier, **kwargs):
         # Retrieve the optional filter condition
@@ -135,264 +106,6 @@ class DatabaseUpdater(PgDbUpdaterBase):
             return []
         return missing_dates
 
-    def logic_industry_volume(self):
-        """
-        用wind.py更新行业和全A的成交额，用来构建拥挤度。
-        """
-        # 不需检查或更新meta_table，因为行业指数和全A已经存在于product_static_info
-        # 直接检查或更新data_table
-        missing_dates = self._check_data_table(type_identifier='industry_volume',
-                                               additional_filter=f"field='成交额'")
-        missing_dates_filtered = self.remove_today_if_trading_day(missing_dates)
-        if missing_dates_filtered:
-            self._upload_missing_data_industry_volume(missing_dates_filtered)
-
-    def _upload_missing_data_industry_volume(self, missing_dates):
-        industry_codes = self.select_existing_values_in_target_column(
-            'product_static_info',
-            'code',
-            ('product_type', 'index')
-        )
-
-        if missing_dates[0] == self.tradedays[-1]:
-            print('Only today is missing, skipping update _upload_missing_data_industry_volume')
-            return
-        for date in missing_dates[::-1]:
-            for code in industry_codes:
-                print(
-                    f'Wind downloading and upload volume,amt,turn for {code} {date} _upload_missing_data_industry_volume')
-                df = w.wsd(code, "volume,amt,turn", date,
-                           date, "unit=1", usedf=True)[1]
-                if df.empty:
-                    print(
-                        f"Missing data for {date} {code}, _upload_missing_data_industry_volume")
-                    continue
-                df_upload = df.rename(
-                    columns={'VOLUME': '成交量',
-                             'AMT': '成交额',
-                             'TURN': '换手率',
-                             })
-                df_upload['date'] = date
-                df_upload['product_name'] = code
-                df_upload = df_upload.melt(id_vars=['date', 'product_name'], var_name='field',
-                                           value_name='value').dropna()
-
-                df_upload.to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
-
-    def logic_industry_large_order(self):
-        """
-        用wind.py更新行业和全A的主力净流入额，用来构建拥挤度。
-        """
-        # 不需检查或更新meta_table，因为行业指数和全A已经存在于product_static_info
-        missing_dates = self._check_data_table(type_identifier='industry_large_order',
-                                               additional_filter=f"field='主力净流入额'")
-        missing_dates_filtered = self.remove_today_if_trading_day(missing_dates)
-
-        if missing_dates_filtered:
-            self._upload_missing_data_industry_large_order(missing_dates_filtered)
-
-    def _upload_missing_data_industry_large_order(self, missing_dates):
-        industry_codes = self.select_existing_values_in_target_column(
-            'product_static_info',
-            'code',
-            ('product_type', 'index')
-        )
-
-        if missing_dates[0] == self.tradedays[-1]:
-            print('Only today is missing, skipping update _upload_missing_data_industry_large_order')
-            return
-
-        for code in industry_codes:
-            print(
-                f'Wind downloading and upload mfd_inflow_m for {code} {missing_dates[0]}~{missing_dates[-1]} '
-                f'_upload_missing_data_industry_large_order')
-            df = w.wsd(code, "mfd_inflow_m", missing_dates[0],
-                       missing_dates[-1], "unit=1", usedf=True)[1]
-            if df.empty:
-                print(
-                    f"Missing data for {code} {missing_dates[0]}~{missing_dates[-1]}, "
-                    f"_upload_missing_data_industry_large_order")
-                continue
-            if len(missing_dates) == 1:
-                df_upload = df.reset_index().rename(
-                    columns={'index': 'product_name',
-                             'MFD_INFLOW_M': '主力净流入额',
-                             })
-                df_upload['date'] = missing_dates[0]
-            else:
-                df_upload = df.reset_index().rename(
-                    columns={'index': 'date',
-                             'MFD_INFLOW_M': '主力净流入额',
-                             })
-                df_upload['product_name'] = code
-            df_upload = df_upload.melt(id_vars=['date', 'product_name'], var_name='field',
-                                       value_name='value').dropna()
-            # 去除已经存在的日期
-            existing_dates = self.select_existing_dates_from_long_table('markets_daily_long',
-                                                                        product_name=code,
-                                                                        field='主力净流入额')
-            downloaded_filtered = df_upload[~df_upload['date'].isin(existing_dates)]
-
-            downloaded_filtered.to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
-
-    def logic_industry_stk_price_volume(self):
-        """
-        用tushare更新各行业包含的股票（及其量价），用来构建拥挤度。
-        """
-        # 检查或更新meta_table
-        need_update_meta_table = self._check_meta_table(type_identifier='price_volume')
-        # 首次run，force为TRUE
-        # need_update_meta_table = True
-        # 检查或更新data_table
-        missing_dates = self._check_data_table(type_identifier='price_volume')
-        missing_dates_filtered = self.remove_today_if_trading_time(missing_dates)
-
-        # if need_update_meta_table:
-        #     self._upload_missing_meta_stk_industry_price_volume()
-        if missing_dates_filtered:
-            self._upload_whole_market_data_by_missing_dates(missing_dates_filtered)
-
-        self._upload_missing_data_stk_price_volume()
-
-    def _upload_missing_meta_stk_industry_price_volume(self):
-        sector_codes = self.select_existing_values_in_target_column('product_static_info', ['code', 'chinese_name'],
-                                                                    "product_type='index'")
-        sector_codes = sector_codes[sector_codes['chinese_name'] != '万德全A']
-
-        for _, row in sector_codes.iterrows():
-            sector_code = row['code']
-            industry_name = row['chinese_name']
-            print(f'Wind downloading {industry_name} sectorconstituent for _upload_missing_meta_stk_industry_price_volume')
-            today_industry_stocks_df = w.wset("sectorconstituent",
-                                              f"date={self.tradedays_str[-2]};"
-                                              f"windcode={sector_code}", usedf=True)[1]
-            sector_stk_codes = today_industry_stocks_df['wind_code'].tolist()
-            existing_codes = self.select_existing_values_in_target_column('product_static_info', 'code',
-                                                                          f"product_type='stock' AND stk_industry_cs='{industry_name}'")
-            new_stk_codes = set(sector_stk_codes) - set(existing_codes)
-            selected_rows = today_industry_stocks_df[today_industry_stocks_df['wind_code'].isin(new_stk_codes)]
-
-            # 构建df，列包含code, chinese_name, source, stk_industry_cs, product_type, update_date
-            df_upload = selected_rows[['wind_code', 'sec_name']].rename(
-                columns={'wind_code': 'code', 'sec_name': 'chinese_name'})
-            df_upload['source'] = 'wind and tushare'
-            df_upload['product_type'] = 'stock'
-            df_upload['update_date'] = self.tradedays_str[-2]
-            for i, row_stk in df_upload.iterrows():
-                code = row_stk['code']
-                date = self.tradedays[-2]
-                print(f'Wind downloading industry_citic for {code} on {date} for _upload_missing_meta_stk_industry_price_volume')
-                info_df = w.wsd(code, "industry_citic", f'{date}', f'{date}', "unit=1;industryType=1",
-                                usedf=True)[1]
-                if info_df.empty:
-                    print(f"Missing data for {code} on {date}, no data downloaded for industry_citic")
-                    continue
-                industry = info_df.iloc[0]['INDUSTRY_CITIC']
-                row_stk['stk_industry_cs'] = industry
-                self.adjust_seq_val(seq_name='product_static_info_internal_id_seq')
-                self.insert_product_static_info(row_stk)
-
-    def _upload_whole_market_data_by_missing_dates(self, missing_dates: list):
-        for date in missing_dates:
-            print(f"tushare downloading 全市场行情 for {date}")
-            df = self.pro.daily(**{
-                "ts_code": "",
-                "trade_date": "",
-                "start_date": date,
-                "end_date": date,
-                "offset": "",
-                "limit": ""
-            }, fields=[
-                "ts_code",
-                "trade_date",
-                "open",
-                "high",
-                "low",
-                "close",
-                "pct_chg",
-                "vol",
-                "amount"
-            ])
-            df = df.rename(columns={
-                "ts_code": 'product_name',
-                "trade_date": 'date',
-                "open": '开盘价',
-                "high": '最高价',
-                "low": '最低价',
-                "close": '收盘价',
-                "pct_chg": '当日涨跌幅',
-                "vol": '成交量',
-                "amount": '成交额'
-            })
-            # 转换为长格式数据框
-            df_long = pd.melt(df, id_vars=['date', 'product_name'], var_name='field', value_name='value')
-            df_long.to_sql('stocks_daily_long', self.alch_engine, if_exists='append', index=False)
-
-    def _upload_missing_data_stk_price_volume(self):
-        existing_codes = self.select_existing_values_in_target_column('product_static_info', 'code',
-                                                                      f"product_type='stock'")
-        for code in existing_codes[3810:]:
-            missing_dates = self._check_data_table(type_identifier='stk_price_volume',
-                                                   stock_code=code)
-            missing_dates_filtered = self.remove_today_if_trading_time(missing_dates)
-            missing_dates_str_list = [date_obj.strftime('%Y%m%d') for date_obj in missing_dates_filtered]
-            if missing_dates[0] == self.tradedays[-1]:
-                print(f'{code} Only today is missing, skipping update _upload_missing_data_stk_price_volume')
-                continue
-            elif 2 <= len(missing_dates) <= 5:
-                # missing_dates保留近5个交易日后，正常更新
-                missing_dates_recent = [date for date in missing_dates if date in self.tradedays[-5:]]
-                missing_dates_str_list = [date_obj.strftime('%Y%m%d') for date_obj in missing_dates_recent]
-                # 只缺今天数据，跳过
-                if missing_dates_recent[0] == self.tradedays[-1]:
-                    print(f'{code} 只缺一天数据暂不更新, skipping update _upload_missing_data_stk_price_volume')
-                    continue
-            elif has_large_date_gap(missing_dates) and missing_dates[-1] == self.tradedays[-1]:
-                print(f'{code} 期间有停牌, 但已经更新过了只缺今天， skipping update _upload_missing_data_stk_price_volume')
-                continue
-            elif not has_large_date_gap(missing_dates) and not match_recent_tradedays(missing_dates, self.tradedays):
-                print(f'{code} 近期停牌, 但曾经更新过了， skipping update _upload_missing_data_stk_price_volume')
-                continue
-            elif self.tradedays[-1] - missing_dates[-6] > datetime.timedelta(days=15):
-                print(f'{code}在期间内曾经为新股，且发行后的数据已经更新过了， skipping update _upload_missing_data_stk_price_volume')
-            elif code == '900936.SH':
-                # B股没有数据
-                continue
-
-            print(f"tushare downloading 行情 for {code} {missing_dates[0]}~{missing_dates[-2]}")
-            df = self.pro.daily(**{
-                "ts_code": code,
-                "trade_date": "",
-                "start_date": missing_dates_str_list[0],
-                "end_date": missing_dates_str_list[-2],
-                "offset": "",
-                "limit": ""
-            }, fields=[
-                "ts_code",
-                "trade_date",
-                "open",
-                "high",
-                "low",
-                "close",
-                "pct_chg",
-                "vol",
-                "amount"
-            ])
-            df = df.rename(columns={
-                "ts_code": 'product_name',
-                "trade_date": 'date',
-                "open": '开盘价',
-                "high": '最高价',
-                "low": '最低价',
-                "close": '收盘价',
-                "pct_chg": '当日涨跌幅',
-                "vol": '成交量',
-                "amount": '成交额'
-            })
-            # 转换为长格式数据框
-            df_long = pd.melt(df, id_vars=['date', 'product_name'], var_name='field', value_name='value')
-            df_long.to_sql('stocks_daily_long', self.alch_engine, if_exists='append', index=False)
-
     def logic_analyst(self):
         existing_codes = self.select_existing_values_in_target_column('product_static_info', 'code',
                                                                       f"product_type='stock'")
@@ -436,3 +149,299 @@ class DatabaseUpdater(PgDbUpdaterBase):
             # 转换为长格式数据框
             df_long = pd.melt(df_report_counts, id_vars=['date', 'product_name'], var_name='field', value_name='value')
             df_long.to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
+
+
+class IndustryDataUpdater:
+    def __init__(self, db_updater: DatabaseUpdater):
+        self.db_updater = db_updater
+
+    def logic_industry_volume(self):
+        """
+        用wind.py更新行业和全A的成交额，用来构建拥挤度。
+        """
+        # 不需检查或更新meta_table，因为行业指数和全A已经存在于product_static_info
+        # 直接检查或更新data_table
+        missing_dates = self.db_updater._check_data_table(type_identifier='industry_volume',
+                                               additional_filter=f"field='成交额'")
+        missing_dates_filtered = self.db_updater.remove_today_if_trading_day(missing_dates)
+        if missing_dates_filtered:
+            self._upload_missing_data_industry_volume(missing_dates_filtered)
+
+    def _upload_missing_data_industry_volume(self, missing_dates):
+        industry_codes = self.db_updater.select_existing_values_in_target_column(
+            'product_static_info',
+            'code',
+            ('product_type', 'index')
+        )
+
+        if missing_dates[0] == self.db_updater.tradedays[-1]:
+            print('Only today is missing, skipping update _upload_missing_data_industry_volume')
+            return
+        for date in missing_dates[::-1]:
+            for code in industry_codes:
+                print(
+                    f'Wind downloading and upload volume,amt,turn for {code} {date} _upload_missing_data_industry_volume')
+                df = w.wsd(code, "volume,amt,turn", date,
+                           date, "unit=1", usedf=True)[1]
+                if df.empty:
+                    print(
+                        f"Missing data for {date} {code}, _upload_missing_data_industry_volume")
+                    continue
+                df_upload = df.rename(
+                    columns={'VOLUME': '成交量',
+                             'AMT': '成交额',
+                             'TURN': '换手率',
+                             })
+                df_upload['date'] = date
+                df_upload['product_name'] = code
+                df_upload = df_upload.melt(id_vars=['date', 'product_name'], var_name='field',
+                                           value_name='value').dropna()
+
+                df_upload.to_sql('markets_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
+
+    def logic_industry_large_order(self):
+        """
+        用wind.py更新行业和全A的主力净流入额，用来构建拥挤度。
+        """
+        # 不需检查或更新meta_table，因为行业指数和全A已经存在于product_static_info
+        missing_dates = self.db_updater._check_data_table(type_identifier='industry_large_order',
+                                               additional_filter=f"field='主力净流入额'")
+        missing_dates_filtered = self.db_updater.remove_today_if_trading_day(missing_dates)
+
+        if missing_dates_filtered:
+            self._upload_missing_data_industry_large_order(missing_dates_filtered)
+
+    def _upload_missing_data_industry_large_order(self, missing_dates):
+        industry_codes = self.db_updater.select_existing_values_in_target_column(
+            'product_static_info',
+            'code',
+            ('product_type', 'index')
+        )
+
+        if missing_dates[0] == self.db_updater.tradedays[-1]:
+            print('Only today is missing, skipping update _upload_missing_data_industry_large_order')
+            return
+
+        for code in industry_codes:
+            print(
+                f'Wind downloading and upload mfd_inflow_m for {code} {missing_dates[0]}~{missing_dates[-1]} '
+                f'_upload_missing_data_industry_large_order')
+            df = w.wsd(code, "mfd_inflow_m", missing_dates[0],
+                       missing_dates[-1], "unit=1", usedf=True)[1]
+            if df.empty:
+                print(
+                    f"Missing data for {code} {missing_dates[0]}~{missing_dates[-1]}, "
+                    f"_upload_missing_data_industry_large_order")
+                continue
+            if len(missing_dates) == 1:
+                df_upload = df.reset_index().rename(
+                    columns={'index': 'product_name',
+                             'MFD_INFLOW_M': '主力净流入额',
+                             })
+                df_upload['date'] = missing_dates[0]
+            else:
+                df_upload = df.reset_index().rename(
+                    columns={'index': 'date',
+                             'MFD_INFLOW_M': '主力净流入额',
+                             })
+                df_upload['product_name'] = code
+            df_upload = df_upload.melt(id_vars=['date', 'product_name'], var_name='field',
+                                       value_name='value').dropna()
+            # 去除已经存在的日期
+            existing_dates = self.db_updater.select_existing_dates_from_long_table('markets_daily_long',
+                                                                        product_name=code,
+                                                                        field='主力净流入额')
+            downloaded_filtered = df_upload[~df_upload['date'].isin(existing_dates)]
+
+            downloaded_filtered.to_sql('markets_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
+
+
+class IndustryStkUpdater:
+    def __init__(self, db_updater: DatabaseUpdater):
+        self.db_updater = db_updater
+
+    def _check_meta_table(self):
+        # 剔除掉万德全A
+        sector_codes = self.db_updater.select_existing_values_in_target_column('product_static_info',
+                                                                    ['code', 'chinese_name'],
+                                                                    "product_type='index'")
+        sector_codes = sector_codes[sector_codes['chinese_name'] != '万德全A']
+        for _, row in sector_codes.iterrows():
+            industry_name = row['chinese_name']
+            # 先判断是否需要更新，以防浪费quota
+            sector_update_date = self.db_updater.select_existing_values_in_target_column('product_static_info',
+                                                                              'update_date',
+                                                                              f"product_type='stock' AND stk_industry_cs='{industry_name}'")
+            # 如果现在没有数据，或最近更新的时间超过了30天
+            if not sector_update_date:
+                print('No sector_update_date, logic_industry_stk_price_volume need update')
+                return True
+            elif len(sector_update_date) == 1:
+                sector_update_datetime = datetime.datetime.strptime(sector_update_date[0], '%Y-%m-%d').date()
+                if sector_update_datetime < self.db_updater.tradedays[-1] - pd.Timedelta(days=30):
+                    print('sector_update_date last updated over a month ago, '
+                          'logic_industry_stk_price_volume need update')
+                    return True
+                else:
+                    print('sector_update_date last updated less than a month ago, '
+                          'logic_industry_stk_price_volume not need update')
+                    return False
+            else:
+                raise Exception('len(sector_update_date) should be either 0 or 1')
+
+    def logic_industry_stk_price_volume(self):
+        """
+        用tushare更新各行业包含的股票（及其量价），用来构建拥挤度。
+        """
+        # 检查或更新meta_table
+        need_update_meta_table = self._check_meta_table()
+        # 检查或更新data_table
+        missing_dates = self.db_updater._check_data_table(type_identifier='price_volume')
+        missing_dates_filtered = self.db_updater.remove_today_if_trading_time(missing_dates)
+
+        if need_update_meta_table:
+            self._upload_missing_meta_stk_industry_price_volume()
+        if missing_dates_filtered:
+            self._upload_whole_market_data_by_missing_dates(missing_dates_filtered)
+
+        self._upload_missing_data_stk_price_volume()
+
+    def _upload_missing_meta_stk_industry_price_volume(self):
+        sector_codes = self.db_updater.select_existing_values_in_target_column('product_static_info', ['code', 'chinese_name'],
+                                                                    "product_type='index'")
+        sector_codes = sector_codes[sector_codes['chinese_name'] != '万德全A']
+
+        for _, row in sector_codes.iterrows():
+            sector_code = row['code']
+            industry_name = row['chinese_name']
+            print(f'Wind downloading {industry_name} sectorconstituent for _upload_missing_meta_stk_industry_price_volume')
+            today_industry_stocks_df = w.wset("sectorconstituent",
+                                              f"date={self.db_updater.tradedays_str[-2]};"
+                                              f"windcode={sector_code}", usedf=True)[1]
+            sector_stk_codes = today_industry_stocks_df['wind_code'].tolist()
+            existing_codes = self.db_updater.select_existing_values_in_target_column('product_static_info', 'code',
+                                                                          f"product_type='stock' AND stk_industry_cs='{industry_name}'")
+            new_stk_codes = set(sector_stk_codes) - set(existing_codes)
+            selected_rows = today_industry_stocks_df[today_industry_stocks_df['wind_code'].isin(new_stk_codes)]
+
+            # 构建df，列包含code, chinese_name, source, stk_industry_cs, product_type, update_date
+            df_upload = selected_rows[['wind_code', 'sec_name']].rename(
+                columns={'wind_code': 'code', 'sec_name': 'chinese_name'})
+            df_upload['source'] = 'wind and tushare'
+            df_upload['product_type'] = 'stock'
+            df_upload['update_date'] = self.db_updater.tradedays_str[-2]
+            for i, row_stk in df_upload.iterrows():
+                code = row_stk['code']
+                date = self.db_updater.tradedays[-2]
+                print(f'Wind downloading industry_citic for {code} on {date} for _upload_missing_meta_stk_industry_price_volume')
+                info_df = w.wsd(code, "industry_citic", f'{date}', f'{date}', "unit=1;industryType=1",
+                                usedf=True)[1]
+                if info_df.empty:
+                    print(f"Missing data for {code} on {date}, no data downloaded for industry_citic")
+                    continue
+                industry = info_df.iloc[0]['INDUSTRY_CITIC']
+                row_stk['stk_industry_cs'] = industry
+                self.db_updater.adjust_seq_val(seq_name='product_static_info_internal_id_seq')
+                self.db_updater.insert_product_static_info(row_stk)
+
+    def _upload_whole_market_data_by_missing_dates(self, missing_dates: list):
+        for date in missing_dates:
+            print(f"tushare downloading 全市场行情 for {date}")
+            df = self.db_updater.pro.daily(**{
+                "ts_code": "",
+                "trade_date": "",
+                "start_date": date,
+                "end_date": date,
+                "offset": "",
+                "limit": ""
+            }, fields=[
+                "ts_code",
+                "trade_date",
+                "open",
+                "high",
+                "low",
+                "close",
+                "pct_chg",
+                "vol",
+                "amount"
+            ])
+            df = df.rename(columns={
+                "ts_code": 'product_name',
+                "trade_date": 'date',
+                "open": '开盘价',
+                "high": '最高价',
+                "low": '最低价',
+                "close": '收盘价',
+                "pct_chg": '当日涨跌幅',
+                "vol": '成交量',
+                "amount": '成交额'
+            })
+            # 转换为长格式数据框
+            df_long = pd.melt(df, id_vars=['date', 'product_name'], var_name='field', value_name='value')
+            df_long.to_sql('stocks_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
+
+    def _upload_missing_data_stk_price_volume(self):
+        existing_codes = self.db_updater.select_existing_values_in_target_column('product_static_info', 'code',
+                                                                      f"product_type='stock'")
+        for code in existing_codes[3810:]:
+            missing_dates = self.db_updater._check_data_table(type_identifier='stk_price_volume',
+                                                   stock_code=code)
+            missing_dates_filtered = self.db_updater.remove_today_if_trading_time(missing_dates)
+            missing_dates_str_list = [date_obj.strftime('%Y%m%d') for date_obj in missing_dates_filtered]
+            if missing_dates[0] == self.db_updater.tradedays[-1]:
+                print(f'{code} Only today is missing, skipping update _upload_missing_data_stk_price_volume')
+                continue
+            elif 2 <= len(missing_dates) <= 5:
+                # missing_dates保留近5个交易日后，正常更新
+                missing_dates_recent = [date for date in missing_dates if date in self.db_updater.tradedays[-5:]]
+                missing_dates_str_list = [date_obj.strftime('%Y%m%d') for date_obj in missing_dates_recent]
+                # 只缺今天数据，跳过
+                if missing_dates_recent[0] == self.db_updater.tradedays[-1]:
+                    print(f'{code} 只缺一天数据暂不更新, skipping update _upload_missing_data_stk_price_volume')
+                    continue
+            elif has_large_date_gap(missing_dates) and missing_dates[-1] == self.db_updater.tradedays[-1]:
+                print(f'{code} 期间有停牌, 但已经更新过了只缺今天， skipping update _upload_missing_data_stk_price_volume')
+                continue
+            elif not has_large_date_gap(missing_dates) and not match_recent_tradedays(missing_dates, self.db_updater.tradedays):
+                print(f'{code} 近期停牌, 但曾经更新过了， skipping update _upload_missing_data_stk_price_volume')
+                continue
+            elif self.db_updater.tradedays[-1] - missing_dates[-6] > datetime.timedelta(days=15):
+                print(f'{code}在期间内曾经为新股，且发行后的数据已经更新过了， skipping update _upload_missing_data_stk_price_volume')
+            elif code == '900936.SH':
+                # B股没有数据
+                continue
+
+            print(f"tushare downloading 行情 for {code} {missing_dates[0]}~{missing_dates[-2]}")
+            df = self.db_updater.pro.daily(**{
+                "ts_code": code,
+                "trade_date": "",
+                "start_date": missing_dates_str_list[0],
+                "end_date": missing_dates_str_list[-2],
+                "offset": "",
+                "limit": ""
+            }, fields=[
+                "ts_code",
+                "trade_date",
+                "open",
+                "high",
+                "low",
+                "close",
+                "pct_chg",
+                "vol",
+                "amount"
+            ])
+            df = df.rename(columns={
+                "ts_code": 'product_name',
+                "trade_date": 'date',
+                "open": '开盘价',
+                "high": '最高价',
+                "low": '最低价',
+                "close": '收盘价',
+                "pct_chg": '当日涨跌幅',
+                "vol": '成交量',
+                "amount": '成交额'
+            })
+            # 转换为长格式数据框
+            df_long = pd.melt(df, id_vars=['date', 'product_name'], var_name='field', value_name='value')
+            df_long.to_sql('stocks_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
+

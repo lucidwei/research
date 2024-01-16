@@ -29,6 +29,6 @@ else:
     data_updater.north_inflow_updater.logic_north_inflow_by_industry()
 
     base_config_sentiment = BaseConfig('equity_sentiment')
-    SentimentDatabaseUpdater(base_config_sentiment)
+    SentimentDatabaseUpdater(base_config_sentiment).run_all_updater()
     processor = Processor(base_config_sentiment)
     processor.upload_indicators()

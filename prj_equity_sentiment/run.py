@@ -11,7 +11,7 @@ from prj_equity_sentiment.plotter import Plotter
 
 base_config = BaseConfig('equity_sentiment')
 # 只需要更新数据时启用
-DatabaseUpdater(base_config)
+DatabaseUpdater(base_config).run_all_updater()
 
 
 #############
