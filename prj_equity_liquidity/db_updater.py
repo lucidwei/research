@@ -705,6 +705,19 @@ class PriceValuationUpdater:
 
 
 class RepoUpdater:
+    """
+    股票回购
+    wind - 内地股票专题统计 - 公司研究 - 重要持有人 - 股票回购明细，下载得到 股票回购明细.xlsx。回购目的剔除盈利补偿，回购进度剔除停止实施、失效、未通过
+    因为数据日常动态更新，所以要考虑去重
+    同一家公司发出的多条公告，wind只统计最后一条。
+    回购进展更新后，如何去重？
+    Metabase统计时一定是按最新公告日期来统计。
+    如果新的文件中(代码-回购方式-预计回购数量)组合在数据库中有记录，则更新(公告日期-已回购金额)
+    之所以用‘预计回购数量’而不是‘预计回购金额’来匹配是因为后者有太多空值。
+    对于空的‘预计回购金额’，根据‘预计回购数量’乘以当日股价进行估算。
+    虽然记录‘预计回购金额’，但Metabase不应针对它进行统计，因为没有对股票市场资金流产生影响。
+    Metabase统计的是已回购金额，对于空值，用已回购数量乘以当日股价估算。
+    """
     def __init__(self, db_updater):
         self.db_updater = db_updater
 
@@ -1040,10 +1053,6 @@ class MarginTradeByIndustryUpdater:
         self.db_updater = db_updater
 
     def logic_margin_trade_by_industry(self):
-        """
-        1. 检查
-        :return:
-        """
         # 检查或更新meta_table
         need_update_meta_table = self.db_updater._check_meta_table('metric_static_info', 'chinese_name',
                                                                    type_identifier='margin_by_industry')
@@ -1122,7 +1131,7 @@ class MarginTradeByIndustryUpdater:
         return df_upload.melt(id_vars=['date', 'product_name'], var_name='field', value_name='value').dropna()
 
 
-class BuyBackUpdater:
+class BonusUpdater:
     """
     股票回购
     wind - 内地股票专题统计 - 公司研究 - 重要持有人 - 股票回购明细，下载得到 股票回购明细.xlsx。回购目的剔除盈利补偿，回购进度剔除停止实施、失效、未通过
@@ -1139,6 +1148,6 @@ class BuyBackUpdater:
     def __init__(self, db_updater):
         self.db_updater = db_updater
 
-    def update_buy_back(self):
+    def update_bonus(self):
         pass
 

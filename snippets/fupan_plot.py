@@ -67,9 +67,9 @@ if __name__ == "__main__":
     # start_date = input("请输入开始日期 (格式: YYYY-MM-DD): ")
     # end_date = input("请输入结束日期 (格式: YYYY-MM-DD): ")
     # category = input("请选择要绘制的类别 ('style' 或 'industry'): ")
-    start_date = "2020-10-30"
-    end_date = "2020-12-31"
-    category = "industry"
+    start_date = "2023-1-1"
+    end_date = "2023-4-15"
+    category = "style"
 
     specific_categories = None
     if category == 'industry':
