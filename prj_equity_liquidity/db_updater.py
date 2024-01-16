@@ -244,66 +244,29 @@ class AllFundsInfoUpdater:
         else:
             missing_buystartdates = self.db_updater.get_missing_dates(all_dates=self.db_updater.tradedays,
                                                                       existing_dates=existing_dates)
-
         self._update_funds_by_buystartdate(missing_buystartdates)
+        self._update_equity_funds()
+
         # 有一些基金没有发行日/认购起始日的记录，wind没有抓取到，因此必要。
         # 因为缺失成立日的基金本来就不多，因此可行，不浪费quota。
         self._update_special_funds_missing_buystartdate(process_historical=True)
         self._update_funds_missing_fundfounddate()
         self._update_missing_old_funds()
 
-        self._update_funds_name()
-        # 取不到数，暂不更新
-        # self._update_funds_issueshare()
+        self._update_funds_missing_fullname()
+        self._refine_fund_product_static_info_table()
 
-    def _update_funds_name(self):
-        code_set = self.db_updater.select_existing_values_in_target_column(
-            'product_static_info',
-            'code',
-            ('product_type', 'fund'),
-            ('fund_fullname', None)
-        )
+    def _update_equity_funds(self):
+        """
+        关注两类：普通股票型（剔除ETF）、偏股混合型
+        """
+        pass
 
-        for code in code_set:
-            print('start download')
-            downloaded = w.wsd(code,
-                               "fund_fullname,fund_fullnameen",
-                               self.db_updater.tradedays_str[-1], self.db_updater.tradedays_str[-1], "unit=1",
-                               usedf=True)[1]
-            # 重置索引并将其作为一列, 重命名列名
-            downloaded = downloaded.reset_index().rename(columns={'index': 'code', 'FUND_FULLNAME': 'fund_fullname',
-                                                                  'FUND_FULLNAMEEN': 'english_name'})
-            print(f'Updating {code} name')
-            self.db_updater.upload_product_static_info(downloaded.squeeze(), task='fund_name')
-
-    #23-11-25 今日发现有些基金的发行份额和日期是错的，因为同名基金（不同代码不同全称）数据被刷了。
-    # _refactor_fund_product_static_info_table来解决这个问题
-    def _update_funds_issueshare(self):
-        code_set = self.db_updater.select_existing_values_in_target_column(
-            'product_static_info',
-            ['code', 'chinese_name', 'buystartdate', 'fundfounddate'],
-            "fundfounddate is not null and issueshare is null and product_type='fund'"
-        )
-
-        for _, row in code_set.iterrows():
-            code = row['code']
-            print(f'Downloading issueshare for {code}')
-            # wsd取不到数，应该是数据缺失。较早的发行规模暂时不更新了
-            downloaded = w.wsd(code,
-                               "issue_unit",
-                               self.db_updater.tradedays_str[-1], self.db_updater.tradedays_str[-1], "unit=1",
-                               usedf=True)[1]
-            if pd.isna(downloaded.iloc[0, 0]):
-                continue
-
-            print(f'Uploading {code} issueshare')
-            upload_df = downloaded.reset_index().rename(columns={'index': 'code', 'ISSUE_UNIT': 'issueshare'}) / 1e8
-            upload_df['chinese_name'] = row['chinese_name']
-            upload_df['buystartdate'] = row['buystartdate']
-            upload_df['fundfounddate'] = row['fundfounddate']
-            upload_df['source'] = 'wind'
-            upload_df['product_type'] = 'fund'
-            self.db_updater.insert_product_static_info(upload_df.squeeze())
+    def _refine_fund_product_static_info_table(self):
+        """
+        用python处理一下明显有错误的信息条目，比如各种空值
+        """
+        pass
 
     def _update_funds_by_buystartdate(self, missing_buystartdates):
         missing_dates = sorted(missing_buystartdates)
@@ -466,8 +429,7 @@ class AllFundsInfoUpdater:
             for _, info in upload_df.iterrows():
                 self.db_updater.insert_product_static_info(info)
 
-    # temporary method, use '__' prefix
-    def _refactor_fund_product_static_info_table(self):
+    def _correct_all_fund_info(self):
         existing_codes = self.db_updater.select_existing_values_in_target_column('product_static_info',
                                                                                  'code',
                                                                                  "product_type='fund'")
@@ -491,6 +453,56 @@ class AllFundsInfoUpdater:
             upload_df['product_type'] = 'fund'
             for _, row in upload_df.iterrows():
                 self.db_updater.insert_product_static_info(row)
+
+    def _update_funds_missing_fullname(self):
+        code_set = self.db_updater.select_existing_values_in_target_column(
+            'product_static_info',
+            'code',
+            ('product_type', 'fund'),
+            ('fund_fullname', None)
+        )
+
+        for code in code_set:
+            print('start download')
+            downloaded = w.wsd(code,
+                               "fund_fullname,fund_fullnameen",
+                               self.db_updater.tradedays_str[-1], self.db_updater.tradedays_str[-1], "unit=1",
+                               usedf=True)[1]
+            # 重置索引并将其作为一列, 重命名列名
+            downloaded = downloaded.reset_index().rename(columns={'index': 'code', 'FUND_FULLNAME': 'fund_fullname',
+                                                                  'FUND_FULLNAMEEN': 'english_name'})
+            print(f'Updating {code} name')
+            self.db_updater.upload_product_static_info(downloaded.squeeze(), task='fund_name')
+
+    #23-11-25 今日发现有些基金的发行份额和日期是错的，因为同名基金（不同代码不同全称）数据被刷了。
+    # _correct_all_fund_info来解决这个问题
+    # 取不到数，暂不更新
+    # def _update_funds_issueshare(self):
+    #     code_set = self.db_updater.select_existing_values_in_target_column(
+    #         'product_static_info',
+    #         ['code', 'chinese_name', 'buystartdate', 'fundfounddate'],
+    #         "fundfounddate is not null and issueshare is null and product_type='fund'"
+    #     )
+    #
+    #     for _, row in code_set.iterrows():
+    #         code = row['code']
+    #         print(f'Downloading issueshare for {code}')
+    #         # wsd取不到数，应该是数据缺失。较早的发行规模暂时不更新了
+    #         downloaded = w.wsd(code,
+    #                            "issue_unit",
+    #                            self.db_updater.tradedays_str[-1], self.db_updater.tradedays_str[-1], "unit=1",
+    #                            usedf=True)[1]
+    #         if pd.isna(downloaded.iloc[0, 0]):
+    #             continue
+    #
+    #         print(f'Uploading {code} issueshare')
+    #         upload_df = downloaded.reset_index().rename(columns={'index': 'code', 'ISSUE_UNIT': 'issueshare'}) / 1e8
+    #         upload_df['chinese_name'] = row['chinese_name']
+    #         upload_df['buystartdate'] = row['buystartdate']
+    #         upload_df['fundfounddate'] = row['fundfounddate']
+    #         upload_df['source'] = 'wind'
+    #         upload_df['product_type'] = 'fund'
+    #         self.db_updater.insert_product_static_info(upload_df.squeeze())
 
 
 class EtfLofUpdater:
