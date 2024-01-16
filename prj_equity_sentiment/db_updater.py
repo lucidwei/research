@@ -43,14 +43,8 @@ class DatabaseUpdater(PgDbUpdaterBase):
                     filter_condition=filter_condition
                 )
             case 'price_volume':
-                # filter_condition = f"stocks_daily_long.field='收盘价'"
-                existing_dates = self.select_column_from_joined_table(
-                    target_table_name='product_static_info',
-                    target_join_column='internal_id',
-                    join_table_name='stocks_daily_partitioned_close',
-                    join_column='product_static_info_id',
-                    selected_column=f'date',
-                    # filter_condition=filter_condition
+                existing_dates = self.select_existing_dates_from_long_table(
+                    table_name='stocks_daily_partitioned_close',
                 )
             case 'stk_price_volume':
                 stock_code = kwargs.get('stock_code')
@@ -318,7 +312,7 @@ class IndustryStkUpdater:
         existing_codes_missing_industry = self.db_updater.select_existing_values_in_target_column('product_static_info', 'code',
                                                                                  f"product_type='stock' AND (stk_industry_cs='NaN' OR stk_industry_cs is null)")
         new_stk_codes = set(sector_stk_codes) - set(existing_codes)
-        stk_needing_update = new_stk_codes + set(existing_codes_missing_industry)
+        stk_needing_update = new_stk_codes.union(set(existing_codes_missing_industry))
         selected_rows = today_stocks_df[today_stocks_df['wind_code'].isin(stk_needing_update)]
 
         # 构建df，列包含code, chinese_name, source, stk_industry_cs, product_type, update_date
