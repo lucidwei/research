@@ -21,8 +21,8 @@ class DatabaseUpdater(PgDbUpdaterBase):
         self.industry_stk_updater = IndustryStkUpdater(self)
 
     def run_all_updater(self):
-        # self.industry_data_updater.logic_industry_volume()
-        # self.industry_data_updater.logic_industry_large_order()
+        self.industry_data_updater.logic_industry_volume()
+        self.industry_data_updater.logic_industry_large_order()
         self.industry_stk_updater.logic_industry_stk_price_volume()
         # self.logic_analyst()
 
@@ -376,17 +376,17 @@ class IndustryStkUpdater:
 
     def _upload_whole_market_data_by_missing_dates(self, missing_dates: list):
         for date in missing_dates:
+            date_str = date.strftime('%Y%m%d')
             print(f"tushare downloading 全市场行情 for {date}")
             df = self.db_updater.pro.daily(**{
                 "ts_code": "",
-                "trade_date": "",
-                "start_date": date,
-                "end_date": date,
+                "trade_date": date_str,
+                "start_date": "",
+                "end_date": "",
                 "offset": "",
                 "limit": ""
             }, fields=[
                 "ts_code",
-                "trade_date",
                 "open",
                 "high",
                 "low",
@@ -397,7 +397,6 @@ class IndustryStkUpdater:
             ])
             df = df.rename(columns={
                 "ts_code": 'product_name',
-                "trade_date": 'date',
                 "open": '开盘价',
                 "high": '最高价',
                 "low": '最低价',
@@ -406,6 +405,7 @@ class IndustryStkUpdater:
                 "vol": '成交量',
                 "amount": '成交额'
             })
+            df['date'] = date
             # 转换为长格式数据框
             df_long = pd.melt(df, id_vars=['date', 'product_name'], var_name='field', value_name='value')
             df_long.to_sql('stocks_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
