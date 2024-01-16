@@ -309,7 +309,7 @@ class IndustryStkUpdater:
     def _upload_missing_meta_stk_industry_price_volume(self):
         sector_codes = self.db_updater.select_existing_values_in_target_column('product_static_info', ['code', 'chinese_name'],
                                                                     "product_type='index'")
-        sector_codes = sector_codes[sector_codes['chinese_name'] != '万德全A']
+        sector_codes = sector_codes[sector_codes['chinese_name'] == '万德全A']
 
         for _, row in sector_codes.iterrows():
             sector_code = row['code']
@@ -343,6 +343,42 @@ class IndustryStkUpdater:
                 row_stk['stk_industry_cs'] = industry
                 self.db_updater.adjust_seq_val(seq_name='product_static_info_internal_id_seq')
                 self.db_updater.insert_product_static_info(row_stk)
+
+        # 从行业组成角度更新个股行业，代码略冗余。
+        # sector_codes = sector_codes[sector_codes['chinese_name'] != '万德全A']
+        #
+        # for _, row in sector_codes.iterrows():
+        #     sector_code = row['code']
+        #     industry_name = row['chinese_name']
+        #     print(f'Wind downloading {industry_name} sectorconstituent for _upload_missing_meta_stk_industry_price_volume')
+        #     today_industry_stocks_df = w.wset("sectorconstituent",
+        #                                       f"date={self.db_updater.tradedays_str[-2]};"
+        #                                       f"windcode={sector_code}", usedf=True)[1]
+        #     sector_stk_codes = today_industry_stocks_df['wind_code'].tolist()
+        #     existing_codes = self.db_updater.select_existing_values_in_target_column('product_static_info', 'code',
+        #                                                                   f"product_type='stock' AND stk_industry_cs='{industry_name}'")
+        #     new_stk_codes = set(sector_stk_codes) - set(existing_codes)
+        #     selected_rows = today_industry_stocks_df[today_industry_stocks_df['wind_code'].isin(new_stk_codes)]
+        #
+        #     # 构建df，列包含code, chinese_name, source, stk_industry_cs, product_type, update_date
+        #     df_upload = selected_rows[['wind_code', 'sec_name']].rename(
+        #         columns={'wind_code': 'code', 'sec_name': 'chinese_name'})
+        #     df_upload['source'] = 'wind and tushare'
+        #     df_upload['product_type'] = 'stock'
+        #     df_upload['update_date'] = self.db_updater.tradedays_str[-2]
+        #     for i, row_stk in df_upload.iterrows():
+        #         code = row_stk['code']
+        #         date = self.db_updater.tradedays[-2]
+        #         print(f'Wind downloading industry_citic for {code} on {date} for _upload_missing_meta_stk_industry_price_volume')
+        #         info_df = w.wsd(code, "industry_citic", f'{date}', f'{date}', "unit=1;industryType=1",
+        #                         usedf=True)[1]
+        #         if info_df.empty:
+        #             print(f"Missing data for {code} on {date}, no data downloaded for industry_citic")
+        #             continue
+        #         industry = info_df.iloc[0]['INDUSTRY_CITIC']
+        #         row_stk['stk_industry_cs'] = industry
+        #         self.db_updater.adjust_seq_val(seq_name='product_static_info_internal_id_seq')
+        #         self.db_updater.insert_product_static_info(row_stk)
 
     def _upload_whole_market_data_by_missing_dates(self, missing_dates: list):
         for date in missing_dates:
