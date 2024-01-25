@@ -432,8 +432,9 @@ class IndustryStkUpdater:
                 continue
 
             if 2 <= len(missing_dates) <= 5:
-                # 太久远的不更新？missing_dates保留近5个交易日后，正常更新
-                missing_dates_recent = [date for date in missing_dates if date in self.db_updater.tradedays[-5:]]
+                # 太久远的不更新
+                # 保留近半年的missing_dates进行更新
+                missing_dates_recent = [date for date in missing_dates if date in self.db_updater.tradedays[-150:]]
                 missing_dates_str_list = [date_obj.strftime('%Y%m%d') for date_obj in missing_dates_recent]
             elif has_large_date_gap(missing_dates):
                 print(f'{code} 期间有停牌, 但已经更新过了， skipping update _upload_missing_data_stk_price_volume')
@@ -444,8 +445,10 @@ class IndustryStkUpdater:
             elif self.db_updater.tradedays[-1] - missing_dates[-6] > datetime.timedelta(days=15):
                 print(f'{code}在期间内曾经为新股，且发行后的数据已经更新过了， skipping update _upload_missing_data_stk_price_volume')
 
+            if not missing_dates_str_list:
+                continue
             # 停牌数据会返回空df，因此不必按日更新
-            print(f"tushare downloading 行情 for {code} {missing_dates[0]}~{missing_dates[-1]}")
+            print(f"tushare downloading 行情 for {code} {missing_dates_str_list[0]}~{missing_dates_str_list[-1]}")
             df = self.db_updater.pro.daily(**{
                 "ts_code": code,
                 "trade_date": "",
@@ -465,7 +468,7 @@ class IndustryStkUpdater:
                 "amount"
             ])
             if df.empty:
-                print(f"跳过上传 {code} {missing_dates[0]}~{missing_dates[-1]}因为tushare返回空数据(停牌/未上市)")
+                print(f"跳过上传 {code} {missing_dates_str_list[0]}~{missing_dates_str_list[-1]}因为tushare返回空数据(停牌/未上市)")
             df = df.rename(columns={
                 "ts_code": 'product_name',
                 "trade_date": 'date',
