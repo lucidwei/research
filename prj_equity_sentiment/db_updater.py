@@ -425,7 +425,7 @@ class IndustryStkUpdater:
                                                    stock_code=code)
             missing_dates_str_list = [date_obj.strftime('%Y%m%d') for date_obj in missing_dates]
 
-            if code.startswith("900"):
+            if code.startswith("900") or code.startswith("200"):
                 # B股tushare没有数据
                 continue
             if not missing_dates:
@@ -437,6 +437,7 @@ class IndustryStkUpdater:
                 missing_dates_recent = [date for date in missing_dates if date in self.db_updater.tradedays[-150:]]
                 missing_dates_str_list = [date_obj.strftime('%Y%m%d') for date_obj in missing_dates_recent]
             elif has_large_date_gap(missing_dates):
+                print(missing_dates) # TODO 出现太频繁需要debug
                 print(f'{code} 期间有停牌, 但已经更新过了， skipping update _upload_missing_data_stk_price_volume')
                 continue
             elif not has_large_date_gap(missing_dates) and not match_recent_tradedays(missing_dates, self.db_updater.tradedays):
@@ -485,6 +486,7 @@ class IndustryStkUpdater:
             df_long = pd.melt(df, id_vars=['date', 'product_name'], var_name='field', value_name='value')
             df_long.to_sql('stocks_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
 
+        # 行不通：抱歉，您每天最多访问该接口20000次，权限的具体详情访问：https://tushare.pro/document/1?doc_id=108
         #     for date in missing_dates_str_list:
         #         print(f"tushare downloading 行情 for {code} on {date}")
         #         df = self.db_updater.pro.daily(**{
