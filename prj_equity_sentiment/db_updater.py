@@ -420,33 +420,29 @@ class IndustryStkUpdater:
                                                                       f"product_type='stock'")
         empty_request_count = 0
         for code in existing_codes:
+            print(f"processing {code}")
             missing_dates = self.db_updater._check_data_table(type_identifier='stk_price_volume',
                                                    stock_code=code)
             missing_dates_str_list = [date_obj.strftime('%Y%m%d') for date_obj in missing_dates]
-            # if missing_dates[0] == self.db_updater.tradedays[-1]:
-            #     print(f'{code} Only today is missing, skipping update _upload_missing_data_stk_price_volume')
-            #     continue
-            # elif 2 <= len(missing_dates) <= 5:
-            #     # missing_dates保留近5个交易日后，正常更新
-            #     missing_dates_recent = [date for date in missing_dates if date in self.db_updater.tradedays[-5:]]
-            #     missing_dates_str_list = [date_obj.strftime('%Y%m%d') for date_obj in missing_dates_recent]
-            #     # 只缺今天数据，跳过
-            #     if missing_dates_recent[0] == self.db_updater.tradedays[-1]:
-            #         print(f'{code} 只缺一天数据暂不更新, skipping update _upload_missing_data_stk_price_volume')
-            #         continue
-            # elif has_large_date_gap(missing_dates) and missing_dates[-1] == self.db_updater.tradedays[-1]:
-            #     print(f'{code} 期间有停牌, 但已经更新过了只缺今天， skipping update _upload_missing_data_stk_price_volume')
-            #     continue
-            # elif not has_large_date_gap(missing_dates) and not match_recent_tradedays(missing_dates, self.db_updater.tradedays):
-            #     print(f'{code} 近期停牌, 但曾经更新过了， skipping update _upload_missing_data_stk_price_volume')
-            #     continue
-            # elif self.db_updater.tradedays[-1] - missing_dates[-6] > datetime.timedelta(days=15):
-            #     print(f'{code}在期间内曾经为新股，且发行后的数据已经更新过了， skipping update _upload_missing_data_stk_price_volume')
+
             if code.startswith("900"):
                 # B股tushare没有数据
                 continue
             if not missing_dates:
                 continue
+
+            if 2 <= len(missing_dates) <= 5:
+                # 太久远的不更新？missing_dates保留近5个交易日后，正常更新
+                missing_dates_recent = [date for date in missing_dates if date in self.db_updater.tradedays[-5:]]
+                missing_dates_str_list = [date_obj.strftime('%Y%m%d') for date_obj in missing_dates_recent]
+            elif has_large_date_gap(missing_dates):
+                print(f'{code} 期间有停牌, 但已经更新过了， skipping update _upload_missing_data_stk_price_volume')
+                continue
+            elif not has_large_date_gap(missing_dates) and not match_recent_tradedays(missing_dates, self.db_updater.tradedays):
+                print(f'{code} 近期停牌, 但曾经更新过了， skipping update _upload_missing_data_stk_price_volume')
+                continue
+            elif self.db_updater.tradedays[-1] - missing_dates[-6] > datetime.timedelta(days=15):
+                print(f'{code}在期间内曾经为新股，且发行后的数据已经更新过了， skipping update _upload_missing_data_stk_price_volume')
 
             # 停牌数据会返回空df，因此不必按日更新
             print(f"tushare downloading 行情 for {code} {missing_dates[0]}~{missing_dates[-1]}")
