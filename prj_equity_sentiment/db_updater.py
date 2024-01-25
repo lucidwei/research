@@ -444,6 +444,7 @@ class IndustryStkUpdater:
                 continue
             elif self.db_updater.tradedays[-1] - missing_dates[-6] > datetime.timedelta(days=15):
                 print(f'{code}在期间内曾经为新股，且发行后的数据已经更新过了， skipping update _upload_missing_data_stk_price_volume')
+                continue
 
             if not missing_dates_str_list:
                 continue
