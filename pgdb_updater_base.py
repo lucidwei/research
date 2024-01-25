@@ -59,7 +59,7 @@ class PgDbUpdaterBase(PgDbManager):
     def remove_today_if_trading_time(self, dates):
         today = datetime.date.today()
         now = datetime.datetime.now().time()
-        closing_time = datetime.datetime.strptime("17:00", "%H:%M").time()
+        closing_time = datetime.datetime.strptime("15:10", "%H:%M").time()
 
         if today in self.tradedays and now < closing_time:
             filtered_dates = [date for date in dates if date != today]

@@ -48,14 +48,9 @@ class DatabaseUpdater(PgDbUpdaterBase):
                 )
             case 'stk_price_volume':
                 stock_code = kwargs.get('stock_code')
-                filter_condition = f"stocks_daily_long.product_name='{stock_code}' AND stocks_daily_long.field='收盘价'"
-                existing_dates = self.select_column_from_joined_table(
-                    target_table_name='product_static_info',
-                    target_join_column='internal_id',
-                    join_table_name='stocks_daily_long',
-                    join_column='product_static_info_id',
-                    selected_column=f'date',
-                    filter_condition=filter_condition
+                existing_dates = self.select_existing_dates_from_long_table(
+                    table_name='stocks_daily_partitioned_close',
+                    code=stock_code
                 )
             case 'industry_large_order':
                 filter_condition = f"markets_daily_long.field='主力净流入额'"
@@ -200,11 +195,11 @@ class IndustryDataUpdater:
         # 不需检查或更新meta_table，因为行业指数和全A已经存在于product_static_info
         missing_dates = self.db_updater._check_data_table(type_identifier='industry_large_order',
                                                additional_filter=f"field='主力净流入额'")
-        #TODO 每天大概四点多就出了结果，可以优化成不用等到第二天再更新
-        missing_dates_filtered = self.db_updater.remove_today_if_trading_day(missing_dates)
+        # 每天大概四点多就出了结果，不用等到第二天再更新
+        # missing_dates_filtered = self.db_updater.remove_today_if_trading_day(missing_dates)
 
-        if missing_dates_filtered:
-            self._upload_missing_data_industry_large_order(missing_dates_filtered)
+        if missing_dates:
+            self._upload_missing_data_industry_large_order(missing_dates)
 
     def _upload_missing_data_industry_large_order(self, missing_dates):
         industry_codes = self.db_updater.select_existing_values_in_target_column(
@@ -411,42 +406,50 @@ class IndustryStkUpdater:
             df_long.to_sql('stocks_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
 
     def _upload_missing_data_stk_price_volume(self):
+        """
+        更新时间：每日收盘后
+        """
+        current_time = datetime.datetime.now()
+        close_time = datetime.datetime.now().replace(hour=15, minute=10, second=0, microsecond=0)
+        if current_time<close_time:
+            print("尚未收盘，日度股票数据不做更新")
+            return
+
         existing_codes = self.db_updater.select_existing_values_in_target_column('product_static_info', 'code',
                                                                       f"product_type='stock'")
-        for code in existing_codes[3810:]:
+        for code in existing_codes:
             missing_dates = self.db_updater._check_data_table(type_identifier='stk_price_volume',
                                                    stock_code=code)
-            missing_dates_filtered = self.db_updater.remove_today_if_trading_time(missing_dates)
-            missing_dates_str_list = [date_obj.strftime('%Y%m%d') for date_obj in missing_dates_filtered]
-            if missing_dates[0] == self.db_updater.tradedays[-1]:
-                print(f'{code} Only today is missing, skipping update _upload_missing_data_stk_price_volume')
-                continue
-            elif 2 <= len(missing_dates) <= 5:
-                # missing_dates保留近5个交易日后，正常更新
-                missing_dates_recent = [date for date in missing_dates if date in self.db_updater.tradedays[-5:]]
-                missing_dates_str_list = [date_obj.strftime('%Y%m%d') for date_obj in missing_dates_recent]
-                # 只缺今天数据，跳过
-                if missing_dates_recent[0] == self.db_updater.tradedays[-1]:
-                    print(f'{code} 只缺一天数据暂不更新, skipping update _upload_missing_data_stk_price_volume')
-                    continue
-            elif has_large_date_gap(missing_dates) and missing_dates[-1] == self.db_updater.tradedays[-1]:
-                print(f'{code} 期间有停牌, 但已经更新过了只缺今天， skipping update _upload_missing_data_stk_price_volume')
-                continue
-            elif not has_large_date_gap(missing_dates) and not match_recent_tradedays(missing_dates, self.db_updater.tradedays):
-                print(f'{code} 近期停牌, 但曾经更新过了， skipping update _upload_missing_data_stk_price_volume')
-                continue
-            elif self.db_updater.tradedays[-1] - missing_dates[-6] > datetime.timedelta(days=15):
-                print(f'{code}在期间内曾经为新股，且发行后的数据已经更新过了， skipping update _upload_missing_data_stk_price_volume')
-            elif code == '900936.SH':
-                # B股没有数据
+            missing_dates_str_list = [date_obj.strftime('%Y%m%d') for date_obj in missing_dates]
+            # if missing_dates[0] == self.db_updater.tradedays[-1]:
+            #     print(f'{code} Only today is missing, skipping update _upload_missing_data_stk_price_volume')
+            #     continue
+            # elif 2 <= len(missing_dates) <= 5:
+            #     # missing_dates保留近5个交易日后，正常更新
+            #     missing_dates_recent = [date for date in missing_dates if date in self.db_updater.tradedays[-5:]]
+            #     missing_dates_str_list = [date_obj.strftime('%Y%m%d') for date_obj in missing_dates_recent]
+            #     # 只缺今天数据，跳过
+            #     if missing_dates_recent[0] == self.db_updater.tradedays[-1]:
+            #         print(f'{code} 只缺一天数据暂不更新, skipping update _upload_missing_data_stk_price_volume')
+            #         continue
+            # elif has_large_date_gap(missing_dates) and missing_dates[-1] == self.db_updater.tradedays[-1]:
+            #     print(f'{code} 期间有停牌, 但已经更新过了只缺今天， skipping update _upload_missing_data_stk_price_volume')
+            #     continue
+            # elif not has_large_date_gap(missing_dates) and not match_recent_tradedays(missing_dates, self.db_updater.tradedays):
+            #     print(f'{code} 近期停牌, 但曾经更新过了， skipping update _upload_missing_data_stk_price_volume')
+            #     continue
+            # elif self.db_updater.tradedays[-1] - missing_dates[-6] > datetime.timedelta(days=15):
+            #     print(f'{code}在期间内曾经为新股，且发行后的数据已经更新过了， skipping update _upload_missing_data_stk_price_volume')
+            if code.startswith("900"):
+                # B股tushare没有数据
                 continue
 
-            print(f"tushare downloading 行情 for {code} {missing_dates[0]}~{missing_dates[-2]}")
+            print(f"tushare downloading 行情 for {code} {missing_dates[0]}~{missing_dates[-1]}")
             df = self.db_updater.pro.daily(**{
                 "ts_code": code,
                 "trade_date": "",
                 "start_date": missing_dates_str_list[0],
-                "end_date": missing_dates_str_list[-2],
+                "end_date": missing_dates_str_list[-1],
                 "offset": "",
                 "limit": ""
             }, fields=[
