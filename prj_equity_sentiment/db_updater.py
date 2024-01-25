@@ -431,7 +431,7 @@ class IndustryStkUpdater:
             if not missing_dates:
                 continue
 
-            if 2 <= len(missing_dates) <= 5:
+            if 2 <= len(missing_dates) <= 150:
                 # 太久远的不更新
                 # 保留近半年的missing_dates进行更新
                 missing_dates_recent = [date for date in missing_dates if date in self.db_updater.tradedays[-150:]]
