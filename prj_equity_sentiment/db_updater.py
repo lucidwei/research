@@ -50,7 +50,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
                 stock_code = kwargs.get('stock_code')
                 existing_dates = self.select_existing_dates_from_long_table(
                     table_name='stocks_daily_partitioned_close',
-                    code=stock_code
+                    product_name=stock_code
                 )
             case 'industry_large_order':
                 filter_condition = f"markets_daily_long.field='主力净流入额'"
@@ -402,6 +402,7 @@ class IndustryStkUpdater:
             })
             df['date'] = date
             # 转换为长格式数据框
+            print('_upload_whole_market_data_by_missing_dates上传中……')
             df_long = pd.melt(df, id_vars=['date', 'product_name'], var_name='field', value_name='value')
             df_long.to_sql('stocks_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
 

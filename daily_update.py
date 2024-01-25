@@ -11,7 +11,7 @@ from prj_equity_sentiment.processor import Processor
 
 # 获取当前时间
 current_time = datetime.datetime.now()
-# 两融更新时间
+# 两融最晚更新时间
 rongzi_time = datetime.datetime.now().replace(hour=9, minute=0, second=0, microsecond=0)
 # 收盘时间
 close_time = datetime.datetime.now().replace(hour=15, minute=10, second=0, microsecond=0)
