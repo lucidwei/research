@@ -418,6 +418,7 @@ class IndustryStkUpdater:
 
         existing_codes = self.db_updater.select_existing_values_in_target_column('product_static_info', 'code',
                                                                       f"product_type='stock'")
+        empty_request_count = 0
         for code in existing_codes:
             missing_dates = self.db_updater._check_data_table(type_identifier='stk_price_volume',
                                                    stock_code=code)
@@ -444,38 +445,79 @@ class IndustryStkUpdater:
             if code.startswith("900"):
                 # B股tushare没有数据
                 continue
+            if not missing_dates:
+                continue
 
-            print(f"tushare downloading 行情 for {code} {missing_dates[0]}~{missing_dates[-1]}")
-            df = self.db_updater.pro.daily(**{
-                "ts_code": code,
-                "trade_date": "",
-                "start_date": missing_dates_str_list[0],
-                "end_date": missing_dates_str_list[-1],
-                "offset": "",
-                "limit": ""
-            }, fields=[
-                "ts_code",
-                "trade_date",
-                "open",
-                "high",
-                "low",
-                "close",
-                "pct_chg",
-                "vol",
-                "amount"
-            ])
-            df = df.rename(columns={
-                "ts_code": 'product_name',
-                "trade_date": 'date',
-                "open": '开盘价',
-                "high": '最高价',
-                "low": '最低价',
-                "close": '收盘价',
-                "pct_chg": '当日涨跌幅',
-                "vol": '成交量',
-                "amount": '成交额'
-            })
-            # 转换为长格式数据框
-            df_long = pd.melt(df, id_vars=['date', 'product_name'], var_name='field', value_name='value')
-            df_long.to_sql('stocks_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
+            # print(f"tushare downloading 行情 for {code} {missing_dates[0]}~{missing_dates[-2]}")
+            # df = self.db_updater.pro.daily(**{
+            #     "ts_code": code,
+            #     "trade_date": "",
+            #     "start_date": missing_dates_str_list[0],
+            #     "end_date": missing_dates_str_list[-2],
+            #     "offset": "",
+            #     "limit": ""
+            # }, fields=[
+            #     "ts_code",
+            #     "trade_date",
+            #     "open",
+            #     "high",
+            #     "low",
+            #     "close",
+            #     "pct_chg",
+            #     "vol",
+            #     "amount"
+            # ])
+            # df = df.rename(columns={
+            #     "ts_code": 'product_name',
+            #     "trade_date": 'date',
+            #     "open": '开盘价',
+            #     "high": '最高价',
+            #     "low": '最低价',
+            #     "close": '收盘价',
+            #     "pct_chg": '当日涨跌幅',
+            #     "vol": '成交量',
+            #     "amount": '成交额'
+            # })
+            # # 转换为长格式数据框
+            # df_long = pd.melt(df, id_vars=['date', 'product_name'], var_name='field', value_name='value')
+            # df_long.to_sql('stocks_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
 
+            for date in missing_dates_str_list:
+                print(f"tushare downloading 行情 for {code} on {date}")
+                df = self.db_updater.pro.daily(**{
+                    "ts_code": code,
+                    "trade_date": date,
+                    "start_date": "",
+                    "end_date": "",
+                    "offset": "",
+                    "limit": ""
+                }, fields=[
+                    "ts_code",
+                    "trade_date",
+                    "open",
+                    "high",
+                    "low",
+                    "close",
+                    "pct_chg",
+                    "vol",
+                    "amount"
+                ])
+                if df.empty:
+                    print(f"跳过 {code} on {date} 因为空数据")
+                    empty_request_count += 1
+                    continue
+                df = df.rename(columns={
+                    "ts_code": 'product_name',
+                    "trade_date": 'date',
+                    "open": '开盘价',
+                    "high": '最高价',
+                    "low": '最低价',
+                    "close": '收盘价',
+                    "pct_chg": '当日涨跌幅',
+                    "vol": '成交量',
+                    "amount": '成交额'
+                })
+                # 转换为长格式数据框
+                df_long = pd.melt(df, id_vars=['date', 'product_name'], var_name='field', value_name='value')
+                df_long.to_sql('stocks_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
+        print(f"empty_request_count={empty_request_count}")
