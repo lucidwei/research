@@ -28,6 +28,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
         self.major_holder_updater = MajorHolderUpdater(self)
         self.price_valuation_updater = PriceValuationUpdater(self)
         self.repo_updater = RepoUpdater(self)
+        self.bonus_updater = BonusUpdater(self)
 
     def run_all_updater(self):
         self.all_funds_info_updater.update_all_funds_info()
@@ -37,6 +38,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
         self.major_holder_updater.logic_major_holder()
         self.price_valuation_updater.logic_price_valuation()
         self.repo_updater.logic_repo()
+        self.bonus_updater.update_bonus()
 
     def _check_data_table(self, table_name, type_identifier, **kwargs):
         # Retrieve the optional filter condition
@@ -142,73 +144,108 @@ class DatabaseUpdater(PgDbUpdaterBase):
         else:
             return False
 
-    def logic_reopened_dk_funds(self):
-        """
-        1. 获取full_name中带有'定期开放'、不包含债的全部基金
-        2. 需要获取的数据包括：历次开放申赎的日期、申赎前后的份额变动、最新日期的基金规模
-        """
-        dk_funds_df = self.select_rows_by_column_strvalue(table_name='product_static_info', column_name='fund_fullname',
-                                                          search_value='定期开放',
-                                                          selected_columns=['code', 'chinese_name'],
-                                                          filter_condition="product_type='fund' AND fund_fullname NOT LIKE '%债%'")
+    def process_stk_meta_data(self, stk_info_to_add):
+        # check all historic_stocks in meta table (and have industry label，检查过了基本都有)
+        existing_stks_df = self.select_existing_values_in_target_column('product_static_info',
+                                                                                 ['code', 'stk_industry_cs', 'chinese_name'],
+                                                                                 ('product_type', 'stock'))
+        existing_value = existing_stks_df['code'].tolist()
+        missing_value = set(stk_info_to_add['证券代码'].tolist()) - set(existing_value)
 
-        # 因为定开基金总数不多，因此对这些定开基金统一更新
-        today_updated = self.is_markets_daily_long_updated_today(field='nav_adj', product_name_key_word='定开')
-        if not today_updated:
-            for _, row in dk_funds_df.iterrows():
-                downloaded = w.wsd(row['code'],
-                                   "NAV_adj,fund_expectedopenday,netasset_total,fund_fundscale,fund_info_name",
-                                   self.tradedays_str[-1], self.tradedays_str[-1], "unit=1", usedf=True)[1]
-                downloaded = downloaded.reset_index().rename(columns={'index': 'code', 'NAV_ADJ': 'nav_adj',
-                                                                      'FUND_EXPECTEDOPENDAY': 'fund_expectedopenday',
-                                                                      'FUND_FUNDSCALE': 'fund_fundscale',
-                                                                      'NETASSET_TOTAL': 'netasset_total'})
-                downloaded['product_name'] = row['chinese_name']
-                if downloaded.iloc[0]['code'] == 0:
-                    print(f"{row['chinese_name']} {row['code']} 未在w.wsd查询到数据，skipping")
+        stk_info_to_add = pd.DataFrame(stk_info_to_add)
+        df_meta = stk_info_to_add[~stk_info_to_add['证券代码'].isin(existing_value)]
+        if df_meta.empty:
+            pass
+        else:
+            df_meta = df_meta.set_index('证券代码').rename(columns={'A': 'B'})
+            for code in missing_value:
+                date = self.tradedays_str[-1]
+                print(f'Wind downloading industry_citic for {code} on {date}')
+                info_df = w.wsd(code, "industry_citic", f'{date}', f'{date}', "unit=1;industryType=1",
+                                usedf=True)[1]
+                if info_df.empty:
+                    print(f"Missing data for {code} on {date}, no data downloaded for industry_citic")
                     continue
-                upload_date_value = downloaded[['product_name', 'fund_expectedopenday']].melt(id_vars=['product_name'],
-                                                                                              var_name='field',
-                                                                                              value_name='date_value')
-                upload_value = downloaded[['product_name', 'nav_adj', 'fund_fundscale', 'netasset_total']].melt(
-                    id_vars=['product_name'], var_name='field', value_name='value')
-                upload_date_value['date'] = self.all_dates[-1]
-                upload_value['date'] = self.all_dates[-1]
-                upload_date_value.dropna().to_sql('markets_daily_long', self.alch_engine, if_exists='append',
-                                                  index=False)
-                upload_value.dropna().to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
+                industry = info_df.iloc[0]['INDUSTRY_CITIC']
+                df_meta.loc[code, 'stk_industry_cs'] = industry
+                df_meta.loc[code, 'chinese_name'] = stk_info_to_add[stk_info_to_add['证券代码'] == code]['证券简称'].values[0]
+                df_meta.loc[code, 'update_date'] = date
+            # 上传metadata
+            df_meta['source'] = 'wind'
+            df_meta['product_type'] = 'stock'
+            df_meta.reset_index(names='code', inplace=True)
 
-        # self.upload_joined_products_wide_table(full_name_keyword='定期开放')
+            self.adjust_seq_val(seq_name='product_static_info_internal_id_seq')
+            for _, row in df_meta.iterrows():
+                self.insert_product_static_info(row)
 
-    def logic_reopened_cyq_funds(self):
-        """
-        1. 获取full_name中带有'持有期'、不包含债的全部基金
-        2. 需要获取的数据包括：历次开放申赎的日期、申赎前后的份额变动、最新日期的基金规模
-        """
-        cyq_funds_df = self.select_rows_by_column_strvalue(
-            table_name='product_static_info', column_name='fund_fullname',
-            search_value='持有期',
-            selected_columns=['code', 'chinese_name', 'fund_fullname', 'fundfounddate', 'issueshare'],
-            filter_condition="product_type='fund' AND fund_fullname NOT LIKE '%债%'")
-
-        today_updated = self.is_markets_daily_long_updated_today(field='nav_adj', product_name_key_word='持有')
-        if not today_updated:
-            for _, row in cyq_funds_df.iterrows():
-                downloaded = w.wsd(row['code'],
-                                   "NAV_adj,fund_fundscale,fund_info_name,fund_minholdingperiod",
-                                   self.all_dates_str[-1], self.all_dates_str[-1], "unit=1", usedf=True)[1]
-                downloaded['fundfounddate'] = row['fundfounddate']
-                downloaded['issueshare'] = row['issueshare']
-                downloaded['product_name'] = row['chinese_name']
-                downloaded = downloaded.reset_index().rename(columns={'index': 'code', 'NAV_ADJ': 'nav_adj',
-                                                                      'FUND_FUNDSCALE': 'fund_fundscale',
-                                                                      'FUND_MINHOLDINGPERIOD': 'fund_minholdingperiod'})
-                upload_value = downloaded[['product_name', 'nav_adj', 'fund_fundscale', 'fund_minholdingperiod']].melt(
-                    id_vars=['product_name'], var_name='field', value_name='value')
-                upload_value['date'] = self.all_dates[-1]
-                upload_value.dropna().to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
-
-        # self.upload_joined_products_wide_table(full_name_keyword='持有期')
+    # def logic_reopened_dk_funds(self):
+    #     """
+    #     1. 获取full_name中带有'定期开放'、不包含债的全部基金
+    #     2. 需要获取的数据包括：历次开放申赎的日期、申赎前后的份额变动、最新日期的基金规模
+    #     """
+    #     dk_funds_df = self.select_rows_by_column_strvalue(table_name='product_static_info', column_name='fund_fullname',
+    #                                                       search_value='定期开放',
+    #                                                       selected_columns=['code', 'chinese_name'],
+    #                                                       filter_condition="product_type='fund' AND fund_fullname NOT LIKE '%债%'")
+    #
+    #     # 因为定开基金总数不多，因此对这些定开基金统一更新
+    #     today_updated = self.is_markets_daily_long_updated_today(field='nav_adj', product_name_key_word='定开')
+    #     if not today_updated:
+    #         for _, row in dk_funds_df.iterrows():
+    #             downloaded = w.wsd(row['code'],
+    #                                "NAV_adj,fund_expectedopenday,netasset_total,fund_fundscale,fund_info_name",
+    #                                self.tradedays_str[-1], self.tradedays_str[-1], "unit=1", usedf=True)[1]
+    #             downloaded = downloaded.reset_index().rename(columns={'index': 'code', 'NAV_ADJ': 'nav_adj',
+    #                                                                   'FUND_EXPECTEDOPENDAY': 'fund_expectedopenday',
+    #                                                                   'FUND_FUNDSCALE': 'fund_fundscale',
+    #                                                                   'NETASSET_TOTAL': 'netasset_total'})
+    #             downloaded['product_name'] = row['chinese_name']
+    #             if downloaded.iloc[0]['code'] == 0:
+    #                 print(f"{row['chinese_name']} {row['code']} 未在w.wsd查询到数据，skipping")
+    #                 continue
+    #             upload_date_value = downloaded[['product_name', 'fund_expectedopenday']].melt(id_vars=['product_name'],
+    #                                                                                           var_name='field',
+    #                                                                                           value_name='date_value')
+    #             upload_value = downloaded[['product_name', 'nav_adj', 'fund_fundscale', 'netasset_total']].melt(
+    #                 id_vars=['product_name'], var_name='field', value_name='value')
+    #             upload_date_value['date'] = self.all_dates[-1]
+    #             upload_value['date'] = self.all_dates[-1]
+    #             upload_date_value.dropna().to_sql('markets_daily_long', self.alch_engine, if_exists='append',
+    #                                               index=False)
+    #             upload_value.dropna().to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
+    #
+    #     # self.upload_joined_products_wide_table(full_name_keyword='定期开放')
+    #
+    # def logic_reopened_cyq_funds(self):
+    #     """
+    #     1. 获取full_name中带有'持有期'、不包含债的全部基金
+    #     2. 需要获取的数据包括：历次开放申赎的日期、申赎前后的份额变动、最新日期的基金规模
+    #     """
+    #     cyq_funds_df = self.select_rows_by_column_strvalue(
+    #         table_name='product_static_info', column_name='fund_fullname',
+    #         search_value='持有期',
+    #         selected_columns=['code', 'chinese_name', 'fund_fullname', 'fundfounddate', 'issueshare'],
+    #         filter_condition="product_type='fund' AND fund_fullname NOT LIKE '%债%'")
+    #
+    #     today_updated = self.is_markets_daily_long_updated_today(field='nav_adj', product_name_key_word='持有')
+    #     if not today_updated:
+    #         for _, row in cyq_funds_df.iterrows():
+    #             downloaded = w.wsd(row['code'],
+    #                                "NAV_adj,fund_fundscale,fund_info_name,fund_minholdingperiod",
+    #                                self.all_dates_str[-1], self.all_dates_str[-1], "unit=1", usedf=True)[1]
+    #             downloaded['fundfounddate'] = row['fundfounddate']
+    #             downloaded['issueshare'] = row['issueshare']
+    #             downloaded['product_name'] = row['chinese_name']
+    #             downloaded = downloaded.reset_index().rename(columns={'index': 'code', 'NAV_ADJ': 'nav_adj',
+    #                                                                   'FUND_FUNDSCALE': 'fund_fundscale',
+    #                                                                   'FUND_MINHOLDINGPERIOD': 'fund_minholdingperiod'})
+    #             upload_value = downloaded[['product_name', 'nav_adj', 'fund_fundscale', 'fund_minholdingperiod']].melt(
+    #                 id_vars=['product_name'], var_name='field', value_name='value')
+    #             upload_value['date'] = self.all_dates[-1]
+    #             upload_value.dropna().to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
+    #
+    #     # self.upload_joined_products_wide_table(full_name_keyword='持有期')
 
 
 class AllFundsInfoUpdater:
@@ -752,7 +789,7 @@ class RepoUpdater:
         historic_repo_stats = pd.read_excel(self.db_updater.base_config.excels_path + '股票回购统计2000-202309.xlsx', header=0,
                                   engine='openpyxl')
         historic_stk_codes = historic_repo_stats.dropna(subset='证券简称')[['证券代码', '证券简称']]
-        self._process_meta_data(historic_stk_codes)
+        self.db_updater.process_stk_meta_data(historic_stk_codes)
 
         historic_stk_codes_list = historic_repo_stats.dropna(subset='证券简称')['证券代码'].to_list()
 
@@ -785,7 +822,7 @@ class RepoUpdater:
         all_stks = w.wset("sectorconstituent",f"date={self.db_updater.tradedays_str[-1]};sectorid=a001010100000000",
                                 usedf=True)[1]
         all_stks_info = all_stks[['wind_code', 'sec_name']].rename(columns={'wind_code': '证券代码', 'sec_name': '证券简称'})
-        self._process_meta_data(all_stks_info)
+        self.db_updater.process_stk_meta_data(all_stks_info)
 
         # update new data
         all_stks_codes_list = all_stks['wind_code'].tolist()
@@ -805,40 +842,7 @@ class RepoUpdater:
 
             df_upload.to_sql('markets_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
 
-    def _process_meta_data(self, stk_info_to_add):
-        # check all historic_stocks in meta table (and have industry label，检查过了基本都有)
-        existing_stks_df = self.db_updater.select_existing_values_in_target_column('product_static_info',
-                                                                                 ['code', 'stk_industry_cs', 'chinese_name'],
-                                                                                 ('product_type', 'stock'))
-        existing_value = existing_stks_df['code'].tolist()
-        missing_value = set(stk_info_to_add['证券代码'].tolist()) - set(existing_value)
 
-        stk_info_to_add = pd.DataFrame(stk_info_to_add)
-        df_meta = stk_info_to_add[~stk_info_to_add['证券代码'].isin(existing_value)]
-        if df_meta.empty:
-            pass
-        else:
-            df_meta = df_meta.set_index('证券代码').rename(columns={'A': 'B'})
-            for code in missing_value:
-                date = self.db_updater.tradedays_str[-1]
-                print(f'Wind downloading industry_citic for {code} on {date}')
-                info_df = w.wsd(code, "industry_citic", f'{date}', f'{date}', "unit=1;industryType=1",
-                                usedf=True)[1]
-                if info_df.empty:
-                    print(f"Missing data for {code} on {date}, no data downloaded for industry_citic")
-                    continue
-                industry = info_df.iloc[0]['INDUSTRY_CITIC']
-                df_meta.loc[code, 'stk_industry_cs'] = industry
-                df_meta.loc[code, 'chinese_name'] = stk_info_to_add[stk_info_to_add['证券代码'] == code]['证券简称'].values[0]
-                df_meta.loc[code, 'update_date'] = date
-            # 上传metadata
-            df_meta['source'] = 'wind'
-            df_meta['product_type'] = 'stock'
-            df_meta.reset_index(names='code', inplace=True)
-
-            self.db_updater.adjust_seq_val(seq_name='product_static_info_internal_id_seq')
-            for _, row in df_meta.iterrows():
-                self.db_updater.insert_product_static_info(row)
 
 
 class MajorHolderUpdater:
@@ -1145,21 +1149,68 @@ class MarginTradeByIndustryUpdater:
 
 class BonusUpdater:
     """
-    股票回购
-    wind - 内地股票专题统计 - 公司研究 - 重要持有人 - 股票回购明细，下载得到 股票回购明细.xlsx。回购目的剔除盈利补偿，回购进度剔除停止实施、失效、未通过
-    因为数据日常动态更新，所以要考虑去重
-    同一家公司发出的多条公告，wind只统计最后一条。
-    回购进展更新后，如何去重？
-    Metabase统计时一定是按最新公告日期来统计。
-    如果新的文件中(代码-回购方式-预计回购数量)组合在数据库中有记录，则更新(公告日期-已回购金额)
-    之所以用‘预计回购数量’而不是‘预计回购金额’来匹配是因为后者有太多空值。
-    对于空的‘预计回购金额’，根据‘预计回购数量’乘以当日股价进行估算。
-    虽然记录‘预计回购金额’，但Metabase不应针对它进行统计，因为没有对股票市场资金流产生影响。
-    Metabase统计的是已回购金额，对于空值，用已回购数量乘以当日股价估算。
+    股票分红
     """
     def __init__(self, db_updater):
         self.db_updater = db_updater
 
     def update_bonus(self):
-        pass
+        start = self.db_updater.tradedays_str[-20]
+        end = self.db_updater.tradedays_str[-1]
+        print(f'Wind downloading wset("bonus",) from {start} to {end}')
+        downloaded_df = w.wset("bonus",f"orderby=record_date;startdate={start};enddate={end};"
+                                       "sectorid=a001010100000000;"
+                                       "field=wind_code,sec_name,dividendsper_share_aftertax,share_benchmark,"
+                                       "shareregister_date",
+                               usedf=True)[1]
+        if downloaded_df.empty:
+            print(f"Missing data from {start} to {end}, no data downloaded for update_bonus")
+            return
+        downloaded_df['分红金额(元)'] = downloaded_df['dividendsper_share_aftertax'] * downloaded_df['share_benchmark'] * 1e4
+        downloaded_df = downloaded_df.dropna(subset='dividendsper_share_aftertax')
 
+        # 数据库中读取分红数据，从downloaded_df中剔除掉已存在的条目
+        existing_record = self.db_updater.select_df_from_long_table(table_name='markets_daily_long',
+                                                                    field='分红金额(元)',
+                                                                    where=f"date BETWEEN '{start}' AND '{end}'")
+        existing_record = existing_record[['code', 'date']]
+        downloaded_df = downloaded_df.rename(columns={'wind_code': 'code',
+                                                      'sec_name': 'product_name',
+                                                      'shareregister_date': 'date'
+                                                      })
+
+        # 使用 merge 函数标记 downloaded_df 中已存在于 existing_record 的行
+        existing_record['date'] = pd.to_datetime(existing_record['date'])
+        merged_df = downloaded_df.merge(existing_record, on=['code', 'date'], how='left', indicator=True,
+                                        suffixes=('', '_y'))
+        # 选择那些不在 existing_record 中的行
+        filtered_df = merged_df[merged_df['_merge'] == 'left_only']
+        # 删除额外添加的列（如果有）
+        filtered_df = filtered_df[['date', 'product_name', 'code', '分红金额(元)']]
+
+        if filtered_df.empty:
+            print('No new bonus records needing upload.')
+            return
+        else:
+            df_upload = filtered_df.melt(id_vars=['date', 'product_name', 'code'], var_name='field',
+                                            value_name='value').dropna()
+            print(f'uploading new bonus records...length={len(df_upload)}')
+            df_upload.to_sql('markets_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
+
+    def upload_bonus_history(self):
+        historic_bonus = pd.read_excel(self.db_updater.base_config.excels_path + '历史分红.xlsx', header=6,
+                                  engine='openpyxl')
+        # 剔除只转增不分红的记录，提出少许的重复公告条目
+        historic_bonus = historic_bonus.rename(columns={'交易代码': '证券代码', '名称': '证券简称'}).dropna(subset='每股派息(税后)')
+        historic_bonus = historic_bonus.drop_duplicates(subset=['证券代码', '股权登记日'])
+
+        historic_stk_codes = historic_bonus[['证券代码', '证券简称']].drop_duplicates()
+        self.db_updater.process_stk_meta_data(historic_stk_codes)
+
+        historic_bonus['分红金额(元)'] = historic_bonus['每股派息(税后)'] * historic_bonus['基准股本(万股)'] * 1e4
+        historic_bonus = historic_bonus[['证券代码', '证券简称', '分红金额(元)', '股权登记日']].rename(columns={
+            '证券代码': 'code', '证券简称': 'product_name', '股权登记日': 'date'})
+        df_upload = historic_bonus.melt(id_vars=['date', 'product_name', 'code'], var_name='field',
+                                   value_name='value').dropna()
+        print('uploading bonus_history...')
+        df_upload.to_sql('markets_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)

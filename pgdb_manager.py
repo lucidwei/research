@@ -213,7 +213,8 @@ class PgDbManager:
             existing_values = sorted(set(row[0] for row in result if row[0] is not None))
             return existing_values
 
-    def select_existing_dates_from_long_table(self, table_name, metric_name=None, product_name=None, code=None, field=None,
+    def select_existing_dates_from_long_table(self, table_name, metric_name=None, product_name=None, code=None,
+                                              field=None,
                                               return_df=False):
         """
         从数据库中获取现有的日期列表。
@@ -230,6 +231,25 @@ class PgDbManager:
         - ValueError：如果在表格中既没有'metric_name'列也没有'product_name'列。
 
         """
+        # 使用 select_df_from_long_table 函数获取数据
+        df = self.select_df_from_long_table(table_name, metric_name, product_name, code, field)
+
+        # 从获取的数据中提取日期列
+        existing_dates_df = df['date'].unique()
+
+        if return_df:
+            return existing_dates_df
+        else:
+            return existing_dates_df.tolist()
+
+    def select_df_from_long_table(self, table_name, metric_name=None, product_name=None, code=None, field=None,
+                                  where=None) -> pd.DataFrame:
+        """
+        参数：
+        - table_name：表名，要从中获取日期列表的表格名称。
+        - metric_name：度量名称，要筛选的度量名称（可选）。对于记录金融产品的table，会自动转换为搜索product_name
+        - field：字段名称，要筛选的字段名称（可选）。
+        """
         columns = self.alch_conn.execute(text(f"SELECT * FROM {table_name} LIMIT 0")).keys()
 
         conditions = []
@@ -242,16 +262,15 @@ class PgDbManager:
             conditions.append(f"code = '{code}'")
         if field and 'field' in columns:
             conditions.append(f"field = '{field}'")
+        if where:
+            conditions.append(where)
 
         condition = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
-        existing_dates_df = self.alch_conn.execute(text(f"SELECT date FROM {table_name} {condition}")).fetchall()
-        existing_dates = [row[0] for row in existing_dates_df]
+        result = self.alch_conn.execute(text(f"SELECT * FROM {table_name} {condition}")).fetchall()
+        df = pd.DataFrame(result, columns=[col for col in columns])
 
-        if return_df:
-            return existing_dates_df
-        else:
-            return existing_dates
+        return df
 
     def select_column_from_joined_table(self, target_table_name: str, target_join_column: str, join_table_name: str,
                                         join_column: str, selected_column: str, filter_condition: str = ""):
