@@ -79,18 +79,21 @@ def get_tradedays(start, end):
     if start > end:
         start, end = end, start
 
-    counts = 0
-    tradedays = []
-    while True:
-        if start > end:
-            break
-        if is_holiday(start) or start.weekday() == 5 or start.weekday() == 6:
-            start += timedelta(days=1)
-            continue
-        counts += 1
-        tradedays.append(start)
-        start += timedelta(days=1)
-    # return sorted(tradedays, reverse=True)
+    tradedays_df = w.tdays(start, end, "", usedf=True)[1]
+    tradedays = tradedays_df.iloc[:, 0].dt.date.tolist()
+
+    # counts = 0
+    # tradedays = []
+    # while True:
+    #     if start > end:
+    #         break
+    #     if is_holiday(start) or start.weekday() == 5 or start.weekday() == 6:
+    #         start += timedelta(days=1)
+    #         continue
+    #     counts += 1
+    #     tradedays.append(start)
+    #     start += timedelta(days=1)
+    # # return sorted(tradedays, reverse=True)
     return sorted(tradedays)
 
 

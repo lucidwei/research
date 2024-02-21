@@ -4,7 +4,7 @@
 # FileName: base_config.py
 # Software: PyCharm
 import platform, os, datetime
-from utils import get_tradedays, is_date, get_month_end_dates, split_tradedays_into_weekly_ranges
+from utils import get_tradedays, is_date, get_month_end_dates, split_tradedays_into_weekly_ranges, check_wind
 import configparser
 import pandas as pd
 
@@ -19,6 +19,7 @@ class BaseConfig:
     def __init__(self, project: str, auto_save_fig: bool = True):
         self.auto_save_fig = auto_save_fig
         self.project = project
+        check_wind()
         self.config_paths()
         self.config_dates()
         self.config_db()
