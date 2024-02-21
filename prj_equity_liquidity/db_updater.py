@@ -5,6 +5,7 @@
 # Software: PyCharm
 import datetime
 import os
+import re
 import numpy as np
 import pandas as pd
 from datetime import timedelta
@@ -163,7 +164,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
                 print(f'Wind downloading industry_citic for {code} on {date}')
                 info_df = w.wsd(code, "industry_citic", f'{date}', f'{date}', "unit=1;industryType=1",
                                 usedf=True)[1]
-                if info_df.empty:
+                if info_df.empty or 'INDUSTRY_CITIC' not in info_df:
                     print(f"Missing data for {code} on {date}, no data downloaded for industry_citic")
                     continue
                 industry = info_df.iloc[0]['INDUSTRY_CITIC']
@@ -452,6 +453,8 @@ class AllFundsInfoUpdater:
             downloaded_df = w.wsd(code, "issue_date,fund_setupdate,issue_unit",
                                   self.db_updater.tradedays_str[-1], self.db_updater.tradedays_str[-1], "", usedf=True)[
                 1]
+            if downloaded_df.shape[0] * downloaded_df.shape[1] == 1:
+                continue
             # 解析下载的数据并上传至product_static_info
             upload_df = downloaded_df.reset_index().rename(
                 columns={'index': 'code', 'ISSUE_DATE': 'buystartdate', 'FUND_SETUPDATE': 'fundfounddate',
@@ -734,7 +737,7 @@ class PriceValuationUpdater:
                     f'Downloading and uploading close,val_pe_nonnegative,dividendyield2,mkt_cap_ashare for {code} {date}')
                 df = w.wsd(code, "close,val_pe_nonnegative,dividendyield2,mkt_cap_ashare", date,
                            date, "unit=1", usedf=True)[1]
-                if df.empty:
+                if df.empty or 'CLOSE' not in df.columns:
                     print(
                         f"Missing data for {date} {code}, no data downloaded for _upload_missing_data_price_valuation")
                     continue
@@ -843,8 +846,6 @@ class RepoUpdater:
             df_upload.to_sql('markets_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
 
 
-
-
 class MajorHolderUpdater:
     def __init__(self, db_updater):
         self.db_updater = db_updater
@@ -918,11 +919,14 @@ class MajorHolderUpdater:
                 print(f'Wind downloading industry_citic for {code} on {date}')
                 info_df = w.wsd(code, "industry_citic", f'{date}', f'{date}', "unit=1;industryType=1",
                                 usedf=True)[1]
-                if info_df.empty:
+                if info_df.empty or 'INDUSTRY_CITIC' not in info_df.columns:
                     print(f"Missing data for {code} on {date}, no data downloaded for industry_citic")
                     continue
                 industry = info_df.iloc[0]['INDUSTRY_CITIC']
                 df_meta.loc[i, 'stk_industry_cs'] = industry
+            if 'stk_industry_cs' not in df_meta.columns:
+                continue
+
             # 上传metadata
             df_meta['source'] = 'wind'
             df_meta['type_identifier'] = 'major_holder'
@@ -968,11 +972,13 @@ class MajorHolderUpdater:
                 print(f'Wind downloading mkt_cap_ard for {code} on {date}')
                 info_df = w.wsd(code, "mkt_cap_ard", f'{date}', f'{date}', "unit=1;industryType=1",
                                 usedf=True)[1]
-                if info_df.empty:
+                if info_df.empty or 'MKT_CAP_ARD' not in info_df.columns:
                     print(f"Missing data for {code} on {date}, no data downloaded for mkt_cap_ard")
                     continue
                 mkt_cap = info_df.iloc[0]['MKT_CAP_ARD']
                 selected_df.loc[i, '总市值'] = mkt_cap
+            if '总市值' not in selected_df:
+                continue
 
             # 计算增减持金额
             df_calculated = selected_df.copy()
