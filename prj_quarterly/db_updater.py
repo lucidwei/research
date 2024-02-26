@@ -24,6 +24,10 @@ class DatabaseUpdater(PgDbUpdaterBase):
     def run_all_updater(self):
         pass
 
+    @property
+    def quarterly_dates(self):
+        pass
+
 
 class StkShareholdersUpdater:
     """
@@ -65,6 +69,7 @@ class StkWSDUpdater:
 class FundHoldsUpdater:
     """
     注意区分基金类别：主动管理、ETF
+
     基金重仓：前十大持股
     """
     def __init__(self, db_updater):
@@ -82,6 +87,7 @@ class FundHoldsUpdater:
 class FundPositionUpdater:
     """
     基金仓位：WSD 股票、债券、现金、其它占基金资产总值
+    基金规模：用于加权
     """
     def __init__(self, db_updater):
         self.db_updater = db_updater
@@ -97,9 +103,12 @@ class FundPositionUpdater:
 
 class IndicesComponentUpdater:
     """
-    要设计新表还是记录在quarterly_long？
-    各指数成分占比，行业占比
-    热门指数，宽基、概念（红利）
+    wset-板块与指数-板块成分
+    基金：主动管理（普通股票、偏股混合、灵活配置）
+    wset-板块与指数-指数权重
+    指数：沪深300、万德全A、中证红利等热门的宽基、概念（红利）
+    各指数个股成分，行业占比
+    不设计新表，记录在quarterly_long
     """
     def __init__(self, db_updater):
         self.db_updater = db_updater
@@ -115,7 +124,7 @@ class IndicesComponentUpdater:
 
 class OldFundsPurchaseUpdater:
     """
-    基金仓位：WSD 股票、债券、现金、其它占基金资产总值
+    老基金申购赎回
     """
     def __init__(self, db_updater):
         self.db_updater = db_updater
