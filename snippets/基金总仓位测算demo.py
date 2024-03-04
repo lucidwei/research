@@ -370,6 +370,7 @@ obj = CalcFundPosition(base_config)
 state_estimates_post, return_errors = obj.post_constraint_kf(obj.industry_position_series['22q4'], obj.industry_return, obj.total_return)
 return_errors_abs_mean = sum(abs(x) for x in return_errors.tolist()) / len(return_errors)
 active_adjustments = obj.calculate_active_adjustment(state_estimates_post, obj.industry_return)
+active_adjustments_amount = active_adjustments * obj.quarterly_positions['22q4']['资产净值(亿元)']
 
 state_estimates_noise, return_errors_noise = obj.generate_noisy_holdings(obj.industry_position_series['22q4'], obj.industry_return, obj.total_return)
 return_errors_noise_abs_mean = sum(abs(x) for x in return_errors_noise.tolist()) / len(return_errors_noise)
@@ -392,11 +393,17 @@ error = res_estimate - res_real
 error_abs = error.abs().mean()
 
 
-file_path = rf"D:\WPS云盘\WPS云盘\工作-麦高\数据库相关\基金仓位测算\全基金仓位测算自22q4-结果评估.xlsx"
+file_path = rf"D:\WPS云盘\WPS云盘\工作-麦高\数据库相关\基金仓位测算\全基金仓位测算自22q4-结果评估对比.xlsx"
 with pd.ExcelWriter(file_path) as writer:
-    state_estimates_post.to_excel(writer, sheet_name='Kf', index=True)
-    res_start.sort_values(ascending=False).to_excel(writer, sheet_name='22q4实际仓位', index=True)
-    res_real.sort_values(ascending=False).to_excel(writer, sheet_name='23q2实际仓位', index=True)
-    res_estimate = res_estimate.sort_values(ascending=False)
-    res_estimate.to_excel(writer, sheet_name='23q2测算仓位', index=True)
-    return_errors.to_excel(writer, sheet_name='日度收益误差', index=True) # Lasso和Kf(还有随机噪声数据)做一个对比
+    state_estimates_post.to_excel(writer, sheet_name='卡尔曼滤波结果', index=True)
+    active_adjustments_amount.to_excel(writer, sheet_name='主动调仓资金流(亿元)', index=True)
+    # 使用 pd.concat 横向合并这些 Series
+    res_start_sorted = res_start.sort_values(ascending=False).reset_index(name='22q4实际仓位')
+    res_real_sorted = res_real.sort_values(ascending=False).reset_index(name='23q2实际仓位')
+    res_estimate_sorted = res_estimate.sort_values(ascending=False).reset_index(name='23q2测算仓位')
+    combined_df = pd.concat([res_start_sorted, res_real_sorted, res_estimate_sorted], axis=1)
+    combined_df.to_excel(writer, sheet_name='仓位截面(排序后)', index=False)
+
+    return_errors.to_excel(writer, sheet_name='日度收益误差', index=True)
+    state_estimates_noise.to_excel(writer, sheet_name='噪声结果', index=True)
+    state_estimates_lasso.to_excel(writer, sheet_name='lasso结果', index=True)
