@@ -236,9 +236,8 @@ class CalcFundPosition(PgDbUpdaterBase):
 
         # 准备观测数据
         measurements = fund_daily_return['日度收益率'].dropna().to_numpy()
-        print(np.var(measurements))
 
-        alpha = 0.2  # 平滑系数，用于调整当前估计与前一天估计的权重
+        alpha = 0.9  # 平滑系数，用于调整当前估计与前一天估计的权重
         previous_state = kf.x.copy()
         state_estimates = []
         return_errors = []
@@ -301,6 +300,45 @@ class CalcFundPosition(PgDbUpdaterBase):
 
         return noisy_holdings, return_errors_df
 
+    def dynamic_lasso_estimate_positions(self, industry_daily_return, fund_daily_return, initial_period=10, window_size=30, alpha=3e-6):
+        # 确保数据按日期对齐并去除缺失值
+        data = pd.concat([fund_daily_return['日度收益率'], industry_daily_return], axis=1).dropna()
+
+        # 初始化存储每日估算持仓占比的DataFrame
+        daily_positions = pd.DataFrame(index=data.index, columns=industry_daily_return.columns)
+
+        # 遍历每一天，动态增加样本点进行Lasso回归
+        for i in range(initial_period, len(data)):
+            # 确定滚动窗口的起始和结束位置
+            start_idx = max(0, i - window_size)
+            end_idx = i
+
+            # 使用当前窗口内的数据
+            Y = data.iloc[start_idx:end_idx, 0].values  # 基金的日度收益率
+            X = data.iloc[start_idx:end_idx, 1:].values  # 各行业的日度收益率
+
+            # 初始化Lasso回归模型
+            lasso = Lasso(alpha=alpha, max_iter=10000)
+
+            # 拟合模型
+            lasso.fit(X, Y)
+
+            # 获取系数（即每个行业对基金收益率的影响）
+            coefficients = lasso.coef_
+
+            # 更新当天的持仓占比估算结果
+            daily_positions.iloc[i] = coefficients
+
+        # 处理持仓占比数据，确保所有系数非负且和为1
+        daily_positions = daily_positions.apply(lambda x: np.maximum(x, 0), axis=1)  # 确保非负
+        daily_positions = daily_positions.div(daily_positions.sum(axis=1), axis=0)  # 归一化
+
+        estimated_returns = (daily_positions * industry_daily_return).sum(axis=1)
+        return_errors = fund_daily_return['日度收益率'] - estimated_returns
+        return_errors_df = pd.Series(return_errors*100, index=fund_daily_return.index, name='日度收益率误差')
+
+        return daily_positions, return_errors_df
+
     def calculate_active_adjustment(self, state_estimates_df, industry_daily_return):
         # 初始化主动调仓的DataFrame
         active_adjustments = pd.DataFrame(0, index=state_estimates_df.index, columns=state_estimates_df.columns)
@@ -335,6 +373,10 @@ active_adjustments = obj.calculate_active_adjustment(state_estimates_post, obj.i
 
 state_estimates_noise, return_errors_noise = obj.generate_noisy_holdings(obj.industry_position_series['22q4'], obj.industry_return, obj.total_return)
 return_errors_noise_abs_mean = sum(abs(x) for x in return_errors_noise.tolist()) / len(return_errors_noise)
+
+state_estimates_lasso, return_errors_lasso = obj.dynamic_lasso_estimate_positions(obj.industry_return, obj.total_return)
+return_errors_lasso_abs_mean = sum(abs(x) for x in return_errors_lasso.tolist()) / len(return_errors_lasso)
+
 # return_abs_mean = 100*sum(abs(x) for x in obj.total_return['日度收益率'].tolist()) / len(obj.total_return['日度收益率'])
 
 res_start = obj.industry_position_series['22q4']
