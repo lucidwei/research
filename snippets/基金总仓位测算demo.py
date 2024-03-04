@@ -24,6 +24,10 @@ class CalcFundPosition(PgDbUpdaterBase):
         self.quarterly_dates_str = [str(x) for x in self.quarterly_dates]
 
     def load_stock_positions(self):
+        """
+        数据源：wind-基金-资产配置-资产配置(汇总)
+        要把左下角调整为（普通股票、偏股混合、灵活配置）
+        """
         pattern = rf"D:\WPS云盘\WPS云盘\工作-麦高\研究trial\资产配置(汇总)*.xlsx"
 
         # 使用glob.glob找到所有匹配的文件
@@ -60,6 +64,10 @@ class CalcFundPosition(PgDbUpdaterBase):
         self.stock_positions = stock_positions
 
     def load_industry_positions(self):
+        """
+        数据源：wind-基金-资产配置-行业分布(汇总 第三方)
+        要把左下角调整为（普通股票、偏股混合、灵活配置）
+        """
         pattern = rf"D:\WPS云盘\WPS云盘\工作-麦高\研究trial\行业分布(汇总 第三方)*.xlsx"
 
         # 使用glob.glob找到所有匹配的文件
@@ -132,111 +140,112 @@ class CalcFundPosition(PgDbUpdaterBase):
         self.industry_return = self.行业日度收益率.loc[self.行业日度收益率.index > self.初始持仓日期]
         self.total_return = self.total_return.loc[self.total_return.index > self.初始持仓日期]
 
-def estimate_R(fund_daily_return):
-    # 计算基金日度收益率的方差
-    R = np.var(fund_daily_return)
-    return np.array([[R]])  # 返回一个形状为1x1的矩阵
+    def estimate_R(self, fund_daily_return):
+        # 计算基金日度收益率的方差
+        R = np.var(fund_daily_return)
+        return np.array([[R]])  # 返回一个形状为1x1的矩阵
 
 
-def adjust_Q_for_low_initial_holdings(Q, initial_holdings_ratio, threshold=0.01, adjustment_factor=100):
-    """
-    调整过程噪声协方差Q以增加初始持仓占比较少的行业的变化空间。
+    def adjust_Q_for_low_initial_holdings(self, Q, initial_holdings_ratio, threshold=0.01, adjustment_factor=100):
+        """
+        调整过程噪声协方差Q以增加初始持仓占比较少的行业的变化空间。
 
-    :param Q: 原始的过程噪声协方差矩阵。
-    :param initial_holdings_ratio: 初始持仓比例，一个字典或类似结构，键为行业名称，值为比例。
-    :param threshold: 用于判断持仓占比是否“较少”的阈值。
-    :param adjustment_factor: 调整因子，增加的Q值将乘以此因子。
-    :return: 调整后的Q矩阵。
-    """
-    for i in range(len(Q)):
-        if initial_holdings_ratio[i] < threshold:
-            Q[i, i] *= adjustment_factor
-    return Q
-
-
-def estimate_Q(industry_daily_return, initial_holdings_ratio):
-    """
-    根据行业日度收益率计算过程噪声协方差矩阵，并调整初始持仓占比较少的行业。
-
-    :param industry_daily_return: 行业日度收益率的DataFrame。
-    :param initial_holdings_ratio: 初始持仓比例，一个字典或DataFrame列，键/索引为行业名称，值为比例。
-    :return: 调整后的过程噪声协方差矩阵Q。
-    """
-    # 计算行业日度收益率的协方差矩阵
-    cov_matrix = industry_daily_return.cov()
-    # 取对角线元素形成对角矩阵，并乘以小系数
-    Q = np.diag(np.diag(cov_matrix)) * 0.01
-    # 调整Q以反映初始持仓占比较少的行业
-    Q = adjust_Q_for_low_initial_holdings(Q, initial_holdings_ratio)
-    return Q
+        :param Q: 原始的过程噪声协方差矩阵。
+        :param initial_holdings_ratio: 初始持仓比例，一个字典或类似结构，键为行业名称，值为比例。
+        :param threshold: 用于判断持仓占比是否“较少”的阈值。
+        :param adjustment_factor: 调整因子，增加的Q值将乘以此因子。
+        :return: 调整后的Q矩阵。
+        """
+        for i in range(len(Q)):
+            if initial_holdings_ratio[i] < threshold:
+                Q[i, i] *= adjustment_factor
+        return Q
 
 
-def post_constraint_kf(initial_holdings_ratio, industry_daily_return, fund_daily_return):
-    industry_amount = len(industry_daily_return.columns)
+    def estimate_Q(self, industry_daily_return, initial_holdings_ratio):
+        """
+        根据行业日度收益率计算过程噪声协方差矩阵，并调整初始持仓占比较少的行业。
 
-    aligned_holdings_ratio = initial_holdings_ratio.reindex(industry_daily_return.columns, fill_value=0)
+        :param industry_daily_return: 行业日度收益率的DataFrame。
+        :param initial_holdings_ratio: 初始持仓比例，一个字典或DataFrame列，键/索引为行业名称，值为比例。
+        :return: 调整后的过程噪声协方差矩阵Q。
+        """
+        # 计算行业日度收益率的协方差矩阵
+        cov_matrix = industry_daily_return.cov()
+        # 取对角线元素形成对角矩阵，并乘以小系数
+        Q = np.diag(np.diag(cov_matrix)) * 0.01
+        # 调整Q以反映初始持仓占比较少的行业
+        Q = self.adjust_Q_for_low_initial_holdings(Q, initial_holdings_ratio)
+        return Q
 
-    kf = KalmanFilter(dim_x=industry_amount, dim_z=1) # 初始化卡尔曼滤波器
 
-    # 定义初始状态 (行业持仓比例)
-    kf.x = aligned_holdings_ratio.to_numpy()
+    def post_constraint_kf(self, initial_holdings_ratio, industry_daily_return, fund_daily_return):
+        industry_amount = len(industry_daily_return.columns)
 
-    # 定义状态转移矩阵
-    kf.F = np.eye(industry_amount)  # transition_matrices
+        aligned_holdings_ratio = initial_holdings_ratio.reindex(industry_daily_return.columns, fill_value=0)
 
-    # # 定义状态协方差
-    # kf.P *= 1e-2
-    # # 由于我们假设没有噪声，这里将测量噪声和过程噪声设置得很小
-    # kf.R = np.array([[1e-4]])  # 观测噪声协方差
-    # kf.Q = np.eye(industry_amount) * 1e-6
+        kf = KalmanFilter(dim_x=industry_amount, dim_z=1) # 初始化卡尔曼滤波器
 
-    # 定义状态协方差
-    kf.P *= 1e-2
-    kf.R = estimate_R(fund_daily_return['日度收益率'])  # 根据基金日度收益率波动性动态估计观测噪声
-    kf.Q = estimate_Q(industry_daily_return, aligned_holdings_ratio)  # 根据行业持仓比例变化的历史波动性动态估计过程噪声
+        # 定义初始状态 (行业持仓比例)
+        kf.x = aligned_holdings_ratio.to_numpy()
 
-    # 准备观测数据
-    measurements = fund_daily_return['日度收益率'].dropna().to_numpy()
-    print(np.var(measurements))
+        # 定义状态转移矩阵
+        kf.F = np.eye(industry_amount)  # transition_matrices
 
-    alpha = 0.2  # 平滑系数，用于调整当前估计与前一天估计的权重
-    previous_state = kf.x.copy()
-    state_estimates = []
-    return_errors = []
-    for measurement, returns in zip(measurements, industry_daily_return.dropna().iterrows()):
-        _date, return_ = returns
+        # # 定义状态协方差
+        # kf.P *= 1e-2
+        # # 由于我们假设没有噪声，这里将测量噪声和过程噪声设置得很小
+        # kf.R = np.array([[1e-4]])  # 观测噪声协方差
+        # kf.Q = np.eye(industry_amount) * 1e-6
 
-        # 更新观测矩阵为当日各行业收益率
-        kf.H = return_.values.reshape(1, -1)
+        # 定义状态协方差
+        kf.P *= 1e-2
+        kf.R = self.estimate_R(fund_daily_return['日度收益率'])  # 根据基金日度收益率波动性动态估计观测噪声
+        kf.Q = self.estimate_Q(industry_daily_return, aligned_holdings_ratio)  # 根据行业持仓比例变化的历史波动性动态估计过程噪声
 
-        kf.predict()
-        kf.update(measurement)
+        # 准备观测数据
+        measurements = fund_daily_return['日度收益率'].dropna().to_numpy()
+        print(np.var(measurements))
 
-        smoothed_state = alpha * kf.x + (1 - alpha) * previous_state
-        previous_state = smoothed_state.copy()
+        alpha = 0.2  # 平滑系数，用于调整当前估计与前一天估计的权重
+        previous_state = kf.x.copy()
+        state_estimates = []
+        return_errors = []
+        for measurement, returns in zip(measurements, industry_daily_return.dropna().iterrows()):
+            _date, return_ = returns
 
-        # 应用约束：非负和总和为1
-        if (kf.x < 0).any():
-            print(f'{_date}出现负数, sum{sum(kf.x)}')
-        constrained_state = np.maximum(smoothed_state, 0.0001)  # 设置最小持仓比例
-        constrained_state /= np.sum(constrained_state)
+            # 更新观测矩阵为当日各行业收益率
+            kf.H = return_.values.reshape(1, -1)
 
-        return_error = (constrained_state * return_).sum() - measurement
-        print(f"return_error: {100*return_error}%")
+            kf.predict()
+            kf.update(measurement)
 
-        state_estimates.append(constrained_state.copy())
-        return_errors.append(100*round(return_error, 4))
+            smoothed_state = alpha * kf.x + (1 - alpha) * previous_state
+            previous_state = smoothed_state.copy()
 
-    dates = fund_daily_return.index
-    state_estimates_df = pd.DataFrame(state_estimates, index=dates, columns=industry_daily_return.columns)
+            # 应用约束：非负和总和为1
+            if (kf.x < 0).any():
+                print(f'{_date}出现负数, sum{sum(kf.x)}')
+            constrained_state = np.maximum(smoothed_state, 0.0001)  # 设置最小持仓比例
+            constrained_state /= np.sum(constrained_state)
 
-    return state_estimates_df, return_errors
+            return_error = (constrained_state * return_).sum() - measurement
+            print(f"return_error: {100*return_error}%")
+
+            state_estimates.append(constrained_state.copy())
+            return_errors.append(100*round(return_error, 4))
+
+        dates = fund_daily_return.index
+        state_estimates_df = pd.DataFrame(state_estimates, index=dates, columns=industry_daily_return.columns)
+        return_errors_df = pd.DataFrame(return_errors, index=dates, columns=industry_daily_return.columns)
+
+        return state_estimates_df, return_errors_df
 
 
 base_config = BaseConfig('quarterly')
 obj = CalcFundPosition(base_config)
-state_estimates_post, return_errors = post_constraint_kf(obj.industry_position_series['22q4'], obj.industry_return, obj.total_return)
-return_errors_abs_mean = sum(abs(x) for x in return_errors) / len(return_errors)
+state_estimates_post, return_errors = obj.post_constraint_kf(obj.industry_position_series['22q4'], obj.industry_return, obj.total_return)
+return_errors_abs_mean = sum(abs(x) for x in return_errors.tolist()) / len(return_errors)
 
 res_start = obj.industry_position_series['22q4']
 res_estimate = state_estimates_post.loc[pd.Timestamp('2023-06-30 00:00:00')]
@@ -255,3 +264,4 @@ with pd.ExcelWriter(file_path) as writer:
     res_real.sort_values(ascending=False).to_excel(writer, sheet_name='23q2实际仓位', index=True)
     res_estimate = res_estimate.sort_values(ascending=False)
     res_estimate.to_excel(writer, sheet_name='23q2测算仓位', index=True)
+    return_errors.to_excel(writer, sheet_name='日度收益误差', index=True) # Lasso和Kf(还有随机噪声数据)做一个对比
