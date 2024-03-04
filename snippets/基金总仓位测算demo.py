@@ -13,9 +13,9 @@ class CalcFundPosition(PgDbUpdaterBase):
     def __init__(self, base_config: BaseConfig):
         super().__init__(base_config)
         self.config_quarterly_dates()
+        self.load_asset_positions()
         self.load_industry_return()
         self.load_fund_return()
-        self.load_stock_positions()
         self.load_industry_positions()
         self.prepare_data()
 
@@ -23,19 +23,38 @@ class CalcFundPosition(PgDbUpdaterBase):
         self.quarterly_dates = w.tdays('2022-11-20', '2024-03-01', "Period=Q").Data[0]
         self.quarterly_dates_str = [str(x) for x in self.quarterly_dates]
 
-    def load_stock_positions(self):
+        # 四个季度的末尾月份，用于确定季度
+        date_dict = {}
+        quarter_end_months = {3: 'q1', 6: 'q2', 9: 'q3', 12: 'q4'}
+
+        # 遍历日期列表，并构建字典
+        for date in self.quarterly_dates:
+            # 获取年份的后两位和月份
+            year = date.year % 100  # 获取年份的后两位数字
+            month = date.month
+            # 确定季度
+            quarter = quarter_end_months.get(month, '')
+            # 构建字典的键
+            key = f"{year}{quarter}"
+            # 添加到字典中
+            date_dict[key] = date
+
+        self.quarterly_dates_dict = date_dict
+        self.初始持仓日期 = date_dict['22q4']
+
+    def load_asset_positions(self):
         """
         数据源：wind-基金-资产配置-资产配置(汇总)
         要把左下角调整为（普通股票、偏股混合、灵活配置）
         """
-        pattern = rf"D:\WPS云盘\WPS云盘\工作-麦高\研究trial\资产配置(汇总)*.xlsx"
+        pattern = rf"D:\WPS云盘\WPS云盘\工作-麦高\数据库相关\基金仓位测算\资产配置(汇总)*.xlsx"
 
         # 使用glob.glob找到所有匹配的文件
         files = glob.glob(pattern)
 
         # 创建一个空字典来存储DataFrame
         asset_position_dfs = {}
-        stock_positions = {}
+        quarterly_positions = {}
 
         # 遍历文件列表，读取每个文件到DataFrame，并以文件名作为字典的键
         for file in files:
@@ -57,18 +76,26 @@ class CalcFundPosition(PgDbUpdaterBase):
             # 设置第0列为索引
             df = df.set_index('资产科目')
             asset_position_dfs[key] = df  # 更新字典中的DataFrame
-            stock_positions[matched_string] = df.loc['股票', '占净值比(%)'] / 100  # 更新字典中的DataFrame
+
+            positions = {
+                'A股': df.loc['  其中：A股', '占净值比(%)'] / 100,
+                '港股': df.loc['股票', '占净值比(%)'] / 100 - df.loc['  其中：A股', '占净值比(%)'] / 100,
+                '债券': df.loc['债券', '占净值比(%)'] / 100,
+                '资产净值(亿元)': df.loc['资产净值', '市值(万元)'] / 1e4,
+            }
+            positions['现金'] = 1 - positions['A股'] - positions['港股'] - positions['债券']
+            quarterly_positions[matched_string] = positions
 
         # 打印出所有的DataFrame的键（即文件名），确认已成功加载
         print(asset_position_dfs.keys())
-        self.stock_positions = stock_positions
+        self.quarterly_positions = quarterly_positions
 
     def load_industry_positions(self):
         """
         数据源：wind-基金-资产配置-行业分布(汇总 第三方)
         要把左下角调整为（普通股票、偏股混合、灵活配置）
         """
-        pattern = rf"D:\WPS云盘\WPS云盘\工作-麦高\研究trial\行业分布(汇总 第三方)*.xlsx"
+        pattern = rf"D:\WPS云盘\WPS云盘\工作-麦高\数据库相关\基金仓位测算\行业分布(汇总 第三方)*.xlsx"
 
         # 使用glob.glob找到所有匹配的文件
         files = glob.glob(pattern)
@@ -104,14 +131,16 @@ class CalcFundPosition(PgDbUpdaterBase):
         self.industry_position_series = industry_position_series
 
     def load_industry_return(self):
-        file_path = rf"D:\WPS云盘\WPS云盘\工作-麦高\研究trial\单基金仓位测算22q4 - 副本.xlsx"
-        中报持仓 = pd.read_excel(file_path, sheet_name='中报持仓')
-        self.初始持仓日期 = 中报持仓.iloc[0, 1]
+        file_path = rf"D:\WPS云盘\WPS云盘\工作-麦高\数据库相关\基金仓位测算\行业指数收盘价.xlsx"
         行业收盘价 = pd.read_excel(file_path, sheet_name='行业收盘价')
         # 处理“行业收盘价”sheet
         行业收盘价.columns = 行业收盘价.iloc[1].str.replace("\(中信\)", "", regex=True)
         行业收盘价 = 行业收盘价.drop(index=[0, 1]).reset_index(drop=True)
-        行业收盘价 = 行业收盘价.rename(columns={行业收盘价.columns[1]: "日期"})
+        行业收盘价 = 行业收盘价.rename(columns={
+            行业收盘价.columns[1]: "日期",
+            '恒生科技': "港股",
+            '中债-总财富(总值)指数': "债券",
+        })
         行业收盘价 = 行业收盘价.dropna(axis=1).set_index('日期')
         行业收盘价 = 行业收盘价.apply(pd.to_numeric, errors='coerce')
         行业日度收益率 = 行业收盘价.pct_change()
@@ -122,7 +151,7 @@ class CalcFundPosition(PgDbUpdaterBase):
 
 
     def load_fund_return(self):
-        file_path = rf"D:\WPS云盘\WPS云盘\工作-麦高\研究trial\基金总净值.xlsx"
+        file_path = rf"D:\WPS云盘\WPS云盘\工作-麦高\数据库相关\基金仓位测算\基金总净值.xlsx"
         total_nav = pd.read_excel(file_path, header=2, index_col=0)
         total_nav = total_nav.apply(pd.to_numeric, errors='coerce')
         total_nav['日度收益率'] = total_nav['指数复合'].pct_change()
@@ -132,9 +161,11 @@ class CalcFundPosition(PgDbUpdaterBase):
     def prepare_data(self):
         # 仓位中加入现金
         for q_str in self.industry_position_series.keys():
-            stk_position = self.stock_positions[q_str]
-            self.industry_position_series[q_str] *= 0.01 * stk_position
-            self.industry_position_series[q_str]['现金'] = 1 - stk_position
+            assets_position = self.quarterly_positions[q_str]
+            self.industry_position_series[q_str] *= 0.01 * assets_position['A股']
+            self.industry_position_series[q_str]['港股'] = assets_position['港股']
+            self.industry_position_series[q_str]['债券'] = assets_position['债券']
+            self.industry_position_series[q_str]['现金'] = 1 - self.industry_position_series[q_str].sum()
 
         # 对齐日期
         self.industry_return = self.行业日度收益率.loc[self.行业日度收益率.index > self.初始持仓日期]
@@ -182,12 +213,12 @@ class CalcFundPosition(PgDbUpdaterBase):
     def post_constraint_kf(self, initial_holdings_ratio, industry_daily_return, fund_daily_return):
         industry_amount = len(industry_daily_return.columns)
 
-        aligned_holdings_ratio = initial_holdings_ratio.reindex(industry_daily_return.columns, fill_value=0)
+        self.initial_holdings_ratio = initial_holdings_ratio.reindex(industry_daily_return.columns, fill_value=0)
 
         kf = KalmanFilter(dim_x=industry_amount, dim_z=1) # 初始化卡尔曼滤波器
 
         # 定义初始状态 (行业持仓比例)
-        kf.x = aligned_holdings_ratio.to_numpy()
+        kf.x = self.initial_holdings_ratio.to_numpy()
 
         # 定义状态转移矩阵
         kf.F = np.eye(industry_amount)  # transition_matrices
@@ -201,7 +232,7 @@ class CalcFundPosition(PgDbUpdaterBase):
         # 定义状态协方差
         kf.P *= 1e-2
         kf.R = self.estimate_R(fund_daily_return['日度收益率'])  # 根据基金日度收益率波动性动态估计观测噪声
-        kf.Q = self.estimate_Q(industry_daily_return, aligned_holdings_ratio)  # 根据行业持仓比例变化的历史波动性动态估计过程噪声
+        kf.Q = self.estimate_Q(industry_daily_return, self.initial_holdings_ratio)  # 根据行业持仓比例变化的历史波动性动态估计过程噪声
 
         # 准备观测数据
         measurements = fund_daily_return['日度收益率'].dropna().to_numpy()
@@ -237,27 +268,89 @@ class CalcFundPosition(PgDbUpdaterBase):
 
         dates = fund_daily_return.index
         state_estimates_df = pd.DataFrame(state_estimates, index=dates, columns=industry_daily_return.columns)
-        return_errors_df = pd.DataFrame(return_errors, index=dates, columns=industry_daily_return.columns)
+        return_errors_df = pd.Series(return_errors, index=dates, name='日度收益率误差')
 
         return state_estimates_df, return_errors_df
 
+    def generate_noisy_holdings(self, initial_holdings_ratio, industry_daily_return, fund_daily_return, noise_scale=1e-3):
+        """
+        在初始持仓比例基础上添加随机噪声来模拟持仓比例的波动。
+
+        :param initial_holdings_ratio: DataFrame, 各行业的初始持仓占比
+        :param industry_daily_return: DataFrame, 各行业的日度收益率
+        :param noise_scale: float, 噪声的标准差
+        :return: 含噪声的每日行业持仓比例
+        """
+        # 使用DataFrame以保持与行业日度收益率的维度一致
+        noisy_holdings = pd.DataFrame(0, index=industry_daily_return.index, columns=industry_daily_return.columns)
+        # 遍历每个行业，为初始持仓比例添加随机噪声
+        for column in industry_daily_return.columns:
+            # 生成噪声
+            noise = np.random.normal(loc=0, scale=noise_scale, size=len(industry_daily_return))
+            # 应用噪声到初始持仓比例，并确保比例非负
+            noisy_holdings[column] = initial_holdings_ratio[column] + noise
+            noisy_holdings[column] = noisy_holdings[column].clip(lower=0)
+
+        # 归一化每一行的持仓比例和为1
+        noisy_holdings_sum = noisy_holdings.sum(axis=1)
+        noisy_holdings = noisy_holdings.div(noisy_holdings_sum, axis=0)
+
+        estimated_returns = (noisy_holdings * industry_daily_return).sum(axis=1)
+        return_errors = fund_daily_return['日度收益率'] - estimated_returns
+        return_errors_df = pd.Series(return_errors*100, index=fund_daily_return.index, name='日度收益率误差')
+
+        return noisy_holdings, return_errors_df
+
+    def calculate_active_adjustment(self, state_estimates_df, industry_daily_return):
+        # 初始化主动调仓的DataFrame
+        active_adjustments = pd.DataFrame(0, index=state_estimates_df.index, columns=state_estimates_df.columns)
+
+        # 遍历每一天，计算主动调仓
+        for i in range(0, len(state_estimates_df)):
+            # 获取前一天的行业持仓占比
+            if i == 0:
+                previous_holdings = self.initial_holdings_ratio
+            else:
+                previous_holdings = state_estimates_df.iloc[i - 1]
+            # 获取当天的行业收益率
+            current_returns = industry_daily_return.iloc[i]
+            # 计算市场波动导致的持仓变动
+            market_movements = previous_holdings * (1 + current_returns)
+            market_movements /= market_movements.sum()  # 归一化
+
+            # 获取当天的实际行业持仓占比
+            current_holdings = state_estimates_df.iloc[i]
+
+            # 主动调仓是实际持仓占比与市场波动后持仓占比的差异
+            active_adjustment = current_holdings - market_movements
+            active_adjustments.iloc[i] = active_adjustment
+
+        return active_adjustments
 
 base_config = BaseConfig('quarterly')
 obj = CalcFundPosition(base_config)
 state_estimates_post, return_errors = obj.post_constraint_kf(obj.industry_position_series['22q4'], obj.industry_return, obj.total_return)
 return_errors_abs_mean = sum(abs(x) for x in return_errors.tolist()) / len(return_errors)
+active_adjustments = obj.calculate_active_adjustment(state_estimates_post, obj.industry_return)
+
+state_estimates_noise, return_errors_noise = obj.generate_noisy_holdings(obj.industry_position_series['22q4'], obj.industry_return, obj.total_return)
+return_errors_noise_abs_mean = sum(abs(x) for x in return_errors_noise.tolist()) / len(return_errors_noise)
+# return_abs_mean = 100*sum(abs(x) for x in obj.total_return['日度收益率'].tolist()) / len(obj.total_return['日度收益率'])
 
 res_start = obj.industry_position_series['22q4']
 res_estimate = state_estimates_post.loc[pd.Timestamp('2023-06-30 00:00:00')]
 res_real = obj.industry_position_series['23q2']
+
 real_change = res_real - res_start
 estimate_change = res_estimate - res_start
-error = res_estimate - res_real
-error_abs = error.abs().mean()
 real_change = real_change.abs().mean()
 estimate_change = estimate_change.abs().mean()
 
-file_path = rf"D:\WPS云盘\WPS云盘\工作-麦高\研究trial\全基金仓位测算自22q4-结果评估.xlsx"
+error = res_estimate - res_real
+error_abs = error.abs().mean()
+
+
+file_path = rf"D:\WPS云盘\WPS云盘\工作-麦高\数据库相关\基金仓位测算\全基金仓位测算自22q4-结果评估.xlsx"
 with pd.ExcelWriter(file_path) as writer:
     state_estimates_post.to_excel(writer, sheet_name='Kf', index=True)
     res_start.sort_values(ascending=False).to_excel(writer, sheet_name='22q4实际仓位', index=True)
