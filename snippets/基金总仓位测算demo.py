@@ -20,7 +20,7 @@ class CalcFundPosition(PgDbUpdaterBase):
         self.prepare_data()
 
     def config_quarterly_dates(self):
-        self.quarterly_dates = w.tdays('2022-11-20', '2024-03-01', "Period=Q").Data[0]
+        self.quarterly_dates = w.tdays('2018-11-20', '2024-03-01', "Period=Q").Data[0]
         self.quarterly_dates_str = [str(x) for x in self.quarterly_dates]
 
         # 四个季度的末尾月份，用于确定季度
@@ -40,7 +40,7 @@ class CalcFundPosition(PgDbUpdaterBase):
             date_dict[key] = date
 
         self.quarterly_dates_dict = date_dict
-        self.初始持仓日期 = date_dict['22q4']
+        self.初始持仓日期 = date_dict['18q4']
 
     def load_asset_positions(self):
         """
@@ -123,11 +123,16 @@ class CalcFundPosition(PgDbUpdaterBase):
             df.columns = df.iloc[0]
             # 删除原来的第0行
             df = df.drop(df.index[0])
-            industry_position_dfs[key] = df  # 更新字典中的DataFrame
             industry_position_series[matched_string] = pd.Series(df['占股票投资市值比(%)'].values, index=df['行业名称'])
 
-        # 打印出所有的DataFrame的键（即文件名），确认已成功加载
-        print(industry_position_dfs.keys())
+        # 利用季度资产配置比例校准
+        for quarter in industry_position_series.keys():
+            if quarter in self.quarterly_positions.keys():
+                industry_position_series[quarter] *= self.quarterly_positions[quarter]['A股']
+                industry_position_series[quarter]['债券'] = self.quarterly_positions[quarter]['债券']
+                industry_position_series[quarter]['现金'] = self.quarterly_positions[quarter]['现金']
+                industry_position_series[quarter]['港股'] = self.quarterly_positions[quarter]['港股']
+
         self.industry_position_series = industry_position_series
 
     def load_industry_return(self):
@@ -152,11 +157,30 @@ class CalcFundPosition(PgDbUpdaterBase):
 
     def load_fund_return(self):
         file_path = rf"D:\WPS云盘\WPS云盘\工作-麦高\数据库相关\基金仓位测算\基金总净值.xlsx"
-        total_nav = pd.read_excel(file_path, header=2, index_col=0)
-        total_nav = total_nav.apply(pd.to_numeric, errors='coerce')
-        total_nav['日度收益率'] = total_nav['指数复合'].pct_change()
 
-        self.total_return = total_nav
+        index_data = pd.read_excel(file_path, header=1, index_col=0, sheet_name='基金指数')
+        weight_data = pd.read_excel(file_path, header=0, sheet_name='权重')
+
+        # 排序权重数据，确保日期顺序正确
+        weight_data.sort_values('权重(基金专题-市场概况-基金市场概况-占比)', inplace=True)
+
+        # 计算指数复合列
+        index_data['指数复合'] = None  # 初始化指数复合列
+
+        # 对于指数数据中的每个日期，寻找合适的权重
+        for date, row in index_data.iterrows():
+            # 找到小于当前日期的最大权重日期
+            weight_row = weight_data[weight_data['权重(基金专题-市场概况-基金市场概况-占比)'] <= date].iloc[-1]
+
+            # 计算指数复合
+            index_data.at[date, '指数复合'] = (
+                    row['普通股票型基金指数'] * weight_row['普通股票型基金指数'] +
+                    row['偏股混合型基金指数'] * weight_row['偏股混合型基金指数'] +
+                    row['灵活配置型基金指数'] * weight_row['灵活配置型基金指数']
+            ) / (weight_row['普通股票型基金指数'] + weight_row['偏股混合型基金指数'] + weight_row['灵活配置型基金指数'])
+
+        index_data['日度收益率'] = index_data['指数复合'].pct_change()
+        self.total_return = index_data
 
     def prepare_data(self):
         # 仓位中加入现金
@@ -214,11 +238,15 @@ class CalcFundPosition(PgDbUpdaterBase):
         industry_amount = len(industry_daily_return.columns)
 
         self.initial_holdings_ratio = initial_holdings_ratio.reindex(industry_daily_return.columns, fill_value=0)
+        for key, series in self.industry_position_series.items():
+            self.industry_position_series[key] = series.reindex(industry_daily_return.columns, fill_value=0)
 
         kf = KalmanFilter(dim_x=industry_amount, dim_z=1) # 初始化卡尔曼滤波器
 
         # 定义初始状态 (行业持仓比例)
         kf.x = self.initial_holdings_ratio.to_numpy()
+        cash_index = self.initial_holdings_ratio.index.get_loc("现金")
+        bond_index = self.initial_holdings_ratio.index.get_loc("债券")
 
         # 定义状态转移矩阵
         kf.F = np.eye(industry_amount)  # transition_matrices
@@ -237,12 +265,35 @@ class CalcFundPosition(PgDbUpdaterBase):
         # 准备观测数据
         measurements = fund_daily_return['日度收益率'].dropna().to_numpy()
 
-        alpha = 0.9  # 平滑系数，用于调整当前估计与前一天估计的权重
-        previous_state = kf.x.copy()
         state_estimates = []
         return_errors = []
+        self.pre_calibration_positions = {}
+        self.post_calibration_positions = {}
+        full_calibrate_dict = {k: v for k, v in self.quarterly_dates_dict.items() if "q2" in k or "q4" in k}
+        full_calibrate_dict.pop("23q4", None) # 23q4年报还没出
+        swapped_dict = {value: key for key, value in self.quarterly_dates_dict.items()}
+
+        alpha = 0.9  # 平滑系数，用于调整当前估计与前一天估计的权重
+        previous_state = kf.x.copy()
         for measurement, returns in zip(measurements, industry_daily_return.dropna().iterrows()):
-            _date, return_ = returns
+            date, return_ = returns
+
+            # 定期校准
+            if date.to_pydatetime() in self.quarterly_dates_dict.values():
+                q_str = swapped_dict[date.to_pydatetime()]
+                self.pre_calibration_positions[q_str] = pd.Series(kf.x.copy(), index=self.initial_holdings_ratio.index)
+                # Q2和Q4的完全校准
+                if date.to_pydatetime() in full_calibrate_dict.values():
+                    kf.x = self.industry_position_series[q_str].to_numpy()
+                # Q1和Q3的部分校准，只更新现金和债券
+                else:
+                    scaling_factor = (1 - self.quarterly_positions[q_str]['现金'] - self.quarterly_positions[q_str]['债券']) / (1 - kf.x[cash_index] - kf.x[bond_index])
+                    for i in range(len(kf.x)):
+                        if i not in [cash_index, bond_index]:
+                            kf.x[i] *= scaling_factor
+                    kf.x[cash_index] = self.quarterly_positions[q_str]['现金']
+                    kf.x[bond_index] = self.quarterly_positions[q_str]['债券']
+                self.post_calibration_positions[q_str] = pd.Series(kf.x.copy(), index=self.initial_holdings_ratio.index)
 
             # 更新观测矩阵为当日各行业收益率
             kf.H = return_.values.reshape(1, -1)
@@ -254,13 +305,13 @@ class CalcFundPosition(PgDbUpdaterBase):
             previous_state = smoothed_state.copy()
 
             # 应用约束：非负和总和为1
-            if (kf.x < 0).any():
-                print(f'{_date}出现负数, sum{sum(kf.x)}')
+            # if (kf.x < 0).any():
+            #     print(f'{_date}出现负数, sum{sum(kf.x)}')
             constrained_state = np.maximum(smoothed_state, 0.0001)  # 设置最小持仓比例
             constrained_state /= np.sum(constrained_state)
 
             return_error = (constrained_state * return_).sum() - measurement
-            print(f"return_error: {100*return_error}%")
+            # print(f"return_error: {100*return_error}%")
 
             state_estimates.append(constrained_state.copy())
             return_errors.append(100*round(return_error, 4))
