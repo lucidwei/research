@@ -300,11 +300,8 @@ class CalcFundPosition(PgDbUpdaterBase):
                     constrained_state[cash_index] = self.quarterly_positions[q_str]['现金']
                     constrained_state[bond_index] = self.quarterly_positions[q_str]['债券']
                 self.post_calibration_positions[q_str] = pd.Series(constrained_state.copy(), index=self.initial_holdings_ratio.index)
-                # kf.x = constrained_state
-            kf.x = constrained_state
-
-            if date == pd.Timestamp('2019-06-28 00:00:00'):
-                a=1
+                kf.x = constrained_state
+            # kf.x = constrained_state
 
             return_error = (constrained_state * return_).sum() - measurement
             # print(f"return_error: {100*return_error}%")
@@ -442,6 +439,7 @@ return_errors_lasso_abs_mean = sum(abs(x) for x in return_errors_lasso.tolist())
 # error = res_estimate - res_real
 # error_abs = error.abs().mean()
 
+position_error = pre_calibration_positions - post_calibration_positions
 
 file_path = rf"D:\WPS云盘\WPS云盘\工作-麦高\数据库相关\基金仓位测算\全基金仓位测算自18q4-结果评估对比.xlsx"
 with pd.ExcelWriter(file_path) as writer:
@@ -456,7 +454,6 @@ with pd.ExcelWriter(file_path) as writer:
 
     pre_calibration_positions.to_excel(writer, sheet_name='校准前仓位', index=True)
     post_calibration_positions.to_excel(writer, sheet_name='校准后仓位', index=True)
-    position_error = pre_calibration_positions - post_calibration_positions
     position_error.to_excel(writer, sheet_name='校准前后仓位误差', index=True)
 
     return_errors.to_excel(writer, sheet_name='日度收益误差', index=True)
