@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 from filterpy.kalman import KalmanFilter
 from sklearn.linear_model import Lasso
+from scipy.stats import spearmanr
 
 from WindPy import w
 
@@ -10,8 +11,9 @@ from base_config import BaseConfig
 from pgdb_updater_base import PgDbUpdaterBase
 
 class CalcFundPosition(PgDbUpdaterBase):
-    def __init__(self, base_config: BaseConfig):
+    def __init__(self, base_config: BaseConfig, initial_q_str: str):
         super().__init__(base_config)
+        self.initial_q_str = initial_q_str
         self.config_quarterly_dates()
         self.load_asset_positions()
         self.load_industry_return()
@@ -40,7 +42,7 @@ class CalcFundPosition(PgDbUpdaterBase):
             date_dict[key] = date
 
         self.quarterly_dates_dict = date_dict
-        self.初始持仓日期 = date_dict['18q4']
+        self.初始持仓日期 = date_dict[self.initial_q_str]
 
     def load_asset_positions(self):
         """
@@ -145,9 +147,11 @@ class CalcFundPosition(PgDbUpdaterBase):
         })
         行业收盘价 = 行业收盘价.dropna(axis=1).set_index('日期')
         行业收盘价 = 行业收盘价.apply(pd.to_numeric, errors='coerce')
+        self.industry_index = 行业收盘价.copy()
+        self.industry_index.columns = [f"{col}指数" for col in self.industry_index.columns]
+
         行业日度收益率 = 行业收盘价.pct_change()
         行业日度收益率['现金'] = 0
-
         行业日度收益率.index = pd.to_datetime(行业日度收益率.index)
         self.行业日度收益率 = 行业日度收益率
 
@@ -180,7 +184,6 @@ class CalcFundPosition(PgDbUpdaterBase):
         self.total_return = index_data
 
     def prepare_data(self):
-
         # 对齐日期
         self.industry_return = self.行业日度收益率.loc[self.行业日度收益率.index > self.初始持仓日期]
         self.total_return = self.total_return.loc[self.total_return.index > self.初始持仓日期]
@@ -224,10 +227,10 @@ class CalcFundPosition(PgDbUpdaterBase):
         return Q
 
 
-    def post_constraint_kf(self, initial_holdings_ratio, industry_daily_return, fund_daily_return):
+    def post_constraint_kf(self, industry_daily_return, fund_daily_return, calibrate=False):
         industry_amount = len(industry_daily_return.columns)
 
-        self.initial_holdings_ratio = initial_holdings_ratio.reindex(industry_daily_return.columns, fill_value=0)
+        self.initial_holdings_ratio = obj.industry_position_series[self.initial_q_str].reindex(industry_daily_return.columns, fill_value=0)
         for key, series in self.industry_position_series.items():
             self.industry_position_series[key] = series.reindex(industry_daily_return.columns, fill_value=0)
 
@@ -284,23 +287,24 @@ class CalcFundPosition(PgDbUpdaterBase):
             constrained_state /= np.sum(constrained_state)
 
             # 定期校准
-            # if date.to_pydatetime() in self.quarterly_dates_dict.values():
-            #     q_str = swapped_dict[date.to_pydatetime()]
-            #     self.pre_calibration_positions[q_str] = pd.Series(constrained_state.copy(), index=self.initial_holdings_ratio.index)
-            #     # Q2和Q4的完全校准
-            #     if date.to_pydatetime() in full_calibrate_dict.values():
-            #         constrained_state = self.industry_position_series[q_str].to_numpy()
-            #     # Q1和Q3的部分校准，只更新现金和债券
-            #     else:
-            #         scaling_factor = ((1 - self.quarterly_positions[q_str]['现金'] - self.quarterly_positions[q_str]['债券'])
-            #                           / (1 - constrained_state[cash_index] - constrained_state[bond_index]))
-            #         for i in range(len(constrained_state)):
-            #             if i not in [cash_index, bond_index]:
-            #                 constrained_state[i] *= scaling_factor
-            #         constrained_state[cash_index] = self.quarterly_positions[q_str]['现金']
-            #         constrained_state[bond_index] = self.quarterly_positions[q_str]['债券']
-            #     self.post_calibration_positions[q_str] = pd.Series(constrained_state.copy(), index=self.initial_holdings_ratio.index)
-            #     kf.x = constrained_state
+            if calibrate:
+                if date.to_pydatetime() in self.quarterly_dates_dict.values():
+                    q_str = swapped_dict[date.to_pydatetime()]
+                    self.pre_calibration_positions[q_str] = pd.Series(constrained_state.copy(), index=self.initial_holdings_ratio.index)
+                    # Q2和Q4的完全校准
+                    if date.to_pydatetime() in full_calibrate_dict.values():
+                        constrained_state = self.industry_position_series[q_str].to_numpy()
+                    # Q1和Q3的部分校准，只更新现金和债券
+                    else:
+                        scaling_factor = ((1 - self.quarterly_positions[q_str]['现金'] - self.quarterly_positions[q_str]['债券'])
+                                          / (1 - constrained_state[cash_index] - constrained_state[bond_index]))
+                        for i in range(len(constrained_state)):
+                            if i not in [cash_index, bond_index]:
+                                constrained_state[i] *= scaling_factor
+                        constrained_state[cash_index] = self.quarterly_positions[q_str]['现金']
+                        constrained_state[bond_index] = self.quarterly_positions[q_str]['债券']
+                    self.post_calibration_positions[q_str] = pd.Series(constrained_state.copy(), index=self.initial_holdings_ratio.index)
+                    kf.x = constrained_state
             # kf.x = constrained_state
 
             return_error = (constrained_state * return_).sum() - measurement
@@ -409,17 +413,56 @@ class CalcFundPosition(PgDbUpdaterBase):
 
         return active_adjustments
 
+    def evaluate_model(self, pre_calibration_positions, post_calibration_positions):
+        # 初始化存储评估结果的字典
+        evaluation_results = {
+            'overlap_count': [],  # 重合的行业数
+            'consistent_order': [],  # 排序一致性
+            'spearman_corr': []  # 斯皮尔曼相关性系数
+        }
+
+        # 遍历所有季度
+        for quarter in pre_calibration_positions.columns:
+            # 获取预估和实际的前十仓位行业
+            estimated_top10 = pre_calibration_positions[quarter].nlargest(10)
+            actual_top10 = post_calibration_positions[quarter].nlargest(10)
+
+            # 计算重合的行业数
+            overlap_count = len(set(estimated_top10.index) & set(actual_top10.index))
+            evaluation_results['overlap_count'].append(overlap_count)
+
+            # 检查重合行业的顺序一致性
+            consistent_order = sum(1 for est, act in zip(estimated_top10.index, actual_top10.index) if est == act)
+            evaluation_results['consistent_order'].append(consistent_order)
+
+            # 计算趋势一致性 - 斯皮尔曼相关性系数
+            # 首先，找出预估和实际前十仓位行业列表中共同的行业
+            common_assets = set(estimated_top10.index) & set(actual_top10.index)
+            # 然后，筛选出这些共同行业的预估和实际排名
+            filtered_estimated = estimated_top10[estimated_top10.index.isin(common_assets)]
+            filtered_actual = actual_top10[actual_top10.index.isin(common_assets)]
+            # 计算它们的Spearman相关性系数
+            spearman_corr, _ = spearmanr(filtered_estimated.values, filtered_actual.values)
+            evaluation_results['spearman_corr'].append(spearman_corr)
+
+        # 将评估结果转换为DataFrame
+        evaluation_df = pd.DataFrame(evaluation_results, index=pre_calibration_positions.columns)
+
+        return evaluation_df
+
+
 base_config = BaseConfig('quarterly')
-obj = CalcFundPosition(base_config)
-state_estimates_post, return_errors = obj.post_constraint_kf(obj.industry_position_series['18q4'], obj.industry_return, obj.total_return)
+obj = CalcFundPosition(base_config, '21q4')
+
+state_estimates_post, return_errors = obj.post_constraint_kf(obj.industry_return, obj.total_return, calibrate=True)
 return_errors_abs_mean = sum(abs(x) for x in return_errors.tolist()) / len(return_errors)
 print(f'return_errors_abs_mean:{return_errors_abs_mean}')
 
 active_adjustments = obj.calculate_active_adjustment(state_estimates_post, obj.industry_return)
 active_adjustments_cumsum = active_adjustments.cumsum()
-active_adjustments_amount = active_adjustments * obj.quarterly_positions['22q4']['资产净值(亿元)']
+active_adjustments_amount = active_adjustments * obj.quarterly_positions[obj.initial_q_str]['资产净值(亿元)']
 
-state_estimates_noise, return_errors_noise = obj.generate_noisy_holdings(obj.industry_position_series['22q4'], obj.industry_return, obj.total_return)
+state_estimates_noise, return_errors_noise = obj.generate_noisy_holdings(obj.industry_position_series[obj.initial_q_str], obj.industry_return, obj.total_return)
 return_errors_noise_abs_mean = sum(abs(x) for x in return_errors_noise.tolist()) / len(return_errors_noise)
 print(f'return_errors_noise_abs_mean:{return_errors_noise_abs_mean}')
 
@@ -442,16 +485,20 @@ print(f'return_abs_mean:{return_abs_mean}')
 # error = res_estimate - res_real
 # error_abs = error.abs().mean()
 
-# post_calibration_positions = pd.DataFrame.from_dict(obj.post_calibration_positions)
-# pre_calibration_positions = pd.DataFrame.from_dict(obj.pre_calibration_positions)
+post_calibration_positions = pd.DataFrame.from_dict(obj.post_calibration_positions)
+pre_calibration_positions = pd.DataFrame.from_dict(obj.pre_calibration_positions)
 # position_error = pre_calibration_positions - post_calibration_positions
+evaluation_results = obj.evaluate_model(pre_calibration_positions, post_calibration_positions)
 
-file_path = rf"D:\WPS云盘\WPS云盘\工作-麦高\数据库相关\基金仓位测算\全基金仓位测算自18q4-结果评估对比(无校准-主动调累积).xlsx"
+
+file_path = rf"D:\WPS云盘\WPS云盘\工作-麦高\数据库相关\基金仓位测算\全基金仓位测算自18q4-结果评估对比(ma5).xlsx"
 with pd.ExcelWriter(file_path) as writer:
     state_estimates_post.to_excel(writer, sheet_name='卡尔曼滤波结果', index=True)
-    active_adjustments.to_excel(writer, sheet_name='主动调仓(全部持仓占比)', index=True)
+    # active_adjustments.to_excel(writer, sheet_name='主动调仓(全部持仓占比)', index=True)
     active_adjustments_cumsum.to_excel(writer, sheet_name='主动调仓累积(全部持仓占比)', index=True)
+    active_adjustments_cumsum.rolling(window=5).mean().to_excel(writer, sheet_name='主动调仓累积(ma5)', index=True)
     active_adjustments_amount.to_excel(writer, sheet_name='主动调仓资金流(亿元)', index=True)
+    obj.industry_index.to_excel(writer, sheet_name='行业指数', index=True)
     # 使用 pd.concat 横向合并这些 Series
     # res_start_sorted = res_start.sort_values(ascending=False).reset_index(name='22q4实际仓位')
     # res_real_sorted = res_real.sort_values(ascending=False).reset_index(name='23q2实际仓位')
@@ -463,6 +510,6 @@ with pd.ExcelWriter(file_path) as writer:
     # post_calibration_positions.to_excel(writer, sheet_name='校准后仓位', index=True)
     # position_error.to_excel(writer, sheet_name='校准前后仓位误差', index=True)
 
-    return_errors.to_excel(writer, sheet_name='日度收益误差', index=True)
-    state_estimates_noise.to_excel(writer, sheet_name='噪声结果', index=True)
-    state_estimates_lasso.to_excel(writer, sheet_name='lasso结果', index=True)
+    # return_errors.to_excel(writer, sheet_name='日度收益误差', index=True)
+    # state_estimates_noise.to_excel(writer, sheet_name='噪声结果', index=True)
+    # state_estimates_lasso.to_excel(writer, sheet_name='lasso结果', index=True)
