@@ -414,11 +414,13 @@ class CalcFundPosition(PgDbUpdaterBase):
         return active_adjustments
 
     def evaluate_model(self, pre_calibration_positions, post_calibration_positions):
+        pre_calibration_positions = pre_calibration_positions.astype(float)
+        post_calibration_positions = post_calibration_positions.astype(float)
         # 初始化存储评估结果的字典
         evaluation_results = {
             'overlap_count': [],  # 重合的行业数
-            'consistent_order': [],  # 排序一致性
-            'spearman_corr': []  # 斯皮尔曼相关性系数
+            'spearman_corr': [],  # 斯皮尔曼相关性系数
+            'change_spearman_corr': [np.nan]  # 加仓行业排名变化的斯皮尔曼相关性系数
         }
 
         # 遍历所有季度
@@ -431,19 +433,32 @@ class CalcFundPosition(PgDbUpdaterBase):
             overlap_count = len(set(estimated_top10.index) & set(actual_top10.index))
             evaluation_results['overlap_count'].append(overlap_count)
 
-            # 检查重合行业的顺序一致性
-            consistent_order = sum(1 for est, act in zip(estimated_top10.index, actual_top10.index) if est == act)
-            evaluation_results['consistent_order'].append(consistent_order)
-
             # 计算趋势一致性 - 斯皮尔曼相关性系数
-            # 首先，找出预估和实际前十仓位行业列表中共同的行业
-            common_assets = set(estimated_top10.index) & set(actual_top10.index)
-            # 然后，筛选出这些共同行业的预估和实际排名
-            filtered_estimated = estimated_top10[estimated_top10.index.isin(common_assets)]
-            filtered_actual = actual_top10[actual_top10.index.isin(common_assets)]
-            # 计算它们的Spearman相关性系数
-            spearman_corr, _ = spearmanr(filtered_estimated.values, filtered_actual.values)
-            evaluation_results['spearman_corr'].append(spearman_corr)
+            # 获取预估和实际的所有行业排名
+            estimated_rankings = pre_calibration_positions[quarter].rank(ascending=False)
+            actual_rankings = post_calibration_positions[quarter].rank(ascending=False)
+
+            # 计算斯皮尔曼相关性系数
+            corr, _ = spearmanr(estimated_rankings, actual_rankings)
+            evaluation_results['spearman_corr'].append(corr)
+
+        # 遍历除了第一个季度之外的所有季度
+        quarters = pre_calibration_positions.columns
+        for i in range(1, len(quarters)):
+            prev_quarter = quarters[i - 1]
+            current_quarter = quarters[i]
+
+            # 计算实际和估计的仓位变化
+            actual_changes = post_calibration_positions[current_quarter] - post_calibration_positions[prev_quarter]
+            estimated_changes = pre_calibration_positions[current_quarter] - post_calibration_positions[prev_quarter]
+
+            # 获取变化的排名
+            actual_rankings = actual_changes.rank(ascending=False)
+            estimated_rankings = estimated_changes.rank(ascending=False)
+
+            # 计算斯皮尔曼相关性系数
+            corr, _ = spearmanr(estimated_rankings, actual_rankings)
+            evaluation_results['change_spearman_corr'].append(corr)
 
         # 将评估结果转换为DataFrame
         evaluation_df = pd.DataFrame(evaluation_results, index=pre_calibration_positions.columns)
@@ -452,7 +467,7 @@ class CalcFundPosition(PgDbUpdaterBase):
 
 
 base_config = BaseConfig('quarterly')
-obj = CalcFundPosition(base_config, '21q4')
+obj = CalcFundPosition(base_config, '18q4')
 
 state_estimates_post, return_errors = obj.post_constraint_kf(obj.industry_return, obj.total_return, calibrate=True)
 return_errors_abs_mean = sum(abs(x) for x in return_errors.tolist()) / len(return_errors)
