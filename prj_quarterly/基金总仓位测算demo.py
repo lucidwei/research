@@ -230,7 +230,7 @@ class CalcFundPosition(PgDbUpdaterBase):
     def post_constraint_kf(self, industry_daily_return, fund_daily_return, calibrate=False):
         industry_amount = len(industry_daily_return.columns)
 
-        self.initial_holdings_ratio = obj.industry_position_series[self.initial_q_str].reindex(industry_daily_return.columns, fill_value=0)
+        self.initial_holdings_ratio = self.industry_position_series[self.initial_q_str].reindex(industry_daily_return.columns, fill_value=0)
         for key, series in self.industry_position_series.items():
             self.industry_position_series[key] = series.reindex(industry_daily_return.columns, fill_value=0)
 
