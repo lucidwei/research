@@ -411,7 +411,20 @@ class CalcFundPosition(PgDbUpdaterBase):
             active_adjustment = current_holdings - market_movements
             active_adjustments.iloc[i] = active_adjustment
 
+        self.active_adjustments = active_adjustments
         return active_adjustments
+
+    def calculate_active_adjustment_amount(self, active_adjustments):
+        data = [(self.quarterly_dates_dict[q], v['资产净值(亿元)']) for q, v in self.quarterly_positions.items()]
+        asset_total = pd.DataFrame(data, columns=['date', 'assets'])
+        asset_total = asset_total.set_index('date')
+        # 重新索引 asset_df 以匹配 active_adjustments 的索引
+        asset_total = asset_total.reindex(active_adjustments.index, method='ffill')
+        # 两个 DataFrame 相乘
+        active_adjustments_amount = active_adjustments.multiply(asset_total['assets'], axis='index')
+
+        self.active_adjustments_amount = active_adjustments_amount
+        return active_adjustments_amount
 
     def evaluate_model(self, pre_calibration_positions, post_calibration_positions):
         pre_calibration_positions = pre_calibration_positions.astype(float)
@@ -475,7 +488,7 @@ print(f'return_errors_abs_mean:{return_errors_abs_mean}')
 
 active_adjustments = obj.calculate_active_adjustment(state_estimates_post, obj.industry_return)
 active_adjustments_cumsum = active_adjustments.cumsum()
-active_adjustments_amount = active_adjustments * obj.quarterly_positions[obj.initial_q_str]['资产净值(亿元)']
+active_adjustments_amount = obj.calculate_active_adjustment_amount(active_adjustments)
 
 state_estimates_noise, return_errors_noise = obj.generate_noisy_holdings(obj.industry_position_series[obj.initial_q_str], obj.industry_return, obj.total_return)
 return_errors_noise_abs_mean = sum(abs(x) for x in return_errors_noise.tolist()) / len(return_errors_noise)
