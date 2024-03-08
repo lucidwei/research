@@ -479,65 +479,66 @@ class CalcFundPosition(PgDbUpdaterBase):
         return evaluation_df
 
 
-base_config = BaseConfig('quarterly')
-obj = CalcFundPosition(base_config, '18q4')
+if __name__ == "__main__":
+    base_config = BaseConfig('quarterly')
+    obj = CalcFundPosition(base_config, '18q4')
 
-state_estimates_post, return_errors = obj.post_constraint_kf(obj.industry_return, obj.total_return, calibrate=True)
-return_errors_abs_mean = sum(abs(x) for x in return_errors.tolist()) / len(return_errors)
-print(f'return_errors_abs_mean:{return_errors_abs_mean}')
+    state_estimates_post, return_errors = obj.post_constraint_kf(obj.industry_return, obj.total_return, calibrate=True)
+    return_errors_abs_mean = sum(abs(x) for x in return_errors.tolist()) / len(return_errors)
+    print(f'return_errors_abs_mean:{return_errors_abs_mean}')
 
-active_adjustments = obj.calculate_active_adjustment(state_estimates_post, obj.industry_return)
-active_adjustments_cumsum = active_adjustments.cumsum()
-active_adjustments_amount = obj.calculate_active_adjustment_amount(active_adjustments)
+    active_adjustments = obj.calculate_active_adjustment(state_estimates_post, obj.industry_return)
+    active_adjustments_cumsum = active_adjustments.cumsum()
+    active_adjustments_amount = obj.calculate_active_adjustment_amount(active_adjustments)
 
-state_estimates_noise, return_errors_noise = obj.generate_noisy_holdings(obj.industry_position_series[obj.initial_q_str], obj.industry_return, obj.total_return)
-return_errors_noise_abs_mean = sum(abs(x) for x in return_errors_noise.tolist()) / len(return_errors_noise)
-print(f'return_errors_noise_abs_mean:{return_errors_noise_abs_mean}')
+    state_estimates_noise, return_errors_noise = obj.generate_noisy_holdings(obj.industry_position_series[obj.initial_q_str], obj.industry_return, obj.total_return)
+    return_errors_noise_abs_mean = sum(abs(x) for x in return_errors_noise.tolist()) / len(return_errors_noise)
+    print(f'return_errors_noise_abs_mean:{return_errors_noise_abs_mean}')
 
-state_estimates_lasso, return_errors_lasso = obj.dynamic_lasso_estimate_positions(obj.industry_return, obj.total_return)
-return_errors_lasso_abs_mean = sum(abs(x) for x in return_errors_lasso.tolist()) / len(return_errors_lasso)
-print(f'return_errors_lasso_abs_mean:{return_errors_lasso_abs_mean}')
+    state_estimates_lasso, return_errors_lasso = obj.dynamic_lasso_estimate_positions(obj.industry_return, obj.total_return)
+    return_errors_lasso_abs_mean = sum(abs(x) for x in return_errors_lasso.tolist()) / len(return_errors_lasso)
+    print(f'return_errors_lasso_abs_mean:{return_errors_lasso_abs_mean}')
 
-return_abs_mean = 100*sum(abs(x) for x in obj.total_return['日度收益率'].tolist()) / len(obj.total_return['日度收益率'])
-print(f'return_abs_mean:{return_abs_mean}')
+    return_abs_mean = 100*sum(abs(x) for x in obj.total_return['日度收益率'].tolist()) / len(obj.total_return['日度收益率'])
+    print(f'return_abs_mean:{return_abs_mean}')
 
-# res_start = obj.industry_position_series['22q4']
-# res_estimate = state_estimates_post.loc[pd.Timestamp('2023-06-30 00:00:00')]
-# res_real = obj.industry_position_series['23q2']
+    # res_start = obj.industry_position_series['22q4']
+    # res_estimate = state_estimates_post.loc[pd.Timestamp('2023-06-30 00:00:00')]
+    # res_real = obj.industry_position_series['23q2']
 
-# real_change = res_real - res_start
-# estimate_change = res_estimate - res_start
-# real_change = real_change.abs().mean()
-# estimate_change = estimate_change.abs().mean()
-#
-# error = res_estimate - res_real
-# error_abs = error.abs().mean()
+    # real_change = res_real - res_start
+    # estimate_change = res_estimate - res_start
+    # real_change = real_change.abs().mean()
+    # estimate_change = estimate_change.abs().mean()
+    #
+    # error = res_estimate - res_real
+    # error_abs = error.abs().mean()
 
-post_calibration_positions = pd.DataFrame.from_dict(obj.post_calibration_positions)
-pre_calibration_positions = pd.DataFrame.from_dict(obj.pre_calibration_positions)
-# position_error = pre_calibration_positions - post_calibration_positions
-evaluation_results = obj.evaluate_model(pre_calibration_positions, post_calibration_positions)
+    post_calibration_positions = pd.DataFrame.from_dict(obj.post_calibration_positions)
+    pre_calibration_positions = pd.DataFrame.from_dict(obj.pre_calibration_positions)
+    # position_error = pre_calibration_positions - post_calibration_positions
+    evaluation_results = obj.evaluate_model(pre_calibration_positions, post_calibration_positions)
 
 
-file_path = rf"D:\WPS云盘\WPS云盘\工作-麦高\数据库相关\基金仓位测算\全基金仓位测算自18q4-结果评估对比(ma5).xlsx"
-with pd.ExcelWriter(file_path) as writer:
-    state_estimates_post.to_excel(writer, sheet_name='卡尔曼滤波结果', index=True)
-    # active_adjustments.to_excel(writer, sheet_name='主动调仓(全部持仓占比)', index=True)
-    active_adjustments_cumsum.to_excel(writer, sheet_name='主动调仓累积(全部持仓占比)', index=True)
-    active_adjustments_cumsum.rolling(window=5).mean().to_excel(writer, sheet_name='主动调仓累积(ma5)', index=True)
-    active_adjustments_amount.to_excel(writer, sheet_name='主动调仓资金流(亿元)', index=True)
-    obj.industry_index.to_excel(writer, sheet_name='行业指数', index=True)
-    # 使用 pd.concat 横向合并这些 Series
-    # res_start_sorted = res_start.sort_values(ascending=False).reset_index(name='22q4实际仓位')
-    # res_real_sorted = res_real.sort_values(ascending=False).reset_index(name='23q2实际仓位')
-    # res_estimate_sorted = res_estimate.sort_values(ascending=False).reset_index(name='23q2测算仓位')
-    # combined_df = pd.concat([res_start_sorted, res_real_sorted, res_estimate_sorted], axis=1)
-    # combined_df.to_excel(writer, sheet_name='仓位截面(排序后)', index=False)
+    file_path = rf"D:\WPS云盘\WPS云盘\工作-麦高\数据库相关\基金仓位测算\全基金仓位测算自18q4-结果评估对比(ma5).xlsx"
+    with pd.ExcelWriter(file_path) as writer:
+        state_estimates_post.to_excel(writer, sheet_name='卡尔曼滤波结果', index=True)
+        # active_adjustments.to_excel(writer, sheet_name='主动调仓(全部持仓占比)', index=True)
+        active_adjustments_cumsum.to_excel(writer, sheet_name='主动调仓累积(全部持仓占比)', index=True)
+        active_adjustments_cumsum.rolling(window=5).mean().to_excel(writer, sheet_name='主动调仓累积(ma5)', index=True)
+        active_adjustments_amount.to_excel(writer, sheet_name='主动调仓资金流(亿元)', index=True)
+        obj.industry_index.to_excel(writer, sheet_name='行业指数', index=True)
+        # 使用 pd.concat 横向合并这些 Series
+        # res_start_sorted = res_start.sort_values(ascending=False).reset_index(name='22q4实际仓位')
+        # res_real_sorted = res_real.sort_values(ascending=False).reset_index(name='23q2实际仓位')
+        # res_estimate_sorted = res_estimate.sort_values(ascending=False).reset_index(name='23q2测算仓位')
+        # combined_df = pd.concat([res_start_sorted, res_real_sorted, res_estimate_sorted], axis=1)
+        # combined_df.to_excel(writer, sheet_name='仓位截面(排序后)', index=False)
 
-    # pre_calibration_positions.to_excel(writer, sheet_name='校准前仓位', index=True)
-    # post_calibration_positions.to_excel(writer, sheet_name='校准后仓位', index=True)
-    # position_error.to_excel(writer, sheet_name='校准前后仓位误差', index=True)
+        # pre_calibration_positions.to_excel(writer, sheet_name='校准前仓位', index=True)
+        # post_calibration_positions.to_excel(writer, sheet_name='校准后仓位', index=True)
+        # position_error.to_excel(writer, sheet_name='校准前后仓位误差', index=True)
 
-    # return_errors.to_excel(writer, sheet_name='日度收益误差', index=True)
-    # state_estimates_noise.to_excel(writer, sheet_name='噪声结果', index=True)
-    # state_estimates_lasso.to_excel(writer, sheet_name='lasso结果', index=True)
+        # return_errors.to_excel(writer, sheet_name='日度收益误差', index=True)
+        # state_estimates_noise.to_excel(writer, sheet_name='噪声结果', index=True)
+        # state_estimates_lasso.to_excel(writer, sheet_name='lasso结果', index=True)
