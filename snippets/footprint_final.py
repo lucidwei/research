@@ -23,7 +23,6 @@ data['time'] = pd.to_datetime(data['time'], errors='coerce')
 seven_days_ago = pd.Timestamp.now() - pd.Timedelta(days=7)
 data = data[data['time'] > seven_days_ago]
 
-
 data['close'] = pd.to_numeric(data['close'], errors='coerce')
 data['volume'] = pd.to_numeric(data['volume'], errors='coerce') / 1e8
 data.dropna(subset=['time', 'close'], inplace=True)
