@@ -49,7 +49,7 @@ class CalcFundPosition(PgDbUpdaterBase):
         数据源：wind-基金-资产配置-资产配置(汇总)
         要把左下角调整为（普通股票、偏股混合、灵活配置）
         """
-        pattern = rf"D:\WPS云盘\WPS云盘\工作-麦高\数据库相关\基金仓位测算\资产配置(汇总)*.xlsx"
+        pattern = rf"{self.base_config.excels_path}基金仓位测算\资产配置(汇总)*.xlsx"
 
         # 使用glob.glob找到所有匹配的文件
         files = glob.glob(pattern)
@@ -97,7 +97,7 @@ class CalcFundPosition(PgDbUpdaterBase):
         数据源：wind-基金-资产配置-行业分布(汇总 第三方)
         要把左下角调整为（普通股票、偏股混合、灵活配置）
         """
-        pattern = rf"D:\WPS云盘\WPS云盘\工作-麦高\数据库相关\基金仓位测算\行业分布(汇总 第三方)*.xlsx"
+        pattern = rf"{self.base_config.excels_path}基金仓位测算\行业分布(汇总 第三方)*.xlsx"
 
         # 使用glob.glob找到所有匹配的文件
         files = glob.glob(pattern)
@@ -135,17 +135,17 @@ class CalcFundPosition(PgDbUpdaterBase):
         self.industry_position_series = industry_position_series
 
     def load_industry_return(self):
-        file_path = rf"D:\WPS云盘\WPS云盘\工作-麦高\数据库相关\基金仓位测算\行业指数收盘价.xlsx"
+        file_path = rf"{self.base_config.excels_path}基金仓位测算\基金净值和指数.xlsx"
         行业收盘价 = pd.read_excel(file_path, sheet_name='行业收盘价')
         # 处理“行业收盘价”sheet
         行业收盘价.columns = 行业收盘价.iloc[1].str.replace("\(中信\)", "", regex=True)
-        行业收盘价 = 行业收盘价.drop(index=[0, 1]).reset_index(drop=True)
+        行业收盘价 = 行业收盘价.drop(index=[0, 1]).iloc[:, 1:].reset_index(drop=True)
         行业收盘价 = 行业收盘价.rename(columns={
-            行业收盘价.columns[1]: "日期",
+            行业收盘价.columns[0]: "日期",
             '恒生科技': "港股",
             '中债-总财富(总值)指数': "债券",
         })
-        行业收盘价 = 行业收盘价.dropna(axis=1).set_index('日期')
+        行业收盘价 = 行业收盘价.dropna(axis=0).set_index('日期').sort_index()
         行业收盘价 = 行业收盘价.apply(pd.to_numeric, errors='coerce')
         self.industry_index = 行业收盘价.copy()
         self.industry_index.columns = [f"{col}指数" for col in self.industry_index.columns]
@@ -157,9 +157,9 @@ class CalcFundPosition(PgDbUpdaterBase):
 
 
     def load_fund_return(self):
-        file_path = rf"D:\WPS云盘\WPS云盘\工作-麦高\数据库相关\基金仓位测算\基金总净值.xlsx"
+        file_path = rf"{self.base_config.excels_path}基金仓位测算\基金净值和指数.xlsx"
 
-        index_data = pd.read_excel(file_path, header=1, index_col=0, sheet_name='基金指数')
+        index_data = pd.read_excel(file_path, header=1, sheet_name='基金指数').dropna(axis=0).set_index('日期').sort_index()
         weight_data = pd.read_excel(file_path, header=0, sheet_name='权重')
 
         # 排序权重数据，确保日期顺序正确
@@ -520,7 +520,7 @@ if __name__ == "__main__":
     evaluation_results = obj.evaluate_model(pre_calibration_positions, post_calibration_positions)
 
 
-    file_path = rf"D:\WPS云盘\WPS云盘\工作-麦高\数据库相关\基金仓位测算\全基金仓位测算自18q4-结果评估对比(ma5).xlsx"
+    file_path = rf"{obj.base_config.excels_path}基金仓位测算\全基金仓位测算自18q4-结果评估对比(ma5).xlsx"
     with pd.ExcelWriter(file_path) as writer:
         state_estimates_post.to_excel(writer, sheet_name='卡尔曼滤波结果', index=True)
         # active_adjustments.to_excel(writer, sheet_name='主动调仓(全部持仓占比)', index=True)
