@@ -136,15 +136,16 @@ class Evaluator:
             if next_week_end_date > df_daily_price.index.max():
                 break
 
-            # 获取下一周期（“周”）的实际涨跌幅
+            # 获取历史实际涨跌幅
             history_return = df_daily_return.loc[history_start_date:history_end_date]
-            next_week_return = df_daily_return.loc[next_week_start_date:next_week_end_date].sum()
+            history_return_sneak = df_daily_return.loc[history_start_date:next_week_end_date]
+
 
             irf_results = {}
             # 赋予不同资金流不同的权重
             fund_flows_with_weights = {
-                'north_inflow': 1.0,  # 举例，北向资金权重为1.0
-                # 'margin': 0.8,  # 融资融券资金权重为0.8
+                # 'north_inflow': 1.0,  # 举例，北向资金权重为1.0
+                'margin': 0.8,  # 融资融券资金权重为0.8
                 # 'etf': 0.5,  # ETF资金权重为0.5
                 # 'fund_estimate': 0.6  # 基金估算资金权重为0.6
             }
@@ -163,6 +164,8 @@ class Evaluator:
                     fund_flow_df = fund_flows_dfs[fund_flow_name]
                     industry_inflow_history = fund_flow_df[industry].loc[history_start_date:history_end_date]
                     effect = self.calculate_irf_for_each_fund_flow(industry, industry_inflow_history, history_return, fund_flow_name)
+                    # industry_inflow_sneak = fund_flow_df[industry].loc[history_start_date:next_week_end_date]
+                    # effect = self.calculate_irf_for_each_fund_flow(industry, industry_inflow_sneak, history_return_sneak, fund_flow_name)
                     if not np.isnan(effect):
                         weighted_effect = effect * weight  # 计算加权效应
                         weighted_effects.append(weighted_effect)
@@ -174,6 +177,7 @@ class Evaluator:
             # 根据IRF的结果排序行业
             sorted_industries = sorted(irf_results, key=irf_results.get, reverse=True)
             # 计算实际涨跌幅排序
+            next_week_return = df_daily_return.loc[next_week_start_date:next_week_end_date].sum()
             sorted_real_returns = next_week_return.sort_values(ascending=False).index.tolist()
 
             # 计算秩相关
@@ -191,7 +195,7 @@ class Evaluator:
 
         merged = pd.concat([history_return[industry].rename('return'), industry_inflow_history], axis=1).dropna()
 
-        if len(merged) < 25:  # 确保有足够的数据点进行VAR分析
+        if len(merged) < 10:  # 确保有足够的数据点进行VAR分析
             return np.nan
 
         try:
@@ -203,6 +207,7 @@ class Evaluator:
                                              merged.columns.get_loc(industry)])
             # 获取最近一期的资金流入数据
             latest_inflow = industry_inflow_history.iloc[-5:].sum()
+            # latest_inflow = industry_inflow_history.iloc[-10:-5].sum()
             predicted_impact = latest_inflow * cumulative_response
 
             return predicted_impact
