@@ -8,6 +8,7 @@ mpl.rcParams['axes.unicode_minus'] = False           # 解决保存图像是负�
 
 # Parameters
 file_path = rf"D:\WPS云盘\WPS云盘\工作-麦高\研究trial\footprint.xlsx"
+sheet_name = '上证'
 n_y_ticks = 15  # Number of y-ticks to display
 # buy_color = 'red'
 # sell_color = 'green'
@@ -16,7 +17,7 @@ base_color_sell = (0, 1, 0)  # 绿色
 middle_space = 0.08  # Proportion of the figure width to leave in the middle
 
 # Read and preprocess the data
-data = pd.read_excel(file_path, skiprows=7)
+data = pd.read_excel(file_path, skiprows=7, sheet_name=sheet_name)
 data = data.rename(columns={'时间': 'time', '收盘价': 'close', '成交额': 'volume'})[['time', 'close', 'volume']]
 data['time'] = pd.to_datetime(data['time'], errors='coerce')
 # 使用七天前的日期进行筛选
@@ -69,8 +70,8 @@ fig = plt.figure(facecolor='white', edgecolor='none')
 left_width, right_start = (1 - middle_space) / 2, (1 - middle_space) / 2 + middle_space
 ax_buy = fig.add_axes([0.05, 0.1, left_width - 0.05, 0.8])
 ax_sell = fig.add_axes([right_start, 0.1, left_width - 0.05, 0.8])
-ax_buy.set_xlim(0, 1.2*max_value)
-ax_sell.set_xlim(0, 1.2*max_value)
+ax_buy.set_xlim(0, 1.3*max_value)
+ax_sell.set_xlim(0, 1.3*max_value)
 
 # Plotting
 cumulative_buy = dict.fromkeys(binned_data['close'].unique(), 0)
@@ -141,7 +142,7 @@ for price, label in zip([latest_close_price, max_net_inflow, max_net_outflow, ma
 ax_buy.legend(title='Trade Date', loc='upper left', fancybox=True)
 ax_buy.set_title('主动买额(亿)')
 ax_sell.set_title('主动卖额(亿)')
-fig.suptitle(f'Volume by price 从{time_start} 至 {time_end}', fontsize=10)
+fig.suptitle(f'{sheet_name} Volume by price 从{time_start} 至 {time_end}', fontsize=10)
 
 # Layout adjustment and show figure
 fig.tight_layout()
