@@ -19,6 +19,11 @@ middle_space = 0.08  # Proportion of the figure width to leave in the middle
 data = pd.read_excel(file_path, skiprows=7)
 data = data.rename(columns={'时间': 'time', '收盘价': 'close', '成交额': 'volume'})[['time', 'close', 'volume']]
 data['time'] = pd.to_datetime(data['time'], errors='coerce')
+# 使用七天前的日期进行筛选
+seven_days_ago = pd.Timestamp.now() - pd.Timedelta(days=7)
+data = data[data['time'] > seven_days_ago]
+
+
 data['close'] = pd.to_numeric(data['close'], errors='coerce')
 data['volume'] = pd.to_numeric(data['volume'], errors='coerce') / 1e8
 data.dropna(subset=['time', 'close'], inplace=True)
@@ -48,12 +53,16 @@ binned_data = price_grouped_data.groupby(['month_day','group']).agg({'active_buy
 binned_data['close'] = binned_data['group'].apply(lambda x: x.mid)
 binned_data.drop('group', axis=1, inplace=True)
 
+price_binned_data = price_grouped_data.groupby(['group']).agg({'active_buy': 'sum', 'active_sell': 'sum'}).reset_index()
+price_binned_data['close'] = price_binned_data['group'].apply(lambda x: x.mid)
+price_binned_data.drop('group', axis=1, inplace=True)
+
 # Calculate specific parameters
-max_net_inflow = binned_data.loc[binned_data['active_buy'] - binned_data['active_sell'] == (binned_data['active_buy'] - binned_data['active_sell']).max(), 'close'].values[0]
-max_net_outflow = binned_data.loc[binned_data['active_sell'] - binned_data['active_buy'] == (binned_data['active_sell'] - binned_data['active_buy']).max(), 'close'].values[0]
-binned_data['volume'] = binned_data['active_sell'] + binned_data['active_buy']
-max_volume_price = binned_data.loc[binned_data['volume'] == binned_data['volume'].max(), 'close'].values[0]
-max_value = max(binned_data['active_buy'].max(), binned_data['active_sell'].max())
+max_net_inflow = price_binned_data.loc[price_binned_data['active_buy'] - price_binned_data['active_sell'] == (price_binned_data['active_buy'] - price_binned_data['active_sell']).max(), 'close'].values[0]
+max_net_outflow = price_binned_data.loc[price_binned_data['active_sell'] - price_binned_data['active_buy'] == (price_binned_data['active_sell'] - price_binned_data['active_buy']).max(), 'close'].values[0]
+price_binned_data['volume'] = price_binned_data['active_sell'] + price_binned_data['active_buy']
+max_volume_price = price_binned_data.loc[price_binned_data['volume'] == price_binned_data['volume'].max(), 'close'].values[0]
+max_value = max(price_binned_data['active_buy'].max(), price_binned_data['active_sell'].max())
 evenly_spaced_prices = np.linspace(price_min, price_max, n_y_ticks)
 
 # Create the figure with custom axes
@@ -61,8 +70,8 @@ fig = plt.figure(facecolor='white', edgecolor='none')
 left_width, right_start = (1 - middle_space) / 2, (1 - middle_space) / 2 + middle_space
 ax_buy = fig.add_axes([0.05, 0.1, left_width - 0.05, 0.8])
 ax_sell = fig.add_axes([right_start, 0.1, left_width - 0.05, 0.8])
-ax_buy.set_xlim(0, 1.5*max_value)
-ax_sell.set_xlim(0, 1.5*max_value)
+ax_buy.set_xlim(0, 1.2*max_value)
+ax_sell.set_xlim(0, 1.2*max_value)
 
 # Plotting
 cumulative_buy = dict.fromkeys(binned_data['close'].unique(), 0)
