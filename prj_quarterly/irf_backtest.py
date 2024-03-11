@@ -140,8 +140,6 @@ class Evaluator:
             history_return = df_daily_return.loc[history_start_date:history_end_date]
             history_return_sneak = df_daily_return.loc[history_start_date:next_week_end_date]
 
-
-            irf_results = {}
             # 赋予不同资金流不同的权重
             fund_flows_with_weights = {
                 # 'north_inflow': 1.0,  # 举例，北向资金权重为1.0
@@ -156,7 +154,7 @@ class Evaluator:
                 'etf': df_etf,
                 'fund_estimate': df_fund_estimate
             }
-
+            irf_results = {}
             for industry in df_daily_return.columns:
                 weighted_effects = []
 
@@ -201,14 +199,35 @@ class Evaluator:
         try:
             model = sm.tsa.VAR(merged)
             results = model.fit(maxlags=5, ic='aic')
-            irf = results.irf(10).irfs
-            # 获取冲击变量（资金流入）对响应变量（行业收益率）的累积影响
-            cumulative_response = np.sum(irf[:5, merged.columns.get_loc(f'return'),
-                                             merged.columns.get_loc(industry)])
-            # 获取最近一期的资金流入数据
-            latest_inflow = industry_inflow_history.iloc[-5:].sum()
-            # latest_inflow = industry_inflow_history.iloc[-10:-5].sum()
-            predicted_impact = latest_inflow * cumulative_response
+
+            # # 第一种方式：irf乘以资金流入
+            # irf = results.irf(10).irfs
+            # # 获取冲击变量（资金流入）对响应变量（行业收益率）的累积影响
+            # cumulative_response = np.sum(irf[:5, merged.columns.get_loc(f'return'),
+            #                                  merged.columns.get_loc(industry)])
+            # # 获取最近一期的资金流入数据
+            # latest_inflow = industry_inflow_history.iloc[-5:].sum()
+            # # latest_inflow = industry_inflow_history.iloc[-10:-5].sum()
+            # predicted_impact = latest_inflow * cumulative_response
+
+            # 第二种方式：irf自带的forecast
+            # 确定需要为forecast方法提供的观测值数量，即模型的最大滞后期
+            maxlags = results.k_ar
+
+            # 获取最后几个观测值，其行数应与最大滞后期相匹配
+            last_observations = merged.values[-maxlags:]
+
+            # 使用forecast方法进行预测，这里假设我们预测未来5期
+            forecast_steps = 5
+            forecast_result = results.forecast(y=last_observations, steps=forecast_steps)
+
+            # 预测的结果是一个数组，其中每一行对应一个未来时期的预测值
+            # 假设您感兴趣的响应变量（如行业收益率）位于第0列
+            predicted_return = forecast_result[:, merged.columns.get_loc(f'return')]
+
+            # 预测结果可能需要进一步处理以匹配具体的业务逻辑和需求
+            # 例如，您可能只关心预测期间的累积收益率变化
+            predicted_impact = predicted_return.sum()
 
             return predicted_impact
         except Exception as e:
