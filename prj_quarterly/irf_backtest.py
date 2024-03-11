@@ -10,6 +10,7 @@ from base_config import BaseConfig
 from pgdb_updater_base import PgDbUpdaterBase
 from 基金总仓位测算demo import CalcFundPosition
 from scipy.stats import spearmanr
+import matplotlib.pyplot as plt
 
 
 class DataProcessor(PgDbUpdaterBase):
@@ -102,7 +103,7 @@ class Evaluator:
     def __init__(self, data: DataProcessor):
         self.data = data
         self.calc_weekly_irfs()
-        self.evaluate_weekly_spearman()
+        self.predict_next_week_return()
         self.calc_backtest_nav()
 
 
@@ -188,7 +189,7 @@ class Evaluator:
         if industry_inflow_history.empty or industry not in history_return:
             return np.nan
 
-        merged = pd.concat([history_return[industry], industry_inflow_history], axis=1).dropna()
+        merged = pd.concat([history_return[industry].rename('return'), industry_inflow_history], axis=1).dropna()
 
         if len(merged) < 25:  # 确保有足够的数据点进行VAR分析
             return np.nan
@@ -196,21 +197,30 @@ class Evaluator:
         try:
             model = sm.tsa.VAR(merged)
             results = model.fit(maxlags=5, ic='aic')
-            irf = results.irf(5).irfs
-            # 获取冲击变量（资金流入）第1列对响应变量（行业收益率）第0列的累积影响
-            cumulative_response = np.sum(irf[:5, 1, 0])
-            return cumulative_response
+            irf = results.irf(10).irfs
+            # 获取冲击变量（资金流入）对响应变量（行业收益率）的累积影响
+            cumulative_response = np.sum(irf[:5, merged.columns.get_loc(f'return'),
+                                             merged.columns.get_loc(industry)])
+            # 获取最近一期的资金流入数据
+            latest_inflow = industry_inflow_history.iloc[-5:].sum()
+            predicted_impact = latest_inflow * cumulative_response
+
+            return predicted_impact
         except Exception as e:
             print(f"Error in VAR model for {fund_flow_name} {industry}: {e}")
             return 0
 
-    def evaluate_weekly_spearman(self):
+    def predict_next_week_return(self):
+        """
+        将本周累积净流入作为冲击，计算下周（取5日、10日、30日的响应累积）具体收益率
+        """
         pass
 
     def calc_backtest_nav(self):
         pass
 
 
-base_config = BaseConfig('quarterly')
-data = DataProcessor(base_config)
-evaluator = Evaluator(data)
+if __name__ == "__main__":
+    base_config = BaseConfig('quarterly')
+    data = DataProcessor(base_config)
+    evaluator = Evaluator(data)
