@@ -143,9 +143,9 @@ class Evaluator:
             # 赋予不同资金流不同的权重
             fund_flows_with_weights = {
                 # 'north_inflow': 1.0,  # 举例，北向资金权重为1.0
-                'margin': 0.8,  # 融资融券资金权重为0.8
+                # 'margin': 0.8,  # 融资融券资金权重为0.8
                 # 'etf': 0.5,  # ETF资金权重为0.5
-                # 'fund_estimate': 0.6  # 基金估算资金权重为0.6
+                'fund_estimate': 0.6  # 基金估算资金权重为0.6
             }
 
             fund_flows_dfs = {
@@ -213,9 +213,11 @@ class Evaluator:
             # 第二种方式：irf自带的forecast
             # 确定需要为forecast方法提供的观测值数量，即模型的最大滞后期
             maxlags = results.k_ar
+            print(f'maxlags:{maxlags}')
 
             # 获取最后几个观测值，其行数应与最大滞后期相匹配
-            last_observations = merged.values[-maxlags:]
+            last_observations = merged.values[-maxlags-1:]
+            # last_observations = merged.values[-9-maxlags:-3]
 
             # 使用forecast方法进行预测，这里假设我们预测未来5期
             forecast_steps = 5
