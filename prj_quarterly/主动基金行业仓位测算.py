@@ -4,6 +4,7 @@ import pandas as pd
 from filterpy.kalman import KalmanFilter
 from sklearn.linear_model import Lasso
 from scipy.stats import spearmanr
+import matplotlib.pyplot as plt
 
 from WindPy import w
 
@@ -24,7 +25,7 @@ class CalcFundPosition(PgDbUpdaterBase):
         self.prepare_data()
 
     def config_quarterly_dates(self):
-        self.quarterly_dates = w.tdays('2018-11-20', '2024-03-01', "Period=Q").Data[0]
+        self.quarterly_dates = w.tdays('2018-11-20', '2024-01-01', "Period=Q").Data[0]
         self.quarterly_dates_str = [str(x) for x in self.quarterly_dates]
 
         # 四个季度的末尾月份，用于确定季度
@@ -238,7 +239,7 @@ class CalcFundPosition(PgDbUpdaterBase):
         kf = KalmanFilter(dim_x=industry_amount, dim_z=1)  # 初始化卡尔曼滤波器
 
         # 定义初始状态 (行业持仓比例)
-        kf.x = self.initial_holdings_ratio.to_numpy()
+        kf.x = self.initial_holdings_ratio.copy(deep=True).to_numpy()
         cash_index = self.initial_holdings_ratio.index.get_loc("现金")
         bond_index = self.initial_holdings_ratio.index.get_loc("债券")
 
@@ -246,15 +247,15 @@ class CalcFundPosition(PgDbUpdaterBase):
         kf.F = np.eye(industry_amount)  # transition_matrices
 
         # # 定义状态协方差
-        # kf.P *= 1e-2
-        # # 由于我们假设没有噪声，这里将测量噪声和过程噪声设置得很小
-        # kf.R = np.array([[1e-4]])  # 观测噪声协方差
-        # kf.Q = np.eye(industry_amount) * 1e-6
+        kf.P *= 1e-2
+        # 由于我们假设没有噪声，这里将测量噪声和过程噪声设置得很小
+        kf.R = np.array([[1e-3]])  # 观测噪声协方差
+        kf.Q = np.eye(industry_amount) * 1e-4
 
         # 定义状态协方差
-        kf.P *= 1e-2
-        kf.R = self.estimate_R(fund_daily_return['日度收益率'])  # 根据基金日度收益率波动性动态估计观测噪声
-        kf.Q = self.estimate_Q(industry_daily_return, self.initial_holdings_ratio)  # 根据行业持仓比例变化的历史波动性动态估计过程噪声
+        # kf.P *= 1e-2
+        # kf.R = self.estimate_R(fund_daily_return['日度收益率'])  # 根据基金日度收益率波动性动态估计观测噪声
+        # kf.Q = self.estimate_Q(industry_daily_return, self.initial_holdings_ratio)  # 根据行业持仓比例变化的历史波动性动态估计过程噪声
 
         # 准备观测数据
         measurements = fund_daily_return['日度收益率'].dropna().to_numpy()
@@ -484,7 +485,6 @@ class CalcFundPosition(PgDbUpdaterBase):
         # 将评估结果转换为DataFrame
         evaluation_df = pd.DataFrame(evaluation_results, index=pre_calibration_positions.columns)
 
-
         return evaluation_df
 
 
@@ -496,6 +496,7 @@ columns = [
     '现金'
 ]
 
+# if __name__ == "do not run":
 if __name__ == "__main__":
     base_config = BaseConfig('quarterly')
     obj = CalcFundPosition(base_config, initial_q_str='21q4', calibrate=True)
@@ -549,27 +550,30 @@ if __name__ == "__main__":
     pre_calibration_positions = pre_calibration_positions.reindex(index=columns)
     position_error = position_error.reindex(index=columns)
 
-    file_path = rf"{obj.base_config.excels_path}基金仓位测算\全基金仓位测算自21q4(展示).xlsx"
-    with pd.ExcelWriter(file_path) as writer:
-        state_estimates_post.to_excel(writer, sheet_name='卡尔曼滤波结果', index=True)
-        # active_adjustments.to_excel(writer, sheet_name='主动调仓(全部持仓占比)', index=True)
-        active_adjustments_cumsum.to_excel(writer, sheet_name='主动调仓累积(全部持仓占比)', index=True)
-        active_adjustments_cumsum.rolling(window=5).mean().to_excel(writer, sheet_name='主动调仓累积(ma5)', index=True)
-        active_adjustments_amount.to_excel(writer, sheet_name='主动调仓资金流(亿元)', index=True)
-        obj.industry_index.to_excel(writer, sheet_name='行业指数', index=True)
-        obj.asset_total_base.to_excel(writer, sheet_name='基期资产市值', index=True)
-        # 使用 pd.concat 横向合并这些 Series
-        # res_start_sorted = res_start.sort_values(ascending=False).reset_index(name='22q4实际仓位')
-        # res_real_sorted = res_real.sort_values(ascending=False).reset_index(name='23q2实际仓位')
-        # res_estimate_sorted = res_estimate.sort_values(ascending=False).reset_index(name='23q2测算仓位')
-        # combined_df = pd.concat([res_start_sorted, res_real_sorted, res_estimate_sorted], axis=1)
-        # combined_df.to_excel(writer, sheet_name='仓位截面(排序后)', index=False)
+    if __name__ == "do not save":
+    # if __name__ == "__main__":
+        file_path = rf"{obj.base_config.excels_path}基金仓位测算\全基金仓位测算自21q4(展示nocali).xlsx"
+        with pd.ExcelWriter(file_path) as writer:
+            state_estimates_post.to_excel(writer, sheet_name='卡尔曼滤波结果', index=True)
+            # active_adjustments.to_excel(writer, sheet_name='主动调仓(全部持仓占比)', index=True)
+            active_adjustments_cumsum.to_excel(writer, sheet_name='主动调仓累积(全部持仓占比)', index=True)
+            active_adjustments_cumsum.rolling(window=5).mean().to_excel(writer, sheet_name='主动调仓累积(ma5)', index=True)
+            # active_adjustments_amount.to_excel(writer, sheet_name='主动调仓资金流(亿元)', index=True)
+            active_adjustments_amount.rolling(window=5).sum().to_excel(writer, sheet_name='主动调仓资金流(5日累计)', index=True)
+            obj.industry_index.to_excel(writer, sheet_name='行业指数', index=True)
+            obj.asset_total_base.to_excel(writer, sheet_name='基期资产市值', index=True)
+            # 使用 pd.concat 横向合并这些 Series
+            # res_start_sorted = res_start.sort_values(ascending=False).reset_index(name='22q4实际仓位')
+            # res_real_sorted = res_real.sort_values(ascending=False).reset_index(name='23q2实际仓位')
+            # res_estimate_sorted = res_estimate.sort_values(ascending=False).reset_index(name='23q2测算仓位')
+            # combined_df = pd.concat([res_start_sorted, res_real_sorted, res_estimate_sorted], axis=1)
+            # combined_df.to_excel(writer, sheet_name='仓位截面(排序后)', index=False)
 
-        pre_calibration_positions.to_excel(writer, sheet_name='校准前仓位', index=True)
-        post_calibration_positions.to_excel(writer, sheet_name='校准后仓位', index=True)
-        position_error.to_excel(writer, sheet_name='校准前后仓位误差', index=True)
+            pre_calibration_positions.to_excel(writer, sheet_name='校准前仓位', index=True)
+            post_calibration_positions.to_excel(writer, sheet_name='校准后仓位', index=True)
+            position_error.to_excel(writer, sheet_name='校准前后仓位误差', index=True)
 
-        return_errors.to_excel(writer, sheet_name='日度收益误差', index=True)
-        return_errors_noise.to_excel(writer, sheet_name='日度收益误差noise', index=True)
-        # state_estimates_noise.to_excel(writer, sheet_name='噪声结果', index=True)
-        # state_estimates_lasso.to_excel(writer, sheet_name='lasso结果', index=True)
+            return_errors.to_excel(writer, sheet_name='日度收益误差', index=True)
+            return_errors_noise.to_excel(writer, sheet_name='日度收益误差noise', index=True)
+            # state_estimates_noise.to_excel(writer, sheet_name='噪声结果', index=True)
+            # state_estimates_lasso.to_excel(writer, sheet_name='lasso结果', index=True)
