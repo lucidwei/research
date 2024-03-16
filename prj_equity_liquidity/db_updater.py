@@ -117,9 +117,9 @@ class DatabaseUpdater(PgDbUpdaterBase):
 
             case 'major_holder':
                 # 检查今日出现的股票是否存在于product_static_info (type_identifier='major_shareholder')
-                print(f'Wind downloading shareplanincreasereduce for {self.tradedays_str[-1]}')
+                print(f'Wind downloading shareplanincreasereduce for {self.all_dates_str[-1]}')
                 downloaded_df = w.wset("shareplanincreasereduce",
-                                       f"startdate={self.tradedays_str[-1]};enddate={self.tradedays_str[-1]};"
+                                       f"startdate={self.all_dates_str[-1]};enddate={self.all_dates_str[-1]};"
                                        f"datetype=firstannouncementdate;type=all;field=windcode", usedf=True)[1]
                 if downloaded_df.empty:
                     required_value = []
@@ -137,8 +137,9 @@ class DatabaseUpdater(PgDbUpdaterBase):
             case _:
                 raise Exception(f'type_identifier {type_identifier} not supported')
 
-        existing_value = self.select_existing_values_in_target_column(table_name, check_column,
-                                                                      ('type_identifier', type_identifier))
+        # existing_value = self.select_existing_values_in_target_column(table_name, check_column,
+        #                                                               ('type_identifier', type_identifier))
+        existing_value = self.select_existing_values_in_target_column(table_name, check_column)
         missing_value = set(required_value) - set(existing_value)
         if missing_value:
             return True
@@ -879,7 +880,7 @@ class MajorHolderUpdater:
         if len(existing_dates) == 0:
             missing_dates = self.db_updater.tradedays
         else:
-            missing_dates = self.db_updater.get_missing_dates(all_dates=self.db_updater.tradedays, existing_dates=existing_dates)
+            missing_dates = self.db_updater.get_missing_dates(all_dates=self.db_updater.all_dates, existing_dates=existing_dates)
 
         if not missing_dates:
             print(f"No missing dates for check_data_table, type_identifier=major_holder")
@@ -890,7 +891,7 @@ class MajorHolderUpdater:
         if len(missing_dates) == 0:
             return
 
-        for date in missing_dates:
+        for date in missing_dates[::-1]:
             print(f'Wind downloading shareplanincreasereduce for {date}')
             downloaded_df = w.wset("shareplanincreasereduce",
                                    f"startdate={date};enddate={date};datetype=firstannouncementdate;type=all;"
@@ -938,7 +939,7 @@ class MajorHolderUpdater:
 
     def _upload_missing_data_major_holder(self, missing_dates):
         # TODO: quota充裕时要全部重下一遍，之前误筛掉太多了
-        for date in missing_dates:
+        for date in missing_dates[::-1]:
             print(f'Wind downloading shareplanincreasereduce for {date}')
             downloaded_df = w.wset("shareplanincreasereduce",
                                    f"startdate={date};enddate={date};datetype=firstannouncementdate;type=all;"
@@ -970,7 +971,7 @@ class MajorHolderUpdater:
             for i, row in selected_df.iterrows():
                 code = row['code']
                 print(f'Wind downloading mkt_cap_ard for {code} on {date}')
-                info_df = w.wsd(code, "mkt_cap_ard", f'{date}', f'{date}', "unit=1;industryType=1",
+                info_df = w.wsd(code, "mkt_cap_ard", f'{date-timedelta(days=2)}', f'{date}', "unit=1;industryType=1",
                                 usedf=True)[1]
                 if info_df.empty or 'MKT_CAP_ARD' not in info_df.columns:
                     print(f"Missing data for {code} on {date}, no data downloaded for mkt_cap_ard")
@@ -1220,3 +1221,11 @@ class BonusUpdater:
                                    value_name='value').dropna()
         print('uploading bonus_history...')
         df_upload.to_sql('markets_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
+
+
+class IPOUpdater:
+    """
+    IPO、再融资等，直接用wset-股权融资规模(Wind统计)
+    """
+    def __init__(self, db_updater):
+        self.db_updater = db_updater
