@@ -7,7 +7,7 @@ mpl.rcParams['font.sans-serif'] = ['STZhongsong']    # 指定默认字体：解�
 mpl.rcParams['axes.unicode_minus'] = False           # 解决保存图像是负号'-'显示为方块的问题
 
 # Parameters
-file_path = rf"D:\WPS云盘\WPS云盘\工作-麦高\研究trial\footprint.xlsx"
+file_path = rf"D:\WPS云盘\WPS云盘\工作-麦高\定期汇报\日报模板整理\python用\footprint.xlsx"
 sheet_name = '上证'
 n_y_ticks = 15  # Number of y-ticks to display
 # buy_color = 'red'
