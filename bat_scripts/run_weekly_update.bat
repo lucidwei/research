@@ -6,8 +6,8 @@ for /F "tokens=*" %%a in ('powershell -Command "(Get-Date).DayOfWeek.value__"') 
 
 echo Day of the week: %dayOfWeek%
 
-:: 检查当前是否为周六(7)
-if "%dayOfWeek%"!="7" goto end
+:: 检查当前是否为周六(6)
+if not "%dayOfWeek%"=="6" goto end
 
 :: 设置日志文件路径和名称
 set logPath=E:\BaiduNetdiskWorkspace\FICC_research\bat_scripts\logs
@@ -29,6 +29,7 @@ echo Log file will be: %logFile%
 :: 运行Python脚本并记录输出到日志文件
 echo Running the Python script...
 :: 使用 PowerShell 运行 Python 脚本，并使用 Tee-Object 同时输出到文件和控制台
+SET PYTHONPATH=E:\BaiduNetdiskWorkspace\FICC_research
 powershell -Command "D:\ProgramData\anaconda3\envs\touyan\python.exe E:\BaiduNetdiskWorkspace\FICC_research\prj_equity_liquidity\run_liquidity_updater.py | Tee-Object -FilePath '%logFile%'"
 
 if errorlevel 1 (
