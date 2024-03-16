@@ -8,7 +8,7 @@ import statsmodels.api as sm
 from datetime import timedelta
 from base_config import BaseConfig
 from pgdb_updater_base import PgDbUpdaterBase
-from 基金总仓位测算demo import CalcFundPosition
+from 主动基金行业仓位测算 import CalcFundPosition
 from scipy.stats import spearmanr
 import matplotlib.pyplot as plt
 
@@ -142,9 +142,9 @@ class Evaluator:
 
             # 赋予不同资金流不同的权重
             fund_flows_with_weights = {
-                # 'north_inflow': 1.0,  # 举例，北向资金权重为1.0
-                # 'margin': 0.8,  # 融资融券资金权重为0.8
-                # 'etf': 0.5,  # ETF资金权重为0.5
+                'north_inflow': 1.0,  # 举例，北向资金权重为1.0
+                'margin': 0.8,  # 融资融券资金权重为0.8
+                'etf': 0.5,  # ETF资金权重为0.5
                 'fund_estimate': 0.6  # 基金估算资金权重为0.6
             }
 

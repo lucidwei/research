@@ -13,10 +13,11 @@ from pgdb_updater_base import PgDbUpdaterBase
 
 
 class CalcFundPosition(PgDbUpdaterBase):
-    def __init__(self, base_config: BaseConfig, initial_q_str: str, calibrate: bool):
+    def __init__(self, base_config: BaseConfig, initial_q_str: str, calibrate: bool, date_cutoff: str):
         super().__init__(base_config)
         self.initial_q_str = initial_q_str
         self.calibrate = calibrate
+        self.date_cutoff = pd.to_datetime(date_cutoff)
         self.config_quarterly_dates()
         self.load_asset_positions()
         self.load_industry_return()
@@ -189,8 +190,12 @@ class CalcFundPosition(PgDbUpdaterBase):
 
     def prepare_data(self):
         # 对齐日期
+        self.industry_index = self.industry_index.loc[self.industry_index.index > self.初始持仓日期]
         self.industry_return = self.行业日度收益率.loc[self.行业日度收益率.index > self.初始持仓日期]
         self.total_return = self.total_return.loc[self.total_return.index > self.初始持仓日期]
+        # if self.date_cutoff:
+        #     self.industry_return = self.行业日度收益率.loc[self.行业日度收益率.index < self.date_cutoff]
+        #     self.total_return = self.total_return.loc[self.total_return.index < self.date_cutoff]
 
     def estimate_R(self, fund_daily_return):
         # 计算基金日度收益率的方差
@@ -440,9 +445,9 @@ class CalcFundPosition(PgDbUpdaterBase):
         post_calibration_positions = post_calibration_positions.astype(float)
         # 初始化存储评估结果的字典
         evaluation_results = {
-            'overlap_count': [],  # 重合的行业数
-            'spearman_corr': [],  # 斯皮尔曼相关性系数
-            'change_spearman_corr': [np.nan]  # 加仓行业排名变化的斯皮尔曼相关性系数
+            '前十行业重合数': [],  # 重合的行业数
+            '仓位排名相关性': [],  # 斯皮尔曼相关性系数
+            '仓位变化排名相关性': [np.nan]  # 加仓行业排名变化的斯皮尔曼相关性系数
         }
 
         # 遍历所有季度
@@ -453,7 +458,7 @@ class CalcFundPosition(PgDbUpdaterBase):
 
             # 计算重合的行业数
             overlap_count = len(set(estimated_top10.index) & set(actual_top10.index))
-            evaluation_results['overlap_count'].append(overlap_count)
+            evaluation_results['前十行业重合数'].append(overlap_count)
 
             # 计算趋势一致性 - 斯皮尔曼相关性系数
             # 获取预估和实际的所有行业排名
@@ -462,7 +467,7 @@ class CalcFundPosition(PgDbUpdaterBase):
 
             # 计算斯皮尔曼相关性系数
             corr, _ = spearmanr(estimated_rankings, actual_rankings)
-            evaluation_results['spearman_corr'].append(corr)
+            evaluation_results['仓位排名相关性'].append(corr)
 
         # 遍历除了第一个季度之外的所有季度
         quarters = pre_calibration_positions.columns
@@ -480,7 +485,7 @@ class CalcFundPosition(PgDbUpdaterBase):
 
             # 计算斯皮尔曼相关性系数
             corr, _ = spearmanr(estimated_rankings, actual_rankings)
-            evaluation_results['change_spearman_corr'].append(corr)
+            evaluation_results['仓位变化排名相关性'].append(corr)
 
         # 将评估结果转换为DataFrame
         evaluation_df = pd.DataFrame(evaluation_results, index=pre_calibration_positions.columns)
@@ -499,7 +504,7 @@ columns = [
 # if __name__ == "do not run":
 if __name__ == "__main__":
     base_config = BaseConfig('quarterly')
-    obj = CalcFundPosition(base_config, initial_q_str='21q4', calibrate=True)
+    obj = CalcFundPosition(base_config, initial_q_str='22q4', calibrate=True, date_cutoff='2024-03-09')
 
     state_estimates_post, return_errors = obj.post_constraint_kf(obj.industry_return, obj.total_return)
     return_errors_abs_mean = sum(abs(x) for x in return_errors.tolist()) / len(return_errors)
@@ -550,9 +555,12 @@ if __name__ == "__main__":
     pre_calibration_positions = pre_calibration_positions.reindex(index=columns)
     position_error = position_error.reindex(index=columns)
 
-    if __name__ == "do not save":
-    # if __name__ == "__main__":
-        file_path = rf"{obj.base_config.excels_path}基金仓位测算\全基金仓位测算自21q4(展示nocali).xlsx"
+    # 计算总仓位
+    state_estimates_post['总仓位'] = state_estimates_post.drop(columns=['现金', '债券']).sum(axis=1)
+
+    # if __name__ == "do not save":
+    if __name__ == "__main__":
+        file_path = rf"{obj.base_config.excels_path}基金仓位测算\全基金仓位测算自22q4(总仓位cali).xlsx"
         with pd.ExcelWriter(file_path) as writer:
             state_estimates_post.to_excel(writer, sheet_name='卡尔曼滤波结果', index=True)
             # active_adjustments.to_excel(writer, sheet_name='主动调仓(全部持仓占比)', index=True)
@@ -572,6 +580,7 @@ if __name__ == "__main__":
             pre_calibration_positions.to_excel(writer, sheet_name='校准前仓位', index=True)
             post_calibration_positions.to_excel(writer, sheet_name='校准后仓位', index=True)
             position_error.to_excel(writer, sheet_name='校准前后仓位误差', index=True)
+            evaluation_results.to_excel(writer, sheet_name='评估结果', index=True)
 
             return_errors.to_excel(writer, sheet_name='日度收益误差', index=True)
             return_errors_noise.to_excel(writer, sheet_name='日度收益误差noise', index=True)
