@@ -8,7 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pylab import mpl
 from matplotlib import cm
-from datetime import timedelta
+from datetime import datetime
 mpl.rcParams['font.sans-serif'] = ['STZhongsong']    # 指定默认字体：解决plot不能显示中文问题
 mpl.rcParams['axes.unicode_minus'] = False           # 解决保存图像是负号'-'显示为方块的问题
 
@@ -16,8 +16,10 @@ mpl.rcParams['axes.unicode_minus'] = False           # 解决保存图像是负号'-'显示
 file_path = rf"D:\WPS云盘\WPS云盘\工作-麦高\定期汇报\日报模板整理\python用"
 sheet_name = '分钟'
 draw_both_sides = True
+latest_n_days = 5  # >0,最近n个交易日; =0,今天; <0, 今天往前推几天
 # 用户定义的截断点，可以根据实际情况进行调整
-user_break_points分钟 = ['10:50', '14:18']
+# user_break_points分钟 = ['10:50', '14:18']
+user_break_points分钟 = ['19-10:14', '20-09:36', '21-10:00', '22-10:50']
 # 用户定义的截断点，对于日度数据，这些是日期
 user_break_points日K = ['2024-01-23', '2024-01-26', '2024-02-05', '2024-02-23']
 
@@ -33,13 +35,21 @@ if sheet_name == '日K':
     industry_data.index = pd.to_datetime(industry_data.index)
 else:
     user_break_points = user_break_points分钟
-    # 暂时不做跨日画图
-    today_date = pd.Timestamp.now().normalize()  # 获取当前日期并归一化时间到午夜
-    target_date = today_date #- timedelta(days=2) # 回溯历史日期画图用
-    # 检查target_date是否存在于industry_data.index.date中
     industry_data.index = pd.to_datetime(industry_data.index)
-    assert target_date.date() in industry_data.index.date, f"数据未更新，目标日期 {target_date.date()} 不在industry_data中"
-    industry_data = industry_data[industry_data.index.date == target_date]
+    today_date = pd.Timestamp.now().normalize()  # 获取当前日期并归一化时间到午夜
+    if latest_n_days > 0:
+        # 选取最近N个交易日的数据
+        unique_dates = industry_data.index.normalize().unique()
+        target_dates = unique_dates[-latest_n_days:]  # 获取最后N个唯一日期
+        target_date = today_date
+        industry_data = industry_data[industry_data.index.normalize().isin(target_dates)]
+    else:
+        if latest_n_days == 0:
+            target_date = today_date  # 使用今天的数据
+        else:
+            target_date = today_date - pd.Timedelta(days=-latest_n_days)  # 使用昨天的单日日内数据
+        assert target_date.date() in industry_data.index.date, f"数据未更新，目标日期 {target_date.date()} 不在industry_data中"
+        industry_data = industry_data[industry_data.index.date == target_date]
 
 weights_df.set_index('行业名称', inplace=True)
 index_data = industry_data.pop("上证指数").dropna().astype(float)
@@ -53,9 +63,17 @@ industry_percentage_changes = industry_data.pct_change().fillna(0)
 # 因为第一天是没有变化率的，因此后面区间统计时不包含start日期(industry_data.index > start) & (industry_data.index <= end)
 if sheet_name == '分钟':
     # 将用户定义的截断点转换为时间戳格式，并添加数据的第一个和最后一个时间点
-    break_points = [pd.Timestamp(industry_data.index.min())] + \
-                   [pd.Timestamp(industry_data.index[0].date().strftime('%Y-%m-%d') + ' ' + t) for t in user_break_points] + \
-                   [pd.Timestamp(industry_data.index.max())]
+    break_points = []
+    for t in user_break_points分钟:
+        if '-' in t:  # 检测是否指定了日期
+            day, time = t.split('-')
+            break_point = pd.Timestamp(datetime(target_date.year, target_date.month, int(day), int(time.split(':')[0]), int(time.split(':')[1])))
+        else:  # 没有指定日期，使用当天日期
+            break_point = pd.Timestamp(datetime(target_date.year, target_date.month, target_date.day, int(t.split(':')[0]), int(t.split(':')[1])))
+        break_points.append(break_point)
+    # 添加数据的第一个和最后一个时间点
+    break_points = [industry_data.index.min()] + break_points + [industry_data.index.max()]
+
 elif sheet_name == '日K':
     # 转换为pandas的时间戳格式
     break_points = ([pd.Timestamp(industry_data.index.min())] + [pd.Timestamp(bp) for bp in user_break_points] +
@@ -107,17 +125,15 @@ def draw_chart(draw_both_sides):
     if sheet_name == '分钟':
         # 添加隔断点的竖线以及午休和跨天的标记
         for bp_idx in break_points_indices:
-            ax.axvline(x=bp_idx, color='grey', linestyle='--', linewidth=1)
-        # time_labels = index_data.index.strftime('%b-%d %H:%M')
+            ax.axvline(x=bp_idx, color='grey', linestyle='-', linewidth=1)
         day_changes = index_data.index.normalize().drop_duplicates().tolist()
         lunch_starts = [np.where(index_data.index.time == pd.Timestamp('11:30').time())[0] for _ in day_changes]
         for lunch_start in lunch_starts:
             for start in lunch_start:
                 ax.axvline(x=start, color='grey', linestyle='--', linewidth=2)
-
         # 为分钟数据添加时间标签
         ax.set_xticks(break_points_indices)
-        ax.set_xticklabels([index_data.index[i].strftime('%H:%M') for i in break_points_indices], rotation=45, ha='right')
+        ax.set_xticklabels([index_data.index[i].strftime('%d-%H:%M') for i in break_points_indices], rotation=45, ha='right')
     elif sheet_name == '日K':
         for bp_idx in break_points_indices:
             ax.axvline(x=bp_idx, color='grey', linestyle='--', linewidth=1)
