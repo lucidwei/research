@@ -53,33 +53,22 @@ data_cleaned.set_index('指标名称', inplace=True)
 data_cleaned = data_cleaned[data_cleaned.index >= pd.Timestamp('2010-01-01')]
 data_cleaned.sort_index(ascending=True, inplace=True)
 
-financials = pd.read_excel(rf"D:\WPS云盘\WPS云盘\工作-麦高\研究trial\行业财务数据.xlsx", header=3, sheet_name='油气开采')
+financials = pd.read_excel(rf"D:\WPS云盘\WPS云盘\工作-麦高\研究trial\行业财务数据.xlsx", header=3, sheet_name='油气开采q')
 financials.set_index('Date', inplace=True)
 financials = financials[financials.index >= pd.Timestamp('2010-01-01')]
 financials.sort_index(ascending=True, inplace=True)
 
-financialsq = pd.read_excel(rf"D:\WPS云盘\WPS云盘\工作-麦高\研究trial\行业财务数据.xlsx", header=3, sheet_name='油气开采q')
-financialsq.set_index('Date', inplace=True)
-financialsq = financialsq[financialsq.index >= pd.Timestamp('2010-01-01')]
-financialsq.sort_index(ascending=True, inplace=True)
 
 combined_data = pd.merge(data_cleaned, financials, left_index=True, right_index=True, how='outer')
-combined_dataq = pd.merge(data_cleaned, financialsq, left_index=True, right_index=True, how='outer')
 
 df_indicators = combined_data.loc[:, combined_data.columns != 'roe_ttm2']
 df_finalcials = combined_data.loc[:, 'roe_ttm2']
-df_indicatorsq = combined_dataq.loc[:, combined_data.columns != 'roe_ttm2']
-df_finalcialsq = combined_dataq.loc[:, 'roe_ttm2']
 
 data = df_indicators.replace(0, np.nan)
 factor = df_finalcials
-dataq = df_indicatorsq.replace(0, np.nan)
-factorq = df_finalcialsq
 
 for column in data.columns:
     data[column] = pd.to_numeric(data[column], errors='coerce')
-for column in dataq.columns:
-    dataq[column] = pd.to_numeric(dataq[column], errors='coerce')
 
 
 
@@ -94,7 +83,6 @@ def apply_dynamic_factor_model(data, k_factors):
     return results
 
 results = apply_dynamic_factor_model(data, k_factors)
-resultsq = apply_dynamic_factor_model(dataq, k_factors)
 
 # 4. 评估模型效果
 def evaluate_model(results, factor):
@@ -122,7 +110,6 @@ def evaluate_model(results, factor):
     return extracted_factor_series, corr
 
 extracted_factor_series, corr = evaluate_model(results, factor)
-extracted_factor_seriesq, corrq = evaluate_model(resultsq, factorq)
 
 print('q')
 
@@ -158,7 +145,6 @@ def plot_factors_mixed_freq(results, factor, corr):
     plt.show()
 
 plot_factors_mixed_freq(results, factor, corr)
-plot_factors_mixed_freq(resultsq, factorq, corrq)
 
 # 6. 结果解释
 print("\nFactor loadings:")
