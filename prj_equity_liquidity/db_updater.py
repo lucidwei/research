@@ -1022,6 +1022,8 @@ class MajorHolderUpdater:
             df_upload['date'] = date
             df_upload = df_upload.melt(id_vars=['date', 'product_name'], var_name='field', value_name='value').dropna()
             df_upload_summed = df_upload.groupby(['date', 'product_name', 'field'], as_index=False).sum().dropna()
+            # 遇见item_note_2b_added这种报错需要手动在Pgadmin更改数据，e.g.：
+            # Key (code, product_name, date, field)=(temp_value, 通策医疗, 2023-09-16, item_note_2b_added) already exists.
             df_upload_summed.to_sql('markets_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
 
 
