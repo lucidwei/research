@@ -16,12 +16,13 @@ mpl.rcParams['axes.unicode_minus'] = False           # 解决保存图像是负号'-'显示
 file_path = rf"D:\WPS云盘\WPS云盘\工作-麦高\定期汇报\日报模板整理\python用"
 sheet_name = '分钟'
 draw_both_sides = True
+draw_lunch_break = False
 latest_n_days = 5  # >0,最近n个交易日; =0,今天; <0, 今天往前推几天
 # 用户定义的截断点，可以根据实际情况进行调整
-# user_break_points分钟 = ['10:50', '14:18']
-user_break_points分钟 = ['19-10:14', '20-09:36', '21-10:00', '22-10:50']
+# user_break_points分钟 = ['13:05', '14:35']
+user_break_points分钟 = ['25-11:18', '26-13:36', '26-14:41', '28-09:44', '28-13:03', '28-14:34']
 # 用户定义的截断点，对于日度数据，这些是日期
-user_break_points日K = ['2024-01-23', '2024-01-26', '2024-02-05', '2024-02-23']
+user_break_points日K = ['2024-01-23', '2024-01-26', '2024-02-05', '2024-02-23',  '2024-03-18']
 
 # 读取数据
 industry_data = pd.read_excel(rf'{file_path}/指数、行业走势.xlsx', header=3, index_col=0, sheet_name=sheet_name)
@@ -127,10 +128,11 @@ def draw_chart(draw_both_sides):
         for bp_idx in break_points_indices:
             ax.axvline(x=bp_idx, color='grey', linestyle='-', linewidth=1)
         day_changes = index_data.index.normalize().drop_duplicates().tolist()
-        lunch_starts = [np.where(index_data.index.time == pd.Timestamp('11:30').time())[0] for _ in day_changes]
-        for lunch_start in lunch_starts:
-            for start in lunch_start:
-                ax.axvline(x=start, color='grey', linestyle='--', linewidth=2)
+        if draw_lunch_break:
+            lunch_starts = [np.where(index_data.index.time == pd.Timestamp('11:30').time())[0] for _ in day_changes]
+            for lunch_start in lunch_starts:
+                for start in lunch_start:
+                    ax.axvline(x=start, color='grey', linestyle='--', linewidth=2)
         # 为分钟数据添加时间标签
         ax.set_xticks(break_points_indices)
         ax.set_xticklabels([index_data.index[i].strftime('%d-%H:%M') for i in break_points_indices], rotation=45, ha='right')
