@@ -39,12 +39,12 @@ np.random.seed(42)
 # # 2. 模拟缺失值
 # data.loc[::3, 'M'] = np.nan
 
-# 设置参数
-file_path = rf"D:\Downloads"
+# 1. 设置参数
+file_path = rf"D:\WPS云盘\WPS云盘\工作-麦高\研究trial"
 k_factors = 1
 
-# 读取数据
-data = pd.read_excel(rf'{file_path}/期货结算价(连续)_WTI原油.xlsx', header=1)
+# 2. 读取数据
+data = pd.read_excel(rf'{file_path}/中宏观indicators.xlsx', header=1)
 data_cleaned = data.drop(index=[0, 1]).reset_index(drop=True)
 # Convert the index to datetime format
 data_cleaned['指标名称'] = pd.to_datetime(data_cleaned['指标名称'])
@@ -53,7 +53,7 @@ data_cleaned.set_index('指标名称', inplace=True)
 data_cleaned = data_cleaned[data_cleaned.index >= pd.Timestamp('2010-01-01')]
 data_cleaned.sort_index(ascending=True, inplace=True)
 
-financials = pd.read_excel(rf"D:\WPS云盘\WPS云盘\工作-麦高\研究trial\行业财务数据.xlsx", header=3, sheet_name='油气开采q')
+financials = pd.read_excel(rf"{file_path}/行业财务数据.xlsx", header=3, sheet_name='油气开采q')
 financials.set_index('Date', inplace=True)
 financials = financials[financials.index >= pd.Timestamp('2010-01-01')]
 financials.sort_index(ascending=True, inplace=True)
@@ -61,11 +61,16 @@ financials.sort_index(ascending=True, inplace=True)
 
 combined_data = pd.merge(data_cleaned, financials, left_index=True, right_index=True, how='outer')
 
-df_indicators = combined_data.loc[:, combined_data.columns != 'roe_ttm2']
-df_finalcials = combined_data.loc[:, 'roe_ttm2']
+# 定义一个列表,存储要剔除的列名
+financials_cols = ['roe_ttm2', 'yoyprofit']
+indicators_cols = [col for col in combined_data.columns if col not in financials_cols]
 
+df_indicators = combined_data[indicators_cols]
+df_finalcials = combined_data[financials_cols]
+
+# 剔除影响计算的0值
 data = df_indicators.replace(0, np.nan)
-factor = df_finalcials
+finalcials = df_finalcials
 
 for column in data.columns:
     data[column] = pd.to_numeric(data[column], errors='coerce')
@@ -85,14 +90,14 @@ def apply_dynamic_factor_model(data, k_factors):
 results = apply_dynamic_factor_model(data, k_factors)
 
 # 4. 评估模型效果
-def evaluate_model(results, factor):
+def evaluate_model(results, financial: pd.Series):
     fitted_data = results.predict()
     extracted_factor = results.factors.filtered['0']
     # # 确保两个序列的长度和时间点匹配
-    extracted_factor_series = pd.Series(extracted_factor.values, index=factor.index, name='0')
+    extracted_factor_series = pd.Series(extracted_factor.values, index=financial.index, name='0')
 
     # 对齐两个时间序列的索引
-    combined_data = pd.merge(extracted_factor_series, factor, left_index=True, right_index=True, how='inner')
+    combined_data = pd.merge(extracted_factor_series, financial, left_index=True, right_index=True, how='inner')
     combined_data.dropna(inplace=True)
     extracted_factor_filtered = combined_data['0']
     factor_filtered = combined_data.loc[:, combined_data.columns != '0'].squeeze()
@@ -109,32 +114,38 @@ def evaluate_model(results, factor):
     #     print(f"MSE for {freq} frequency data: {mse:.4f}")
     return extracted_factor_series, corr
 
-extracted_factor_series, corr = evaluate_model(results, factor)
+# extracted_factor_series, corr = evaluate_model(results, finalcials['yoyprofit'])
+extracted_factor_series, corr = evaluate_model(results, finalcials['roe_ttm2'])
 
-print('q')
 
-
-def plot_factors_mixed_freq(results, factor, corr):
+# 5. 作图看效果
+def plot_factors_mixed_freq(results, financial, corr):
     extracted_factor = results.factors.filtered['0']
     # 根据相关性的符号调整共同因子的符号
     if corr < 0:
         extracted_factor = -extracted_factor
 
-    extracted_factor_series = pd.Series(extracted_factor.values, index=factor.index, name='0')
+    extracted_factor_series = pd.Series(extracted_factor.values, index=financial.index, name='0')
     # 对原始因子进行插值
-    factor_interpolated = factor.interpolate(method='time')
+    factor_interpolated = financial.interpolate(method='time')
 
     # 绘制原始因子和提取因子的时间序列图
     fig, ax = plt.subplots(figsize=(12, 6))
     ax.plot(extracted_factor_series, label='景气指标(日频)')
     ax.plot(factor_interpolated, '-')
-    ax.plot(factor, 'o', label='ROE_TTM(季频)')
+    match financial.name:
+        case 'roe_ttm2':
+            ax.plot(financial, 'o', label='ROE_TTM(季频)')
+            ax.set_title('景气指标(日频) vs ROE_TTM(季频)')
+        case 'yoyprofit':
+            ax.plot(financial, 'o', label='净利润同比(季频)')
+    ax.set_title('景气指标(日频) vs 净利润同比(季频)')
 
-    for x in factor.dropna().index:
+    # 季末画出垂线
+    for x in financial.dropna().index:
         ax.axvline(x, color='gray', linestyle='--', linewidth=0.5, alpha=0.5)
 
     ax.legend()
-    ax.set_title('景气指标(日频) vs ROE_TTM(季频)')
     ax.set_ylabel('Factor Value')
 
     # 设置x轴日期标签的格式和间隔
@@ -144,7 +155,8 @@ def plot_factors_mixed_freq(results, factor, corr):
 
     plt.show()
 
-plot_factors_mixed_freq(results, factor, corr)
+plot_factors_mixed_freq(results, finalcials['roe_ttm2'], corr)
+plot_factors_mixed_freq(results, finalcials['yoyprofit'] / 100, corr)
 
 # 6. 结果解释
 print("\nFactor loadings:")
