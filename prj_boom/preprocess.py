@@ -12,18 +12,22 @@ import numpy as np
 from statsmodels.tsa.seasonal import STL
 from statsmodels.tsa.stattools import adfuller, kpss
 
+from base_config import BaseConfig
+from pgdb_updater_base import PgDbUpdaterBase
 
-class DataPreprocessor:
-    def __init__(self, data: pd.DataFrame, freq: str = 'M', info: pd.DataFrame = None):
+
+class DataPreprocessor(PgDbUpdaterBase):
+    def __init__(self, base_config: BaseConfig, freq: str = 'M', info: pd.DataFrame = None):
         """
         数据预处理类的初始化方法
         :param data: 原始数据,DataFrame格式
         :param freq: 数据频率,默认为'M'(月度)
         :param info: 数据说明表,包含每列数据的处理规则,DataFrame格式
         """
-        self.data = data
+        super().__init__(base_config)
         self.freq = freq
         self.info = info
+        self.k_factors = 1
 
     def preprocess(self):
         """
@@ -32,7 +36,8 @@ class DataPreprocessor:
         2. 对齐到月频
         3. 平稳性处理
         """
-        self.special_treatment()
+        self.read_data_and_info()
+        self.special_mannual_treatment()
         self.align_to_month()
         self.get_stationary()
         # self.resample_to_monthly()
@@ -40,31 +45,115 @@ class DataPreprocessor:
         # self.remove_outliers()
         return self.data
 
-    def special_treatment(self):
+    def read_data_and_info(self):
+        file_path = rf'{self.base_config.excels_path}/景气'
+
+        def set_index_col_wind(data, col_locator: str) -> pd.DataFrame:
+            # 找到第一个日期所在的行
+            date_row = data.iloc[:, 0].apply(lambda x: pd.to_datetime(x, errors='coerce')).notna().idxmax()
+            # 找到"指标名称"所在的行
+            indicator_row = data.iloc[:date_row, 0].str.contains(col_locator).fillna(False).idxmax()
+            # 设置指标名称为 column
+            data.columns = data.iloc[indicator_row]
+            # 删除指标名称行及其上方的所有行
+            data = data.iloc[date_row + 1:]
+            # 设置第一列为 index,并命名为 "date"
+            data = data.set_index(data.columns[0])
+            data.index.name = 'date'
+            return data
+
+        # 读取宏观指标手设info
+        # 宏观指标名称作为index(不是指标ID，因为不方便人类理解)
+        self.info = pd.read_excel(rf'{file_path}/indicators_info.xlsx', index_col=1, engine="openpyxl")
+
+        # 读取宏观指标
+        # 将指标名称设为列，日期为index
+        data = pd.read_excel(rf'{file_path}/中宏观indicators.xlsx', sheet_name='test')
+        data = set_index_col_wind(data, '指标名称')
+        # 筛选日期并排序
+        data_filtered = data[data.index >= pd.Timestamp('2010-01-01')].copy(deep=True)
+        data_filtered.sort_index(ascending=True, inplace=True)
+
+        # 读取财务数据
+        financials = pd.read_excel(rf"{file_path}/行业财务数据.xlsx", sheet_name='油气开采q')
+        financials = set_index_col_wind(financials, 'Date')
+        financials = financials[financials.index >= pd.Timestamp('2010-01-01')].copy(deep=True)
+        financials.sort_index(ascending=True, inplace=True)
+
+        combined_data = pd.merge(data_filtered, financials, left_index=True, right_index=True, how='outer')
+        # 定义一个列表,存储要剔除的列名
+        financials_cols = ['roe_ttm2', 'yoyprofit']
+        indicators_cols = [col for col in combined_data.columns if col not in financials_cols]
+
+        # 剔除影响计算的0值
+        self.df_indicators = combined_data[indicators_cols].replace(0, np.nan)
+        for column in indicators_cols:
+            self.df_indicators[column] = pd.to_numeric(self.df_indicators[column], errors='coerce')
+
+        self.df_finalcials = combined_data[financials_cols]
+
+    def special_mannual_treatment(self):
         """
         对数据进行特殊处理
         - 合并某些列
         - 将累计值转换为月度值
         """
-        X = self.data
+        X = self.df_indicators.copy(deep=True)
         # 如果存在'M5528820'列,则将其与'M0329545'列合并
         if 'M5528820' in X.columns:
             X.loc[:, 'M0329545'] = X.M5528820.add(X.M0329545, fill_value=0).copy()
             X.drop('M5528820', axis=1, inplace=True)
         # 对于info表中标记为累计值的列,将其转换为月度值
         for id in X.columns:
-            if self.info.loc[id, '是否累计值'] == '是':
+            if self.info.loc[id, '是否累计值'] == '累计值':
                 self.info.loc[id, '指标名称'] = '(月度化)' + self.info.loc[id, '指标名称']
-                sr = X[id]
-                sr_ori = sr.copy()
-                for date in sr.index:
-                    if np.isfinite(sr[date]):
-                        try:
-                            diff = sr[date] - sr_ori[date - pd.offsets.MonthEnd()]
-                            X.loc[date, id] = diff if diff > 0 else sr[date]
-                        except:
-                            pass
+                X.loc[:, id] = self.transform_cumulative_data(X.loc[:, id], '累计值')
+
+            elif self.info.loc[id, '是否累计值'] == '累计同比':
+                self.info.loc[id, '指标名称'] = '(月度化)' + self.info.loc[id, '指标名称']
+                X.loc[:, id] = self.transform_cumulative_data(X.loc[:, id], '累计同比')
+
         self.data = X
+
+    def transform_cumulative_data(self, series: pd.Series, data_type: str, period: int = 12) -> pd.Series:
+        """
+        将累计值或累计同比数据转换为当期值或当期同比数据
+        :param series: 待转换的数据,Series格式
+        :param data_type: 数据类型,'累计值'或'累计同比'
+        :param period: 同比周期,默认为12(月度数据)
+        :return: 转换后的数据,Series格式
+        """
+        if data_type == '累计值':
+            # 将累计值转换为当期值
+            current_data = series.copy()
+            for i in range(1, len(current_data)):
+                if np.isfinite(current_data.iloc[i]):
+                    try:
+                        diff = current_data.iloc[i] - series.iloc[i - 1]
+                        current_data.iloc[i] = diff if diff > 0 else current_data.iloc[i]
+                    except:
+                        pass
+            return current_data
+
+        elif data_type == '累计同比':
+            # 将累计同比转换为当期同比
+            cumulative_data = series.copy()
+
+            # 计算累计值数据
+            for i in range(period, len(cumulative_data)):
+                cumulative_data.iloc[i] = (cumulative_data.iloc[i] + 1) / (cumulative_data.iloc[i - period] + 1) * \
+                                          cumulative_data.iloc[i - period]
+
+            # 计算当期值数据
+            current_data = cumulative_data - cumulative_data.shift(1)
+
+            # 计算当期同比数据
+            current_yoy_data = current_data / current_data.shift(period) - 1
+
+            return current_yoy_data
+
+        else:
+            raise ValueError(f"不支持的数据类型: {data_type}")
 
     def align_to_month(self):
         """
@@ -198,5 +287,3 @@ class DataPreprocessor:
             std = series.std()
             outliers = (series - mean).abs() > threshold * std
             self.data.loc[outliers, col] = np.nan
-
-
