@@ -16,6 +16,79 @@ from base_config import BaseConfig
 from pgdb_updater_base import PgDbUpdaterBase
 
 
+def transform_cumulative_data(series: pd.Series, data_type: str, period: int = 12) -> pd.Series:
+    """
+    将累计值或累计同比数据转换为当期值或当期同比数据
+    :param series: 待转换的数据,Series格式
+    :param data_type: 数据类型,'累计值'或'累计同比'
+    :param period: 同比周期,默认为12(月度数据)
+    :return: 转换后的数据,Series格式
+    """
+    if data_type == '累计值':
+        # 将时间序列重采样为月度数据
+        monthly_series = series.resample('M').last()
+
+        # 将累计值转换为当期值
+        current_data = monthly_series.copy()
+        prev_values = monthly_series.shift(1).ffill()
+        current_data = current_data - prev_values
+        current_data = current_data.where(current_data > 0, monthly_series)
+
+        # 将结果重新采样回原始频率
+        current_data = current_data.reindex(series.index)
+
+        return current_data
+
+    elif data_type == '累计同比':
+        # 将时间序列重采样为月度数据
+        monthly_series = series.resample('M').last()
+
+        # 将累计同比转换为当月同比
+        cumulative_yoy = monthly_series.copy()
+        current_yoy = pd.Series(index=cumulative_yoy.index)
+
+        # 初始化变量
+        start_month = None
+        covered_months = 0
+
+        # 遍历每个月份
+        for i in range(len(cumulative_yoy)):
+            current_month = cumulative_yoy.index[i].month
+
+            # 如果当前月份为1月且累计同比数据非空,则开始新的一年
+            if current_month == 1 and not pd.isna(cumulative_yoy.iloc[i]):
+                start_month = i
+                covered_months = 1
+            # 如果当前月份不为1月且累计同比数据非空,则更新覆盖月份数
+            elif current_month != 1 and not pd.isna(cumulative_yoy.iloc[i]):
+                if start_month is None:
+                    start_month = i
+                    covered_months = current_month
+                else:
+                    covered_months += 1
+            elif current_month == 1 and pd.isna(cumulative_yoy.iloc[i]):
+                start_month = 2
+                covered_months = 1
+                continue
+
+            # 如果已经开始计算当年的当月同比,则进行逆向操作
+            if start_month is not None:
+                if current_month == start_month:
+                    current_yoy.iloc[i] = cumulative_yoy.iloc[i]
+                else:
+                    current_month_yoy = (cumulative_yoy.iloc[i] * covered_months - cumulative_yoy.iloc[i - 1] * (
+                                covered_months - 1)) / (i - start_month + 1)
+                    current_yoy.iloc[i] = current_month_yoy
+
+        # 将结果重新采样回原始频率
+        current_yoy = current_yoy.reindex(series.index)
+
+        return current_yoy
+
+    else:
+        raise ValueError(f"不支持的数据类型: {data_type}")
+
+
 class DataPreprocessor(PgDbUpdaterBase):
     def __init__(self, base_config: BaseConfig, freq: str = 'M', info: pd.DataFrame = None):
         """
@@ -39,9 +112,10 @@ class DataPreprocessor(PgDbUpdaterBase):
         self.read_data_and_info()
         self.special_mannual_treatment()
         self.align_to_month()
+        self.fill_internal_missing()
         self.get_stationary()
         # self.resample_to_monthly()
-        # self.fill_internal_missing()
+        #
         # self.remove_outliers()
         return self.data
 
@@ -64,12 +138,15 @@ class DataPreprocessor(PgDbUpdaterBase):
 
         # 读取宏观指标手设info
         # 宏观指标名称作为index(不是指标ID，因为不方便人类理解)
-        self.info = pd.read_excel(rf'{file_path}/indicators_info.xlsx', index_col=1, engine="openpyxl")
+        info = pd.read_excel(rf'{file_path}/indicators_info.xlsx', engine="openpyxl")
+        self.id_to_name = dict(zip(info['指标ID'], info['指标名称']))
+        self.info = info.set_index('指标ID')
 
         # 读取宏观指标
         # 将指标名称设为列，日期为index
-        data = pd.read_excel(rf'{file_path}/中宏观indicators.xlsx', sheet_name='test')
-        data = set_index_col_wind(data, '指标名称')
+        # data = pd.read_excel(rf'{file_path}/中宏观indicators.xlsx', sheet_name='test')
+        data = pd.read_excel(rf'{file_path}/中宏观indicators.xlsx')
+        data = set_index_col_wind(data, '指标ID')
         # 筛选日期并排序
         data_filtered = data[data.index >= pd.Timestamp('2010-01-01')].copy(deep=True)
         data_filtered.sort_index(ascending=True, inplace=True)
@@ -107,53 +184,13 @@ class DataPreprocessor(PgDbUpdaterBase):
         for id in X.columns:
             if self.info.loc[id, '是否累计值'] == '累计值':
                 self.info.loc[id, '指标名称'] = '(月度化)' + self.info.loc[id, '指标名称']
-                X.loc[:, id] = self.transform_cumulative_data(X.loc[:, id], '累计值')
+                X.loc[:, id] = transform_cumulative_data(X.loc[:, id], '累计值')
 
             elif self.info.loc[id, '是否累计值'] == '累计同比':
                 self.info.loc[id, '指标名称'] = '(月度化)' + self.info.loc[id, '指标名称']
-                X.loc[:, id] = self.transform_cumulative_data(X.loc[:, id], '累计同比')
+                X.loc[:, id] = transform_cumulative_data(X.loc[:, id], '累计同比')
 
         self.data = X
-
-    def transform_cumulative_data(self, series: pd.Series, data_type: str, period: int = 12) -> pd.Series:
-        """
-        将累计值或累计同比数据转换为当期值或当期同比数据
-        :param series: 待转换的数据,Series格式
-        :param data_type: 数据类型,'累计值'或'累计同比'
-        :param period: 同比周期,默认为12(月度数据)
-        :return: 转换后的数据,Series格式
-        """
-        if data_type == '累计值':
-            # 将累计值转换为当期值
-            current_data = series.copy()
-            for i in range(1, len(current_data)):
-                if np.isfinite(current_data.iloc[i]):
-                    try:
-                        diff = current_data.iloc[i] - series.iloc[i - 1]
-                        current_data.iloc[i] = diff if diff > 0 else current_data.iloc[i]
-                    except:
-                        pass
-            return current_data
-
-        elif data_type == '累计同比':
-            # 将累计同比转换为当期同比
-            cumulative_data = series.copy()
-
-            # 计算累计值数据
-            for i in range(period, len(cumulative_data)):
-                cumulative_data.iloc[i] = (cumulative_data.iloc[i] + 1) / (cumulative_data.iloc[i - period] + 1) * \
-                                          cumulative_data.iloc[i - period]
-
-            # 计算当期值数据
-            current_data = cumulative_data - cumulative_data.shift(1)
-
-            # 计算当期同比数据
-            current_yoy_data = current_data / current_data.shift(period) - 1
-
-            return current_yoy_data
-
-        else:
-            raise ValueError(f"不支持的数据类型: {data_type}")
 
     def align_to_month(self):
         """
@@ -162,14 +199,16 @@ class DataPreprocessor(PgDbUpdaterBase):
         - 将月末日期转换为月份格式
         - 填充缺失值
         """
-        df = self.data
-        df = self.fill_x_na(df)
+        df = self.data.copy(deep=True)
         month_end_df = pd.DataFrame()
         for id in df.columns:
             if self.info.loc[id, 'resample(月)'] == 'last':
                 ts = df.loc[:, id].resample('1M').last()
             elif self.info.loc[id, 'resample(月)'] == 'avg':
                 ts = df.loc[:, id].resample('1M').mean()
+            elif self.info.loc[id, 'resample(月)'].startswith('rolling_'):
+                n = int(self.info.loc[id, 'resample(月)'][8:])
+                ts = df.loc[:, id].rolling(n).mean().resample('1M').last()
             elif self.info.loc[id, 'resample(月)'] == 'cumsum':
                 ts = df.loc[:, id].cumsum().resample('1M').last()
                 self.info.loc[id, '指标名称'] = 'cumsumed' + self.info.loc[id, '指标名称']
@@ -177,24 +216,23 @@ class DataPreprocessor(PgDbUpdaterBase):
                 ts = df.loc[:, id].resample('1M').last()
             month_end_df = pd.concat([month_end_df, ts], axis=1)
         month_end_df.index = pd.to_datetime(month_end_df.index).to_period('M')
-        self.data = self.fill_internal_missing(month_end_df)
+        # self.data = self.fill_internal_missing(month_end_df)
+        self.data = month_end_df
 
-    def fill_x_na(self, df):
+    def fill_internal_missing(self):
         """
         根据info表中的fillna规则,对每一列填充缺失值
-        :param df: 待填充的数据,DataFrame格式
         :return: 填充后的数据,DataFrame格式
         """
-        for id in df.columns:
+        for id in self.data.columns:
             if self.info.loc[id, 'fillna'] == 'ffill':
-                df.loc[:, id].fillna(method='ffill', inplace=True)
+                self.data.loc[:, id].fillna(method='ffill', inplace=True)
             elif self.info.loc[id, 'fillna'] == '0fill':
-                df.loc[:, id].fillna(value=0, inplace=True)
+                self.data.loc[:, id].fillna(value=0, inplace=True)
             elif pd.isnull(self.info.loc[id, 'fillna']):
                 pass
             else:
                 raise Exception('donno how to fillna')
-        return df
 
     def get_stationary(self):
         """
@@ -265,16 +303,16 @@ class DataPreprocessor(PgDbUpdaterBase):
         if pd.infer_freq(self.data.index) != self.freq:
             self.data = self.data.resample(self.freq).last()
 
-    def fill_internal_missing(self, df):
-        """
-        填充数据内部的缺失值
-        :param df: 待填充的数据,DataFrame格式
-        :return: 填充后的数据,DataFrame格式
-        """
-        df = df.copy()
-        df.fillna(method='ffill', inplace=True)
-        df.fillna(method='bfill', inplace=True)
-        return df
+    # def fill_internal_missing(self, df):
+    #     """
+    #     填充数据内部的缺失值
+    #     :param df: 待填充的数据,DataFrame格式
+    #     :return: 填充后的数据,DataFrame格式
+    #     """
+    #     df = df.copy()
+    #     df.fillna(method='ffill', inplace=True)
+    #     df.fillna(method='bfill', inplace=True)
+    #     return df
 
     def remove_outliers(self, threshold: float = 3.0):
         """
