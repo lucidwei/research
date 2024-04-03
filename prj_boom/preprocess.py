@@ -48,7 +48,7 @@ def transform_cumulative_data(series: pd.Series, data_type: str, period: int = 1
         current_yoy = pd.Series(index=cumulative_yoy.index)
 
         # 初始化变量
-        start_month = None
+        start_month_index = None
         covered_months = 0
 
         # 遍历每个月份
@@ -57,27 +57,27 @@ def transform_cumulative_data(series: pd.Series, data_type: str, period: int = 1
 
             # 如果当前月份为1月且累计同比数据非空,则开始新的一年
             if current_month == 1 and not pd.isna(cumulative_yoy.iloc[i]):
-                start_month = i
+                start_month_index = i
                 covered_months = 1
             # 如果当前月份不为1月且累计同比数据非空,则更新覆盖月份数
             elif current_month != 1 and not pd.isna(cumulative_yoy.iloc[i]):
-                if start_month is None:
-                    start_month = i
+                if start_month_index is None:
+                    start_month_index = i
                     covered_months = current_month
                 else:
                     covered_months += 1
             elif current_month == 1 and pd.isna(cumulative_yoy.iloc[i]):
-                start_month = 2
+                start_month_index = i+1
                 covered_months = 1
                 continue
 
             # 如果已经开始计算当年的当月同比,则进行逆向操作
-            if start_month is not None:
-                if current_month == start_month:
+            if start_month_index is not None:
+                if i == start_month_index:
                     current_yoy.iloc[i] = cumulative_yoy.iloc[i]
                 else:
                     current_month_yoy = (cumulative_yoy.iloc[i] * covered_months - cumulative_yoy.iloc[i - 1] * (
-                                covered_months - 1)) / (i - start_month + 1)
+                                covered_months - 1))
                     current_yoy.iloc[i] = current_month_yoy
 
         # 将结果重新采样回原始频率
