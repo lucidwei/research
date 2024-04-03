@@ -44,7 +44,7 @@ file_path = rf"D:\WPS云盘\WPS云盘\工作-麦高\研究trial"
 k_factors = 1
 
 # 2. 读取数据
-data = pd.read_excel(rf'{file_path}/中宏观indicators.xlsx', header=1)
+data = pd.read_excel(rf'{file_path}/中宏观indicators.xlsx', header=1, sheet_name='test')
 data_cleaned = data.drop(index=[0, 1]).reset_index(drop=True)
 # Convert the index to datetime format
 data_cleaned['指标名称'] = pd.to_datetime(data_cleaned['指标名称'])
