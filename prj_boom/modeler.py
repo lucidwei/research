@@ -43,18 +43,22 @@ class DynamicFactorModeler:
         fitted_data = self.results.predict()
         extracted_factor = self.results.factors.filtered['0']
 
-        # 确保两个序列的长度和时间点匹配
-        extracted_factor_series = pd.Series(extracted_factor.values, index=self.financial.index, name='0')
+        # 将 self.financial 的索引转换为月频
+        financial_monthly = self.financial.resample('M').last()
 
         # 对齐两个时间序列的索引
-        combined_data = pd.merge(extracted_factor_series, self.financial, left_index=True, right_index=True,
-                                 how='inner')
-        combined_data.dropna(inplace=True)
+        combined_data = pd.merge(extracted_factor, financial_monthly, left_index=True, right_index=True, how='inner')
+        combined_data = combined_data.dropna()
         extracted_factor_filtered = combined_data['0']
-        factor_filtered = combined_data.loc[:, combined_data.columns != '0'].squeeze()
+        factor_filtered = combined_data.loc[:, combined_data.columns != '0'].squeeze().astype(float)
 
+        corr = np.corrcoef(extracted_factor_filtered[15:], factor_filtered[15:])[0, 1]
+        print(f"Correlation between extracted factor and original factor: {corr:.4f}")
+        corr = np.corrcoef(extracted_factor_filtered[:15], factor_filtered[:15])[0, 1]
+        print(f"Correlation between extracted factor and original factor: {corr:.4f}")
         corr = np.corrcoef(extracted_factor_filtered, factor_filtered)[0, 1]
         print(f"Correlation between extracted factor and original factor: {corr:.4f}")
+        print('a')
 
     def run(self):
         """
