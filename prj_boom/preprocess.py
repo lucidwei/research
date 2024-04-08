@@ -129,7 +129,7 @@ class DataPreprocessor(PgDbUpdaterBase):
         self.fill_internal_missing()
         self.get_stationary()
         self.cap_outliers()
-        return self.data
+        # return self.data
 
     def read_data_and_info(self):
         file_path = rf'{self.base_config.excels_path}/¾°Æø'
@@ -227,7 +227,7 @@ class DataPreprocessor(PgDbUpdaterBase):
             else:
                 ts = df.loc[:, id].resample('1M').last()
             month_end_df = pd.concat([month_end_df, ts], axis=1)
-        month_end_df.index = pd.to_datetime(month_end_df.index).to_period('M')
+        month_end_df.index = pd.to_datetime(month_end_df.index)#.to_period('M')
         self.data = month_end_df
 
     def fill_internal_missing(self):
@@ -261,11 +261,43 @@ class DataPreprocessor(PgDbUpdaterBase):
 
         for col_ind, col in df.items():
             if record[col_ind] != 'stationary':
-                stl = STL(col, period=12)
-                decomposed = stl.fit()
-                df[col_ind + '_trend'] = decomposed.trend
-                df[col_ind + '_resid'] = decomposed.resid
+                original_index = df.index
+                col_series = pd.Series(col, index=original_index)
+                col_series = col_series.dropna()
+
+                if record[col_ind] == 'diff-stationary':
+                    diff_series = col_series.diff().dropna()
+                    stl = STL(diff_series, period=12)
+                    decomposed = stl.fit()
+                    decomposed_df = pd.DataFrame({
+                        col_ind + '_trend': decomposed.trend.cumsum(),
+                        col_ind + '_resid': decomposed.resid
+                    }, index=diff_series.index)
+                    decomposed_df[col_ind + '_trend'] += col_series.iloc[0]
+
+                elif record[col_ind] == 'trend-stationary':
+                    x = np.arange(len(col_series))
+                    trend = np.polyfit(x, col_series, 1)[0] * x
+                    detrended_series = col_series - trend
+                    stl = STL(detrended_series, period=12)
+                    decomposed = stl.fit()
+                    decomposed_df = pd.DataFrame({
+                        col_ind + '_trend': decomposed.trend + trend,
+                        col_ind + '_resid': decomposed.resid
+                    }, index=col_series.index)
+
+                else:  # 'non-stationary'
+                    stl = STL(col_series, period=12)
+                    decomposed = stl.fit()
+                    decomposed_df = pd.DataFrame({
+                        col_ind + '_trend': decomposed.trend,
+                        col_ind + '_resid': decomposed.resid
+                    }, index=col_series.index)
+
+                decomposed_df = decomposed_df.reindex(original_index)
+                df = pd.concat([df, decomposed_df], axis=1)
                 df.drop(col_ind, inplace=True, axis=1)
+
         self.data = df
 
     @staticmethod
