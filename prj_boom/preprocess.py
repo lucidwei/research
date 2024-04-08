@@ -3,10 +3,8 @@
 # Author  : Lucid
 # FileName: preprocess.py
 # Software: PyCharm
-import pandas as pd
-import numpy as np
-from statsmodels.tsa.tsatools import freq_to_period
 
+import warnings
 import pandas as pd
 import numpy as np
 from statsmodels.tsa.seasonal import STL
@@ -33,6 +31,15 @@ def transform_cumulative_data(series: pd.Series, data_type: str, period: int = 1
         prev_values = monthly_series.shift(1).ffill()
         current_data = current_data - prev_values
         current_data = current_data.where(current_data > 0, monthly_series)
+
+        # 处理一月份累计值为空的情况
+        for year, data in current_data.groupby(current_data.index.year):
+            if pd.isna(data.iloc[0]) and not pd.isna(data.iloc[1]):
+                feb_value = data.iloc[1]
+                jan_index = pd.to_datetime(f'{year}-01-01') + pd.offsets.MonthEnd()
+                feb_index = pd.to_datetime(f'{year}-02-01') + pd.offsets.MonthEnd()
+                current_data.loc[jan_index] = feb_value / 2
+                current_data.loc[feb_index] = feb_value / 2
 
         # 将结果重新采样回原始频率
         current_data = current_data.reindex(series.index)
@@ -80,6 +87,13 @@ def transform_cumulative_data(series: pd.Series, data_type: str, period: int = 1
                                 covered_months - 1))
                     current_yoy.iloc[i] = current_month_yoy
 
+        # 处理一月份累计值为空的情况
+        for year, data in current_yoy.groupby(current_yoy.index.year):
+            if pd.isna(data.iloc[0]) and not pd.isna(data.iloc[1]):
+                feb_value = data.iloc[1]
+                jan_index = pd.to_datetime(f'{year}-01-01') + pd.offsets.MonthEnd()
+                current_yoy.loc[jan_index] = feb_value
+
         # 将结果重新采样回原始频率
         current_yoy = current_yoy.reindex(series.index)
 
@@ -114,9 +128,7 @@ class DataPreprocessor(PgDbUpdaterBase):
         self.align_to_month()
         self.fill_internal_missing()
         self.get_stationary()
-        # self.resample_to_monthly()
-        #
-        # self.remove_outliers()
+        self.cap_outliers()
         return self.data
 
     def read_data_and_info(self):
@@ -216,7 +228,6 @@ class DataPreprocessor(PgDbUpdaterBase):
                 ts = df.loc[:, id].resample('1M').last()
             month_end_df = pd.concat([month_end_df, ts], axis=1)
         month_end_df.index = pd.to_datetime(month_end_df.index).to_period('M')
-        # self.data = self.fill_internal_missing(month_end_df)
         self.data = month_end_df
 
     def fill_internal_missing(self):
@@ -240,9 +251,15 @@ class DataPreprocessor(PgDbUpdaterBase):
         - 对每一列进行平稳性检验
         - 对于非平稳的列,使用STL进行分解,将趋势项和残差项作为新的列添加到数据中,同时删除原列
         """
-        df = self.fill_internal_missing(self.data)
-        record = {col_ind: self.station_test(col) for col_ind, col in df.iteritems()}
-        for col_ind, col in df.iteritems():
+        df = self.data.copy(deep=True)
+        record = {}
+        for col_ind, col in df.items():
+            # 检查并处理缺失值
+            if df[col_ind].isnull().any():
+                col = col.dropna()
+            record[col_ind] = self.station_test(col)
+
+        for col_ind, col in df.items():
             if record[col_ind] != 'stationary':
                 stl = STL(col, period=12)
                 decomposed = stl.fit()
@@ -296,32 +313,18 @@ class DataPreprocessor(PgDbUpdaterBase):
         else:
             raise Exception('donno stationarity')
 
-    def resample_to_monthly(self):
+    def cap_outliers(self, threshold: float = 3.0):
         """
-        将数据重采样到月频
-        """
-        if pd.infer_freq(self.data.index) != self.freq:
-            self.data = self.data.resample(self.freq).last()
-
-    # def fill_internal_missing(self, df):
-    #     """
-    #     填充数据内部的缺失值
-    #     :param df: 待填充的数据,DataFrame格式
-    #     :return: 填充后的数据,DataFrame格式
-    #     """
-    #     df = df.copy()
-    #     df.fillna(method='ffill', inplace=True)
-    #     df.fillna(method='bfill', inplace=True)
-    #     return df
-
-    def remove_outliers(self, threshold: float = 3.0):
-        """
-        去除异常值
+        将异常值设定为三个标准差位置
         :param threshold: 异常值判断阈值,默认为3.0(即超过3个标准差)
         """
         for col in self.data.columns:
             series = self.data[col]
             mean = series.mean()
             std = series.std()
-            outliers = (series - mean).abs() > threshold * std
-            self.data.loc[outliers, col] = np.nan
+            upper_bound = mean + threshold * std
+            lower_bound = mean - threshold * std
+
+            # 将异常值设定为三个标准差位置
+            self.data.loc[series > upper_bound, col] = upper_bound
+            self.data.loc[series < lower_bound, col] = lower_bound
