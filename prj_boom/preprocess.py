@@ -12,6 +12,7 @@ from statsmodels.tsa.stattools import adfuller, kpss
 
 from base_config import BaseConfig
 from pgdb_updater_base import PgDbUpdaterBase
+from utils import set_index_col_wind  # 从 utils.py 中导入 set_index_col_wind 函数
 
 
 def transform_cumulative_data(series: pd.Series, data_type: str, period: int = 12) -> pd.Series:
@@ -133,20 +134,6 @@ class DataPreprocessor(PgDbUpdaterBase):
 
     def read_data_and_info(self):
         file_path = rf'{self.base_config.excels_path}/景气'
-
-        def set_index_col_wind(data, col_locator: str) -> pd.DataFrame:
-            # 找到第一个日期所在的行
-            date_row = data.iloc[:, 0].apply(lambda x: pd.to_datetime(x, errors='coerce')).notna().idxmax()
-            # 找到"指标名称"所在的行
-            indicator_row = data.iloc[:date_row, 0].str.contains(col_locator).fillna(False).idxmax()
-            # 设置指标名称为 column
-            data.columns = data.iloc[indicator_row]
-            # 删除指标名称行及其上方的所有行
-            data = data.iloc[date_row + 1:]
-            # 设置第一列为 index,并命名为 "date"
-            data = data.set_index(data.columns[0])
-            data.index.name = 'date'
-            return data
 
         # 读取宏观指标手设info
         # 宏观指标名称作为index(不是指标ID，因为不方便人类理解)

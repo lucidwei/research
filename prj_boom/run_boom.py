@@ -5,7 +5,12 @@
 # Software: PyCharm
 from base_config import BaseConfig
 from prj_boom.preprocess import DataPreprocessor
+from prj_boom.modeler import DynamicFactorModeler
 
 base_config = BaseConfig('boom')
 preprocessor = DataPreprocessor(base_config)
 preprocessor.preprocess()
+data = preprocessor.data
+financials = preprocessor.df_finalcials
+modeler = DynamicFactorModeler(data, k_factors=1, financial=financials['roe_ttm2'])
+modeler.run()
