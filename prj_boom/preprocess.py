@@ -12,7 +12,7 @@ from statsmodels.tsa.stattools import adfuller, kpss
 
 from base_config import BaseConfig
 from pgdb_updater_base import PgDbUpdaterBase
-from utils import set_index_col_wind  # 从 utils.py 中导入 set_index_col_wind 函数
+from utils import *
 
 
 def transform_cumulative_data(series: pd.Series, data_type: str, period: int = 12) -> pd.Series:
@@ -337,13 +337,4 @@ class DataPreprocessor(PgDbUpdaterBase):
         将异常值设定为三个标准差位置
         :param threshold: 异常值判断阈值,默认为3.0(即超过3个标准差)
         """
-        for col in self.data.columns:
-            series = self.data[col]
-            mean = series.mean()
-            std = series.std()
-            upper_bound = mean + threshold * std
-            lower_bound = mean - threshold * std
-
-            # 将异常值设定为三个标准差位置
-            self.data.loc[series > upper_bound, col] = upper_bound
-            self.data.loc[series < lower_bound, col] = lower_bound
+        self.data = cap_outliers(data=self.data, threshold=threshold)

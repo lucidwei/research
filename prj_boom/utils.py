@@ -29,3 +29,20 @@ def set_index_col_wind(data, col_locator: str) -> pd.DataFrame:
     data = data.set_index(data.columns[0])
     data.index.name = 'date'
     return data
+
+def cap_outliers(data, threshold: float = 3.0):
+    """
+    将异常值设定为三个标准差位置
+    :param threshold: 异常值判断阈值,默认为3.0(即超过3个标准差)
+    """
+    for col in data.columns:
+        series = data[col]
+        mean = series.mean()
+        std = series.std()
+        upper_bound = mean + threshold * std
+        lower_bound = mean - threshold * std
+
+        # 将异常值设定为三个标准差位置
+        data.loc[series > upper_bound, col] = upper_bound
+        data.loc[series < lower_bound, col] = lower_bound
+    return data
