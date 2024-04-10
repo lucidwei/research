@@ -11,6 +11,7 @@ from pylab import mpl
 mpl.rcParams['font.sans-serif'] = ['STZhongsong']    # 指定默认字体：解决plot不能显示中文问题
 mpl.rcParams['axes.unicode_minus'] = False           # 解决保存图像是负号'-'显示为方块的问题
 
+
 class DataVisualizer:
     def __init__(self, file_path, sheet_name):
         """
@@ -55,7 +56,7 @@ class DataVisualizer:
 
         return df_dict
 
-    def plot_data(self, df1_key, df2_key, df1_col, df2_col, start_date=None, end_date=None):
+    def plot_data(self, df1_key, df2_key, df1_col, df2_col, start_date=None, end_date=None, marker1=None, marker2=None):
         """
         绘制两个 DataFrame 中指定列的数据。
 
@@ -77,7 +78,7 @@ class DataVisualizer:
             raise ValueError(f"Column '{df2_col}' does not exist in DataFrame '{df2_key}'.")
 
         # 将两个 DataFrame 按日期索引合并,并填充缺失值
-        merged_df = pd.merge(df1[[df1_col]], df2[[df2_col]], left_index=True, right_index=True, how='outer').dropna()
+        merged_df = pd.merge(df1[[df1_col]], df2[[df2_col]], left_index=True, right_index=True, how='outer').dropna(how='all')
         # merged_df.fillna(method='ffill', inplace=True)
         # merged_df.fillna(method='bfill', inplace=True)
 
@@ -89,8 +90,8 @@ class DataVisualizer:
         fig, ax1 = plt.subplots(figsize=(10, 6))
         ax2 = ax1.twinx()
 
-        ax1.plot(merged_df[df1_col], label=df1_col)
-        ax2.plot(merged_df[df2_col], label=df2_col, color='red')
+        ax1.plot(merged_df[df1_col], label=df1_col, linestyle='-', marker=marker1)
+        ax2.plot(merged_df[df2_col], label=df2_col, linestyle='-', color='red', marker=marker2)
 
         ax1.set_xlabel('Date')
         ax1.set_ylabel(df1_col)
@@ -104,4 +105,6 @@ class DataVisualizer:
 
 # 使用示例
 visualizer = DataVisualizer(rf"D:\WPS云盘\WPS云盘\工作-麦高\专题研究\景气研究\行业景气数据库与展示.xlsx", '石油石化')
-visualizer.plot_data('财务', '基本面', '营业收入(同比增长率)', '中国:规模以上工业增加值:石油和天然气开采业:当月同比')#, start_date='2022-01-01', end_date='2023-12-31')
+# visualizer.plot_data('财务', '基本面', '营业收入(同比增长率)', '中国:规模以上工业增加值:石油和天然气开采业:当月同比')#, start_date='2022-01-01', end_date='2023-12-31')
+# visualizer.plot_data('财务', '行情', '营业收入(同比增长率)', '收盘价')#, start_date='2022-01-01', end_date='2023-12-31')
+visualizer.plot_data('财务', '行情', '营业收入(同比增长率)', '收盘价', marker1='o', marker2=None)
