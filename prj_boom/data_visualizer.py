@@ -84,8 +84,6 @@ class DataVisualizer:
 
         # 将两个 DataFrame 按日期索引合并,并填充缺失值
         merged_df = pd.merge(df1[[df1_col]], df2[[df2_col]], left_index=True, right_index=True, how='outer').dropna(how='all')
-        # 寻找重复的索引并删除其中有 NaN 值的重复行
-        # merged_df = merged_df.groupby(level=0).first()
         merged_df.fillna(method='ffill', inplace=True)
         # merged_df.fillna(method='bfill', inplace=True)
 
@@ -99,8 +97,12 @@ class DataVisualizer:
 
         # 如果是 '财务' 和 '行情' 数据的组合,调用 add_shading 方法添加阴影
         if df1_key == '财务' and df2_key == '行情':
-            self.add_shading(merged_df[df1_col], merged_df[df2_col], ax1)
+            mask = (df1.index > pd.to_datetime('2023-01-01')) & (df1.isnull().all(axis=1))
+            first_missing_financial_date = df1.loc[mask].index.min()
+            self.add_shading(merged_df[df1_col], merged_df[df2_col], ax1, first_missing_financial_date)
         if df1_key == '财务' and df2_key == '基本面':
+            mask = (df1.index > pd.to_datetime('2023-01-01')) & (df1.isnull().all(axis=1))
+            first_missing_financial_date = df1.loc[mask].index.min()
             # 获取财务数据的最早日期
             earliest_date_finance = df1.index.min()
             # 计算基本面数据的截取日期(财务数据最早日期 - 5 日)
@@ -108,7 +110,7 @@ class DataVisualizer:
             # 截取基本面数据
             merged_df = merged_df.loc[cut_off_date:]
 
-            self.add_shading(merged_df[df1_col], merged_df[df2_col], ax1)
+            self.add_shading(merged_df[df1_col], merged_df[df2_col], ax1, first_missing_financial_date)
         if df1_key == '行情' and df2_key == '基本面':
             # 获取财务数据的最早日期
             earliest_date_finance = df1.index.min()
@@ -124,13 +126,14 @@ class DataVisualizer:
 
         ax1.set_ylabel(df1_col)
         ax2.set_ylabel(df2_col)
+        ax1.set_title(self.sheet_name)
 
         ax1.legend(loc='upper left')
         ax2.legend(loc='upper right')
 
         plt.show()
 
-    def add_shading(self, finance_data, quote_data, ax):
+    def add_shading(self, finance_data, quote_data, ax, first_missing_financial_date=None):
         """
         根据财务数据和行情数据的变化趋势,在图中添加阴影。
 
@@ -140,14 +143,15 @@ class DataVisualizer:
         - ax: 要添加阴影的 Axes 对象。
         """
         # 获取财务数据的季度末日期
-        quarter_ends = finance_data.resample('Q').asfreq().index
-
-        # 找到第一个缺失的季末日期
-        missing_index = quarter_ends.difference(finance_data.index)
-        if not missing_index.empty:
-            first_missing_date = missing_index[0]
-            # 删除第一个缺失日期及其之后的所有季末日期
-            quarter_ends = quarter_ends[quarter_ends < first_missing_date]
+        quarter_ends = finance_data.dropna().resample('Q').last().index
+        if first_missing_financial_date is not None:
+            quarter_ends = quarter_ends[quarter_ends < first_missing_financial_date]
+        # # 找到第一个缺失的季末日期
+        # missing_index = quarter_ends.difference(finance_data.index)
+        # if not missing_index.empty:
+        #     first_missing_date = missing_index[0]
+        #     # 删除第一个缺失日期及其之后的所有季末日期
+        #     quarter_ends = quarter_ends[quarter_ends < first_missing_date]
 
         # 统计红色和蓝色季度的个数
         red_count = 0
@@ -183,7 +187,7 @@ class DataVisualizer:
         # 打印统计结果
         print(f"红色季度数: {red_count}")
         print(f"蓝色季度数: {blue_count}")
-        print(f"红色季度占比: {red_ratio:.2%}")
+        print(f"红色季度占比: {red_ratio:.1%}")
 
     def add_shading_quote_fundamental(self, quote_data, fundamental_data, ax):
         """
