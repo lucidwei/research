@@ -84,6 +84,8 @@ class DataVisualizer:
 
         # 将两个 DataFrame 按日期索引合并,并填充缺失值
         merged_df = pd.merge(df1[[df1_col]], df2[[df2_col]], left_index=True, right_index=True, how='outer').dropna(how='all')
+        # 寻找重复的索引并删除其中有 NaN 值的重复行
+        # merged_df = merged_df.groupby(level=0).first()
         merged_df.fillna(method='ffill', inplace=True)
         # merged_df.fillna(method='bfill', inplace=True)
 
@@ -115,7 +117,7 @@ class DataVisualizer:
             # 截取基本面数据
             merged_df = merged_df.loc[cut_off_date:]
 
-            self.add_shading(merged_df[df1_col], merged_df[df2_col], ax1)
+            self.add_shading_quote_fundamental(merged_df[df1_col], merged_df[df2_col], ax1)
 
         ax1.plot(merged_df[df1_col], label=df1_col, linestyle='-', marker=marker1)
         ax2.plot(merged_df[df2_col], label=df2_col, linestyle='-', color='red', marker=marker2)
@@ -183,27 +185,107 @@ class DataVisualizer:
         print(f"蓝色季度数: {blue_count}")
         print(f"红色季度占比: {red_ratio:.2%}")
 
-# 使用示例
+    def add_shading_quote_fundamental(self, quote_data, fundamental_data, ax):
+        """
+        根据行情数据和基本面数据的变化趋势,在图中添加阴影。
 
-# visualizer = DataVisualizer(rf"D:\WPS云盘\WPS云盘\工作-麦高\专题研究\景气研究\行业景气数据库与展示.xlsx", '全A')
+        参数:
+        - quote_data: 行情数据的 DataFrame。
+        - fundamental_data: 基本面数据的 DataFrame。
+        - ax: 要添加阴影的 Axes 对象。
+        """
+        # 获取行情数据和基本面数据的交集索引
+        common_index = quote_data.index.intersection(fundamental_data.index)
 
-# visualizer.plot_data('财务', '基本面', '营业收入(同比增长率)', '中国:规模以上工业增加值:石油和天然气开采业:当月同比')#, start_date='2022-01-01', end_date='2023-12-31')
+        # 根据交集索引对行情数据和基本面数据进行重采样
+        quote_data_resampled = quote_data.loc[common_index].resample('Q').last()
+        fundamental_data_resampled = fundamental_data.loc[common_index].resample('Q').last()
 
-# visualizer.plot_data('财务', '行情', '营业收入(同比增长率)', '收盘价')#, start_date='2022-01-01', end_date='2023-12-31')
-# visualizer.plot_data('财务', '行情', '营业收入(同比增长率)', '收盘价', marker1='o', marker2=None)
-# visualizer.plot_data('财务', '行情', '归属母公司股东的净利润(同比增长率)', '收盘价', marker1='o', marker2=None)
-# visualizer.plot_data('财务', '行情', '净资产收益率ROE(平均)', '收盘价', marker1='o', marker2=None)
-# visualizer.plot_data('财务', '行情', '单季度.营业收入同比增长率', '收盘价', marker1='o', marker2=None)
-# visualizer.plot_data('财务', '行情', '归属母公司股东的净利润同比增长率', '收盘价', marker1='o', marker2=None)
-# visualizer.plot_data('财务', '行情', '净资产收益率ROE', '收盘价', marker1='o', marker2=None)
-# visualizer.plot_data('财务', '行情', '营业收入同比增长率', '收盘价', marker1='o', marker2=None)
+        # 获取重采样后的季度末日期
+        quarter_ends = quote_data_resampled.index
 
-### 石油石化分析
-visualizer = DataVisualizer(rf"D:\WPS云盘\WPS云盘\工作-麦高\专题研究\景气研究\行业景气数据库与展示.xlsx", '石油石化')
-# visualizer.plot_data('财务', '基本面', '营业收入同比增长率', '现货价:原油:英国布伦特Dtd')
-# visualizer.plot_data('财务', '基本面', '归属母公司股东的净利润同比增长率', '现货价:原油:英国布伦特Dtd')
-# visualizer.plot_data('财务', '基本面', '净资产收益率ROE', '现货价:原油:英国布伦特Dtd')
-# visualizer.plot_data('财务', '行情', '营业收入同比增长率', '收盘价', marker1='o', marker2=None)
-# visualizer.plot_data('财务', '行情', '归属母公司股东的净利润同比增长率', '收盘价', marker1='o', marker2=None)
-# visualizer.plot_data('财务', '行情', '净资产收益率ROE', '收盘价', marker1='o', marker2=None)
-visualizer.plot_data('行情', '基本面', '收盘价', '现货价:原油:英国布伦特Dtd')
+        # 统计红色和蓝色季度的个数
+        red_count = 0
+        blue_count = 0
+
+        # 遍历每个季度
+        for idx in range(len(quarter_ends)):
+            if idx < len(quarter_ends) - 1:
+                start_date = quarter_ends[idx]
+                end_date = quarter_ends[idx + 1]
+
+                # 获取行情数据和基本面数据在该季度的起始和结束值
+                quote_start = quote_data_resampled.iloc[idx]
+                quote_end = quote_data_resampled.iloc[idx + 1]
+                fundamental_start = fundamental_data_resampled.iloc[idx]
+                fundamental_end = fundamental_data_resampled.iloc[idx + 1]
+
+                # 检查数据是否为 NaN,如果是,则尝试获取临近的非空数值
+                if pd.isnull(quote_start):
+                    quote_start_ts = quote_data_resampled.iloc[:idx].last_valid_index()
+                    if quote_start_ts is not None:
+                        quote_start = quote_data.loc[quote_start_ts]
+                if pd.isnull(quote_end):
+                    quote_end_ts = quote_data_resampled.iloc[idx + 1:].first_valid_index()
+                    if quote_end_ts is not None:
+                        quote_end = quote_data.loc[quote_end_ts]
+                if pd.isnull(fundamental_start):
+                    fundamental_start_ts = fundamental_data_resampled.iloc[:idx].last_valid_index()
+                    if fundamental_start_ts is not None:
+                        fundamental_start = fundamental_data.loc[fundamental_start_ts]
+                if pd.isnull(fundamental_end):
+                    fundamental_end_ts = fundamental_data_resampled.iloc[idx + 1:].first_valid_index()
+                    if fundamental_end_ts is not None:
+                        fundamental_end = fundamental_data.loc[fundamental_end_ts]
+
+                # 计算行情数据和基本面数据在该季度的变化
+                if quote_start is not None and quote_end is not None and fundamental_start is not None and fundamental_end is not None:
+                    quote_change = quote_end - quote_start
+                    fundamental_change = fundamental_end - fundamental_start
+
+                    # 判断两个数据的变化方向是否一致
+                    if (quote_change * fundamental_change) > 0:
+                        # 行情数据上升且基本面数据上升,添加红色阴影
+                        ax.axvspan(start_date, end_date, alpha=0.2, color='red')
+                        red_count += 1
+                    elif (quote_change * fundamental_change) < 0:
+                        # 行情数据下降且基本面数据下降,添加蓝色阴影
+                        ax.axvspan(start_date, end_date, alpha=0.2, color='blue')
+                        blue_count += 1
+
+        # 计算红色季度的占比
+        total_count = red_count + blue_count
+        if total_count > 0:
+            red_ratio = red_count / total_count
+        else:
+            red_ratio = 0
+
+        # 打印统计结果
+        print(f"红色季度数: {red_count}")
+        print(f"蓝色季度数: {blue_count}")
+        print(f"红色季度占比: {red_ratio:.2%}")
+
+
+def analyze_industry(visualizer, commodity_price_col):
+    # 财务数据与基本面数据的关系
+    visualizer.plot_data('财务', '基本面', '营业收入同比增长率', commodity_price_col)
+    visualizer.plot_data('财务', '基本面', '归属母公司股东的净利润同比增长率', commodity_price_col)
+    visualizer.plot_data('财务', '基本面', '净资产收益率ROE', commodity_price_col)
+
+    # 财务数据与行情数据的关系
+    visualizer.plot_data('财务', '行情', '营业收入同比增长率', '收盘价', marker1='o', marker2=None)
+    visualizer.plot_data('财务', '行情', '归属母公司股东的净利润同比增长率', '收盘价', marker1='o', marker2=None)
+    visualizer.plot_data('财务', '行情', '净资产收益率ROE', '收盘价', marker1='o', marker2=None)
+
+    # 行情数据与基本面数据的关系
+    visualizer.plot_data('行情', '基本面', '收盘价', commodity_price_col)
+
+file_path = rf"D:\WPS云盘\WPS云盘\工作-麦高\专题研究\景气研究\行业景气数据库与展示.xlsx"
+
+# 石油石化行业分析
+visualizer = DataVisualizer(file_path, '石油石化')
+analyze_industry(visualizer, '现货价:原油:英国布伦特Dtd')
+
+# 煤炭行业分析
+visualizer = DataVisualizer(file_path, '煤炭')
+analyze_industry(visualizer, '秦皇岛港:平仓价:动力煤(Q5000K)')
