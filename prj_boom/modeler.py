@@ -38,6 +38,8 @@ class DynamicFactorModeler:
         model = DynamicFactorMQ(self.data, factors=self.k_factors, factor_orders=2, idiosyncratic_ar1=False)
         print(model.summary())
         self.results = model.fit_em(maxiter=1000)
+        # fitted_data用来观察补全后的空值（但对原始数据变化很大）
+        fitted_data = self.results.predict()
 
     def evaluate_model(self):
         """
@@ -46,8 +48,6 @@ class DynamicFactorModeler:
         if self.results is None:
             raise ValueError("Please run apply_dynamic_factor_model() first.")
 
-        # fitted_data用来观察补全后的空值（但对原始数据变化很大）
-        fitted_data = self.results.predict()
         extracted_factor = self.results.factors.filtered['0']
 
         # 将 self.financial 的索引转换为月频
@@ -60,12 +60,12 @@ class DynamicFactorModeler:
         factor_filtered = combined_data.loc[:, combined_data.columns != '0'].squeeze().astype(float)
 
         corr = np.corrcoef(extracted_factor_filtered[15:], factor_filtered[15:])[0, 1]
-        print(f"Correlation between extracted factor and original factor: {corr:.4f}")
+        print(f"后期Correlation: {corr:.4f}")
         corr = np.corrcoef(extracted_factor_filtered[:15], factor_filtered[:15])[0, 1]
-        print(f"Correlation between extracted factor and original factor: {corr:.4f}")
-        self.corr = corr
+        print(f"早期Correlation between extracted factor and original factor: {corr:.4f}")
         corr = np.corrcoef(extracted_factor_filtered, factor_filtered)[0, 1]
         print(f"Correlation between extracted factor and original factor: {corr:.4f}")
+        self.corr = corr
 
     def plot_factors(self):
         """
@@ -87,18 +87,38 @@ class DynamicFactorModeler:
         factor_filtered = combined_data.loc[:, combined_data.columns != '0'].squeeze()
 
         # 绘制提取的因子和原始因子的图像
-        plt.figure(figsize=(12, 6))
-        plt.plot(extracted_factor_filtered, label='景气综合指标')
-        plt.scatter(factor_filtered.index, factor_filtered.values, label=factor.name, color='red')
+        fig, ax1 = plt.subplots(figsize=(12, 6))
+        ax1.plot(extracted_factor_filtered, label='景气综合指标')
+
+        # 获取最新的两个时间点
+        latest_dates = extracted_factor_filtered.index[-2:]
+
+        # 绘制最新两期数据变化的红线
+        ax1.plot(latest_dates, extracted_factor_filtered[latest_dates], color='red', linewidth=2)
+
+        # 创建第二个 y 轴
+        ax2 = ax1.twinx()
+        ax2.scatter(factor_filtered.index, factor_filtered.values, label=factor.name, color='red')
+
         # 绘制每年的纵向栅格
         years = sorted(set(dt.year for dt in extracted_factor_filtered.index))
         for year in years:
-            plt.axvline(pd.to_datetime(f'{year}-01-01'), color='gray', linestyle='--', linewidth=0.8)
+            ax1.axvline(pd.to_datetime(f'{year}-01-01'), color='gray', linestyle='--', linewidth=0.8)
 
-        # plt.xlabel('Date')
-        # plt.ylabel('Factor Value')
-        plt.legend()
-        # plt.title(rf'{self.preprocessor.industry} 景气综合指标 vs. {factor.name}')
+        # 设置 x 轴标签
+        ax1.set_xlabel('Date')
+
+        # 设置第一个 y 轴标签
+        ax1.set_ylabel('景气综合指标')
+
+        # 设置第二个 y 轴标签
+        ax2.set_ylabel(factor.name)
+
+        # 合并两个 y 轴的图例
+        lines1, labels1 = ax1.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
+
         plt.title(rf'{self.preprocessor.industry}')
         plt.show()
 
