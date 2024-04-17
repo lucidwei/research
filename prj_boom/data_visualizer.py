@@ -6,7 +6,7 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from utils import set_index_col_wind
+from utils_prj import set_index_col_wind, split_dataframe
 from pylab import mpl
 mpl.rcParams['font.sans-serif'] = ['STZhongsong']    # 指定默认字体：解决plot不能显示中文问题
 mpl.rcParams['axes.unicode_minus'] = False           # 解决保存图像是负号'-'显示为方块的问题
@@ -24,42 +24,7 @@ class DataVisualizer:
         self.file_path = file_path
         self.sheet_name = sheet_name
         self.df = pd.read_excel(file_path, sheet_name=sheet_name)
-        self.df_dict = self._split_dataframe()
-
-    def _split_dataframe(self):
-        """
-        根据空列将 DataFrame 分割成多个子 DataFrame,并设置日期索引和列名。
-
-        返回:
-        - df_dict: 包含分割后的子 DataFrame 的字典,键为 '财务'、'行情' 和 '基本面'。
-        """
-        df_dict = {}
-        df_names = ['财务', '行情', '基本面']
-        col_locators = ['日期', '日期', '指标名称']
-
-        start_idx = 0
-        for idx, col in enumerate(self.df.columns):
-            if pd.isna(self.df[col]).all() or idx == len(self.df.columns) - 1:
-                if start_idx <= idx:
-                    sub_df = self.df.iloc[:, start_idx:idx + 1]
-                    df_name = df_names.pop(0)
-                    col_locator = col_locators.pop(0)
-                    sub_df = set_index_col_wind(sub_df, col_locator)
-                    # 删除全部为NaN的列
-                    sub_df = sub_df.dropna(axis=1, how='all')
-
-                    if df_name == '基本面':
-                        sub_df = sub_df.replace(0, np.nan)
-                    if df_name == '财务':
-                        # 对每列数据求MA4
-                        sub_df = sub_df.sort_index(ascending=True).rolling(window=4).mean().sort_index(ascending=False)
-                        # 删除列名中的"单季度."字符串
-                        sub_df.columns = sub_df.columns.str.replace('单季度.', '')
-
-                    df_dict[df_name] = sub_df.astype(float)
-                start_idx = idx + 1
-
-        return df_dict
+        self.df_dict = split_dataframe(self.df)
 
     def plot_data(self, df1_key, df2_key, df1_col, df2_col, start_date=None, end_date=None, marker1=None, marker2=None):
         """
@@ -103,12 +68,10 @@ class DataVisualizer:
         if df1_key == '财务' and df2_key == '基本面':
             mask = (df1.index > pd.to_datetime('2023-01-01')) & (df1.isnull().all(axis=1))
             first_missing_financial_date = df1.loc[mask].index.min()
-            # 获取财务数据的最早日期
-            earliest_date_finance = df1.index.min()
-            # 计算基本面数据的截取日期(财务数据最早日期 - 5 日)
-            cut_off_date = earliest_date_finance - pd.Timedelta(days=5)
+            # 获取财务数据的最早日期，避免画出过于久远的基本面数据
+            earliest_date_finance = df1.index.min() - pd.Timedelta(days=5)
             # 截取基本面数据
-            merged_df = merged_df.loc[cut_off_date:]
+            merged_df = merged_df.loc[earliest_date_finance:]
 
             self.add_shading(merged_df[df1_col], merged_df[df2_col], ax1, first_missing_financial_date)
         if df1_key == '行情' and df2_key == '基本面':
@@ -124,8 +87,8 @@ class DataVisualizer:
         ax1.plot(merged_df[df1_col], label=df1_col, linestyle='-', marker=marker1)
         ax2.plot(merged_df[df2_col], label=df2_col, linestyle='-', color='red', marker=marker2)
 
-        ax1.set_ylabel(df1_col)
-        ax2.set_ylabel(df2_col)
+        # ax1.set_ylabel(df1_col)
+        # ax2.set_ylabel(df2_col)
         ax1.set_title(self.sheet_name)
 
         ax1.legend(loc='upper left')
@@ -228,19 +191,19 @@ class DataVisualizer:
                 if pd.isnull(quote_start):
                     quote_start_ts = quote_data_resampled.iloc[:idx].last_valid_index()
                     if quote_start_ts is not None:
-                        quote_start = quote_data.loc[quote_start_ts]
+                        quote_start = quote_data_resampled.loc[quote_start_ts]
                 if pd.isnull(quote_end):
                     quote_end_ts = quote_data_resampled.iloc[idx + 1:].first_valid_index()
                     if quote_end_ts is not None:
-                        quote_end = quote_data.loc[quote_end_ts]
+                        quote_end = quote_data_resampled.loc[quote_end_ts]
                 if pd.isnull(fundamental_start):
                     fundamental_start_ts = fundamental_data_resampled.iloc[:idx].last_valid_index()
                     if fundamental_start_ts is not None:
-                        fundamental_start = fundamental_data.loc[fundamental_start_ts]
+                        fundamental_start = fundamental_data_resampled.loc[fundamental_start_ts]
                 if pd.isnull(fundamental_end):
                     fundamental_end_ts = fundamental_data_resampled.iloc[idx + 1:].first_valid_index()
                     if fundamental_end_ts is not None:
-                        fundamental_end = fundamental_data.loc[fundamental_end_ts]
+                        fundamental_end = fundamental_data_resampled.loc[fundamental_end_ts]
 
                 # 计算行情数据和基本面数据在该季度的变化
                 if quote_start is not None and quote_end is not None and fundamental_start is not None and fundamental_end is not None:
@@ -270,26 +233,102 @@ class DataVisualizer:
         print(f"红色季度占比: {red_ratio:.2%}")
 
 
-def analyze_industry(visualizer, commodity_price_col):
+def analyze_industry(visualizer, commodity_price_col, start_date=None, end_date=None):
     # 财务数据与基本面数据的关系
-    visualizer.plot_data('财务', '基本面', '营业收入同比增长率', commodity_price_col)
-    visualizer.plot_data('财务', '基本面', '归属母公司股东的净利润同比增长率', commodity_price_col)
-    visualizer.plot_data('财务', '基本面', '净资产收益率ROE', commodity_price_col)
+    # visualizer.plot_data('财务', '基本面', '营业收入同比增长率', commodity_price_col)
+    # visualizer.plot_data('财务', '基本面', '归属母公司股东的净利润同比增长率', commodity_price_col)
+    # visualizer.plot_data('财务', '基本面', '净资产收益率ROE', commodity_price_col)
 
     # 财务数据与行情数据的关系
-    visualizer.plot_data('财务', '行情', '营业收入同比增长率', '收盘价', marker1='o', marker2=None)
-    visualizer.plot_data('财务', '行情', '归属母公司股东的净利润同比增长率', '收盘价', marker1='o', marker2=None)
-    visualizer.plot_data('财务', '行情', '净资产收益率ROE', '收盘价', marker1='o', marker2=None)
+    visualizer.plot_data('财务', '行情', '营业收入同比增长率', '收盘价', marker1=None, marker2=None, start_date=start_date)
+    # visualizer.plot_data('财务', '行情', '归属母公司股东的净利润同比增长率', '收盘价', marker1='o', marker2=None, start_date=start_date)
+    visualizer.plot_data('财务', '行情', '净资产收益率ROE', '收盘价', marker1=None, marker2=None, start_date=start_date)
 
     # 行情数据与基本面数据的关系
-    visualizer.plot_data('行情', '基本面', '收盘价', commodity_price_col)
+    # visualizer.plot_data('行情', '基本面', '收盘价', commodity_price_col, start_date=start_date, end_date=end_date)
 
 file_path = rf"D:\WPS云盘\WPS云盘\工作-麦高\专题研究\景气研究\行业景气数据库与展示.xlsx"
 
 # 石油石化行业分析
 visualizer = DataVisualizer(file_path, '石油石化')
 analyze_industry(visualizer, '现货价:原油:英国布伦特Dtd')
+# visualizer = DataVisualizer(file_path, '石油石化')
+# analyze_industry(visualizer, '现货价:原油:英国布伦特Dtd', start_date='2020-01-02')
+# visualizer = DataVisualizer(file_path, '石油石化')
+# analyze_industry(visualizer, '现货价:原油:英国布伦特Dtd', start_date='2014-10-02', end_date='2020-03-02')
 
-# 煤炭行业分析
 visualizer = DataVisualizer(file_path, '煤炭')
 analyze_industry(visualizer, '秦皇岛港:平仓价:动力煤(Q5000K)')
+# visualizer = DataVisualizer(file_path, '煤炭')
+# analyze_industry(visualizer, '秦皇岛港:平仓价:动力煤(Q5000K)', start_date='2020-01-02')
+# visualizer = DataVisualizer(file_path, '煤炭')
+# analyze_industry(visualizer, '秦皇岛港:平仓价:动力煤(Q5000K)', start_date='2014-10-02', end_date='2020-03-02')
+
+# visualizer = DataVisualizer(file_path, '有色金属')
+# analyze_industry(visualizer, '秦皇岛港:平仓价:动力煤(Q5000K)')
+
+visualizer = DataVisualizer(file_path, '基础化工')
+analyze_industry(visualizer, '中国化工产品价格指数')
+
+visualizer = DataVisualizer(file_path, '钢铁')
+analyze_industry(visualizer, '中国:价格:螺纹钢(HRB400,20mm)')
+#
+# visualizer = DataVisualizer(file_path, '煤炭')
+# analyze_industry(visualizer, '秦皇岛港:平仓价:动力煤(Q5000K)')
+#
+# visualizer = DataVisualizer(file_path, '煤炭')
+# analyze_industry(visualizer, '秦皇岛港:平仓价:动力煤(Q5000K)')
+#
+# visualizer = DataVisualizer(file_path, '煤炭')
+# analyze_industry(visualizer, '秦皇岛港:平仓价:动力煤(Q5000K)')
+#
+# visualizer = DataVisualizer(file_path, '煤炭')
+# analyze_industry(visualizer, '秦皇岛港:平仓价:动力煤(Q5000K)')
+#
+# visualizer = DataVisualizer(file_path, '煤炭')
+# analyze_industry(visualizer, '秦皇岛港:平仓价:动力煤(Q5000K)')
+#
+# visualizer = DataVisualizer(file_path, '煤炭')
+# analyze_industry(visualizer, '秦皇岛港:平仓价:动力煤(Q5000K)')
+#
+# visualizer = DataVisualizer(file_path, '煤炭')
+# analyze_industry(visualizer, '秦皇岛港:平仓价:动力煤(Q5000K)')
+#
+# visualizer = DataVisualizer(file_path, '煤炭')
+# analyze_industry(visualizer, '秦皇岛港:平仓价:动力煤(Q5000K)')
+#
+# visualizer = DataVisualizer(file_path, '煤炭')
+# analyze_industry(visualizer, '秦皇岛港:平仓价:动力煤(Q5000K)')
+#
+# visualizer = DataVisualizer(file_path, '煤炭')
+# analyze_industry(visualizer, '秦皇岛港:平仓价:动力煤(Q5000K)')
+#
+# visualizer = DataVisualizer(file_path, '煤炭')
+# analyze_industry(visualizer, '秦皇岛港:平仓价:动力煤(Q5000K)')
+#
+# visualizer = DataVisualizer(file_path, '煤炭')
+# analyze_industry(visualizer, '秦皇岛港:平仓价:动力煤(Q5000K)')
+#
+# visualizer = DataVisualizer(file_path, '煤炭')
+# analyze_industry(visualizer, '秦皇岛港:平仓价:动力煤(Q5000K)')
+#
+# visualizer = DataVisualizer(file_path, '煤炭')
+# analyze_industry(visualizer, '秦皇岛港:平仓价:动力煤(Q5000K)')
+#
+# visualizer = DataVisualizer(file_path, '煤炭')
+# analyze_industry(visualizer, '秦皇岛港:平仓价:动力煤(Q5000K)')
+#
+# visualizer = DataVisualizer(file_path, '煤炭')
+# analyze_industry(visualizer, '秦皇岛港:平仓价:动力煤(Q5000K)')
+#
+# visualizer = DataVisualizer(file_path, '煤炭')
+# analyze_industry(visualizer, '秦皇岛港:平仓价:动力煤(Q5000K)')
+#
+# visualizer = DataVisualizer(file_path, '煤炭')
+# analyze_industry(visualizer, '秦皇岛港:平仓价:动力煤(Q5000K)')
+#
+# visualizer = DataVisualizer(file_path, '煤炭')
+# analyze_industry(visualizer, '秦皇岛港:平仓价:动力煤(Q5000K)')
+#
+# visualizer = DataVisualizer(file_path, '煤炭')
+# analyze_industry(visualizer, '秦皇岛港:平仓价:动力煤(Q5000K)')

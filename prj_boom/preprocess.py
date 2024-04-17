@@ -12,7 +12,7 @@ from statsmodels.tsa.stattools import adfuller, kpss
 
 from base_config import BaseConfig
 from pgdb_updater_base import PgDbUpdaterBase
-from utils import *
+from utils_prj import *
 
 
 def transform_cumulative_data(series: pd.Series, data_type: str, period: int = 12) -> pd.Series:
@@ -105,7 +105,7 @@ def transform_cumulative_data(series: pd.Series, data_type: str, period: int = 1
 
 
 class DataPreprocessor(PgDbUpdaterBase):
-    def __init__(self, base_config: BaseConfig, freq: str = 'M', info: pd.DataFrame = None):
+    def __init__(self, base_config: BaseConfig, date_start: str = '2010-01-01', industry: str = None):
         """
         数据预处理类的初始化方法
         :param data: 原始数据,DataFrame格式
@@ -113,8 +113,8 @@ class DataPreprocessor(PgDbUpdaterBase):
         :param info: 数据说明表,包含每列数据的处理规则,DataFrame格式
         """
         super().__init__(base_config)
-        self.freq = freq
-        self.info = info
+        self.date_start = date_start
+        self.industry = industry
         self.k_factors = 1
 
     def preprocess(self):
@@ -128,7 +128,7 @@ class DataPreprocessor(PgDbUpdaterBase):
         self.special_mannual_treatment()
         self.align_to_month()
         self.fill_internal_missing()
-        self.get_stationary()
+        # self.get_stationary()
         self.cap_outliers()
         # return self.data
 
@@ -137,35 +137,31 @@ class DataPreprocessor(PgDbUpdaterBase):
 
         # 读取宏观指标手设info
         # 宏观指标名称作为index(不是指标ID，因为不方便人类理解)
-        info = pd.read_excel(rf'{file_path}/indicators_info.xlsx', engine="openpyxl")
+        # 使用中文字符串作为 DataFrame 的列名可能会引入一些意外的问题,特别是当列名包含特殊字符或标点符号时。
+        # 需要把特殊字符或标点符号全部转换为下划线_
+        info = pd.read_excel(rf'{file_path}/indicators_info.xlsx', engine="openpyxl", sheet_name=self.industry)
         self.id_to_name = dict(zip(info['指标ID'], info['指标名称']))
-        self.info = info.set_index('指标ID')
+        self.info = info.set_index('指标名称')
 
         # 读取宏观指标
         # 将指标名称设为列，日期为index
-        # data = pd.read_excel(rf'{file_path}/中宏观indicators.xlsx', sheet_name='test')
-        data = pd.read_excel(rf'{file_path}/中宏观indicators.xlsx')
-        data = set_index_col_wind(data, '指标ID')
-        # 筛选日期并排序
-        data_filtered = data[data.index >= pd.Timestamp('2010-01-01')].copy(deep=True)
-        data_filtered.sort_index(ascending=True, inplace=True)
+        df = pd.read_excel(rf'{file_path}/行业景气数据库.xlsx', sheet_name=self.industry)
+        df_dict = split_dataframe(whole_df=df)
 
-        # 读取财务数据
-        financials = pd.read_excel(rf"{file_path}/行业财务数据.xlsx", sheet_name='油气开采q')
-        financials = set_index_col_wind(financials, 'Date')
-        financials = financials[financials.index >= pd.Timestamp('2010-01-01')].copy(deep=True)
-        financials.sort_index(ascending=True, inplace=True)
+        # 对df_dict中的每个DataFrame进行筛选日期并排序
+        df_dict = {
+            key: value[value.index >= pd.Timestamp(self.date_start)].sort_index(ascending=True)
+            for key, value in df_dict.items()
+        }
 
-        combined_data = pd.merge(data_filtered, financials, left_index=True, right_index=True, how='outer')
-        # 定义一个列表,存储要剔除的列名
-        financials_cols = ['roe_ttm2', 'yoyprofit']
-        indicators_cols = [col for col in combined_data.columns if col not in financials_cols]
+        # 定义一个列表, 存储要剔除的列名, 挑选只在info中出现的指标进行处理
+        financials_cols = ['净资产收益率ROE', '归属母公司股东的净利润同比增长率', '营业收入同比增长率']
+        indicators_cols = self.info.index.tolist()
+        combined_data = pd.merge(df_dict['基本面'][indicators_cols], df_dict['财务'], left_index=True, right_index=True, how='outer')
+
 
         # 剔除影响计算的0值
-        self.df_indicators = combined_data[indicators_cols].replace(0, np.nan)
-        for column in indicators_cols:
-            self.df_indicators[column] = pd.to_numeric(self.df_indicators[column], errors='coerce')
-
+        self.df_indicators = combined_data[indicators_cols].replace(0, np.nan).astype(float)
         self.df_finalcials = combined_data[financials_cols]
 
     def special_mannual_treatment(self):
@@ -180,14 +176,15 @@ class DataPreprocessor(PgDbUpdaterBase):
             X.loc[:, 'M0329545'] = X.M5528820.add(X.M0329545, fill_value=0).copy()
             X.drop('M5528820', axis=1, inplace=True)
         # 对于info表中标记为累计值的列,将其转换为月度值
-        for id in X.columns:
-            if self.info.loc[id, '是否累计值'] == '累计值':
-                self.info.loc[id, '指标名称'] = '(月度化)' + self.info.loc[id, '指标名称']
-                X.loc[:, id] = transform_cumulative_data(X.loc[:, id], '累计值')
-
-            elif self.info.loc[id, '是否累计值'] == '累计同比':
-                self.info.loc[id, '指标名称'] = '(月度化)' + self.info.loc[id, '指标名称']
-                X.loc[:, id] = transform_cumulative_data(X.loc[:, id], '累计同比')
+        for name in X.columns:
+            if not pd.isna(self.info.loc[name, '是否累计值']):
+                new_name = '(月度化)' + name
+                # 转换指标名
+                self.info.loc[new_name] = self.info.loc[name]
+                self.info = self.info.drop(name)
+                # 累积值转为月度
+                X.loc[:, new_name] = transform_cumulative_data(X.loc[:, name], self.info.loc[new_name, '是否累计值'])
+                X.drop(name, axis=1, inplace=True)
 
         self.data = X
 
@@ -242,7 +239,7 @@ class DataPreprocessor(PgDbUpdaterBase):
         record = {}
         for col_ind, col in df.items():
             # 检查并处理缺失值
-            if df[col_ind].isnull().any():
+            if df[col_ind].isnull().values.any():
                 col = col.dropna()
             record[col_ind] = self.station_test(col)
 

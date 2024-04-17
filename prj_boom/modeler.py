@@ -4,9 +4,14 @@
 # FileName: modeler.py
 # Software: PyCharm
 from statsmodels.tsa.statespace.dynamic_factor_mq import DynamicFactorMQ
-from sklearn.metrics import mean_squared_error
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+
+from pylab import mpl
+mpl.rcParams['font.sans-serif'] = ['STZhongsong']    # 指定默认字体：解决plot不能显示中文问题
+mpl.rcParams['axes.unicode_minus'] = False           # 解决保存图像是负号'-'显示为方块的问题
 
 
 class DynamicFactorModeler:
@@ -40,6 +45,7 @@ class DynamicFactorModeler:
         if self.results is None:
             raise ValueError("Please run apply_dynamic_factor_model() first.")
 
+        # fitted_data用来观察补全后的空值（但对原始数据变化很大）
         fitted_data = self.results.predict()
         extracted_factor = self.results.factors.filtered['0']
 
@@ -58,7 +64,39 @@ class DynamicFactorModeler:
         print(f"Correlation between extracted factor and original factor: {corr:.4f}")
         corr = np.corrcoef(extracted_factor_filtered, factor_filtered)[0, 1]
         print(f"Correlation between extracted factor and original factor: {corr:.4f}")
-        print('a')
+
+    def plot_factors(self):
+        """
+        绘制提取的因子和原始因子的图像
+        """
+        if self.results is None:
+            raise ValueError("Please run apply_dynamic_factor_model() first.")
+
+        extracted_factor = self.results.factors.filtered['0']
+
+        # 将 extracted_factor 转换为季频数据
+        extracted_factor_quarterly = extracted_factor.resample('Q').last()
+
+        # 对齐两个时间序列的索引
+        combined_data = pd.merge(extracted_factor_quarterly, self.financial.dropna().astype(float), left_index=True,
+                                 right_index=True, how='outer')
+        extracted_factor_filtered = combined_data['0']
+        factor_filtered = combined_data.loc[:, combined_data.columns != '0'].squeeze()
+
+        # 绘制提取的因子和原始因子的图像
+        plt.figure(figsize=(12, 6))
+        plt.plot(extracted_factor_filtered, label='Extracted Factor')
+        plt.scatter(factor_filtered.index, factor_filtered.values, label='roe_ttm', color='red')
+        # 绘制每年的纵向栅格
+        years = sorted(set(dt.year for dt in extracted_factor_filtered.index))
+        for year in years:
+            plt.axvline(pd.to_datetime(f'{year}-01-01'), color='gray', linestyle='--', linewidth=0.8)
+
+        plt.xlabel('Date')
+        plt.ylabel('Factor Value')
+        plt.legend()
+        plt.title('Extracted Factor vs. roe_ttm')
+        plt.show()
 
     def run(self):
         """
@@ -66,3 +104,4 @@ class DynamicFactorModeler:
         """
         self.apply_dynamic_factor_model()
         self.evaluate_model()
+        self.plot_factors()

@@ -8,7 +8,7 @@ from prj_boom.preprocess import DataPreprocessor
 from prj_boom.modeler import DynamicFactorModeler
 
 base_config = BaseConfig('boom')
-preprocessor = DataPreprocessor(base_config)
+preprocessor = DataPreprocessor(base_config, industry=' Ø”Õ ØªØ')
 preprocessor.preprocess()
 data = preprocessor.data
 financials = preprocessor.df_finalcials
