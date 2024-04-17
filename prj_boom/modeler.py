@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+from preprocess import DataPreprocessor
 
 from pylab import mpl
 mpl.rcParams['font.sans-serif'] = ['STZhongsong']    # 指定默认字体：解决plot不能显示中文问题
@@ -15,17 +16,17 @@ mpl.rcParams['axes.unicode_minus'] = False           # 解决保存图像是负号'-'显示
 
 
 class DynamicFactorModeler:
-    def __init__(self, data: pd.DataFrame, k_factors: int, financial: pd.Series):
+    def __init__(self, preprocessor: DataPreprocessor, k_factors: int, financial: str):
         """
         DynamicFactorMQ 建模和评估类的初始化方法
         :param data: 预处理后的数据,DataFrame 格式
         :param k_factors: 因子数量
         :param financial: 金融指标序列,用于评估模型效果,Series 格式
         """
-        self.data = data
+        self.preprocessor = preprocessor
+        self.data = preprocessor.data
+        self.financial = preprocessor.df_finalcials[financial]
         self.k_factors = k_factors
-        self.financial = financial
-        self.results = None
 
     def apply_dynamic_factor_model(self):
         """
@@ -62,6 +63,7 @@ class DynamicFactorModeler:
         print(f"Correlation between extracted factor and original factor: {corr:.4f}")
         corr = np.corrcoef(extracted_factor_filtered[:15], factor_filtered[:15])[0, 1]
         print(f"Correlation between extracted factor and original factor: {corr:.4f}")
+        self.corr = corr
         corr = np.corrcoef(extracted_factor_filtered, factor_filtered)[0, 1]
         print(f"Correlation between extracted factor and original factor: {corr:.4f}")
 
@@ -73,29 +75,31 @@ class DynamicFactorModeler:
             raise ValueError("Please run apply_dynamic_factor_model() first.")
 
         extracted_factor = self.results.factors.filtered['0']
+        if self.corr < 0:
+            extracted_factor *= -1
 
-        # 将 extracted_factor 转换为季频数据
-        extracted_factor_quarterly = extracted_factor.resample('Q').last()
+        factor = self.financial.dropna().astype(float)
 
         # 对齐两个时间序列的索引
-        combined_data = pd.merge(extracted_factor_quarterly, self.financial.dropna().astype(float), left_index=True,
+        combined_data = pd.merge(extracted_factor, factor, left_index=True,
                                  right_index=True, how='outer')
         extracted_factor_filtered = combined_data['0']
         factor_filtered = combined_data.loc[:, combined_data.columns != '0'].squeeze()
 
         # 绘制提取的因子和原始因子的图像
         plt.figure(figsize=(12, 6))
-        plt.plot(extracted_factor_filtered, label='Extracted Factor')
-        plt.scatter(factor_filtered.index, factor_filtered.values, label='roe_ttm', color='red')
+        plt.plot(extracted_factor_filtered, label='景气综合指标')
+        plt.scatter(factor_filtered.index, factor_filtered.values, label=factor.name, color='red')
         # 绘制每年的纵向栅格
         years = sorted(set(dt.year for dt in extracted_factor_filtered.index))
         for year in years:
             plt.axvline(pd.to_datetime(f'{year}-01-01'), color='gray', linestyle='--', linewidth=0.8)
 
-        plt.xlabel('Date')
-        plt.ylabel('Factor Value')
+        # plt.xlabel('Date')
+        # plt.ylabel('Factor Value')
         plt.legend()
-        plt.title('Extracted Factor vs. roe_ttm')
+        # plt.title(rf'{self.preprocessor.industry} 景气综合指标 vs. {factor.name}')
+        plt.title(rf'{self.preprocessor.industry}')
         plt.show()
 
     def run(self):

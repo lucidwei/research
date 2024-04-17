@@ -240,7 +240,10 @@ class DataPreprocessor(PgDbUpdaterBase):
             # 检查并处理缺失值
             if df[col_ind].isnull().values.any():
                 col = col.dropna()
-            record[col_ind] = self.station_test(col)
+            try:
+                record[col_ind] = self.station_test(col)
+            except:
+                raise Exception
 
         for col_ind, col in df.items():
             if record[col_ind] != 'stationary':
