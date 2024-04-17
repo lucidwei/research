@@ -12,5 +12,5 @@ preprocessor = DataPreprocessor(base_config, industry='石油石化')
 preprocessor.preprocess()
 data = preprocessor.data
 financials = preprocessor.df_finalcials
-modeler = DynamicFactorModeler(data, k_factors=1, financial=financials['roe_ttm2'])
+modeler = DynamicFactorModeler(data, k_factors=1, financial=financials['净资产收益率ROE'])
 modeler.run()

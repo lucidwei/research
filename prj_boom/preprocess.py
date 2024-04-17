@@ -115,7 +115,6 @@ class DataPreprocessor(PgDbUpdaterBase):
         super().__init__(base_config)
         self.date_start = date_start
         self.industry = industry
-        self.k_factors = 1
 
     def preprocess(self):
         """
@@ -128,17 +127,16 @@ class DataPreprocessor(PgDbUpdaterBase):
         self.special_mannual_treatment()
         self.align_to_month()
         self.fill_internal_missing()
-        # self.get_stationary()
+        self.get_stationary()
         self.cap_outliers()
-        # return self.data
 
     def read_data_and_info(self):
         file_path = rf'{self.base_config.excels_path}/景气'
 
         # 读取宏观指标手设info
         # 宏观指标名称作为index(不是指标ID，因为不方便人类理解)
-        # 使用中文字符串作为 DataFrame 的列名可能会引入一些意外的问题,特别是当列名包含特殊字符或标点符号时。
-        # 需要把特殊字符或标点符号全部转换为下划线_
+        # 使用中文字符串作为 DataFrame 的列名可能会引入一些意外的问题,出现重复列。把特殊字符或标点符号全部转换为下划线_ 也没用。
+        # 找到原因在combined_data = pd.merge
         info = pd.read_excel(rf'{file_path}/indicators_info.xlsx', engine="openpyxl", sheet_name=self.industry)
         self.id_to_name = dict(zip(info['指标ID'], info['指标名称']))
         self.info = info.set_index('指标名称')
@@ -158,7 +156,8 @@ class DataPreprocessor(PgDbUpdaterBase):
         financials_cols = ['净资产收益率ROE', '归属母公司股东的净利润同比增长率', '营业收入同比增长率']
         indicators_cols = self.info.index.tolist()
         combined_data = pd.merge(df_dict['基本面'][indicators_cols], df_dict['财务'], left_index=True, right_index=True, how='outer')
-
+        # 删除重复的列
+        combined_data = combined_data.loc[:, ~combined_data.columns.duplicated()]
 
         # 剔除影响计算的0值
         self.df_indicators = combined_data[indicators_cols].replace(0, np.nan).astype(float)
