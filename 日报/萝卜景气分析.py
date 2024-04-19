@@ -61,7 +61,7 @@ def static_analysis(dfs, date=None):
     return selected_rows
 
 
-def dynamic_analysis(dfs, start_date=None, end_date=None):
+def dynamic_analysis(dfs, history_data, start_date=None, end_date=None):
     if end_date is None:
         # 如果没有指定结束日期,使用最新一期的数据
         end_date = max(dfs.keys())
@@ -87,36 +87,44 @@ def dynamic_analysis(dfs, start_date=None, end_date=None):
 
     # 定义列名映射关系, 重命名列名
     column_mapping = {
-        '最新行业景气度': '行业景气度',
-        '行业平均PE(TTM)': '行业PE',
-        '行业平均PB(MRQ)': '行业PB'
+        '最新行业景气度': '行业景气度变化',
+        '行业景气度': '行业景气度变化',
+        '行业平均PE(TTM)': '行业PE变化',
+        '行业PE': '行业PE变化',
+        '行业平均PB(MRQ)': '行业PB变化',
+        '行业PB': '行业PB变化',
+        '行业趋势强度': '行业趋势强度变化',
+        '行业拥挤度': '行业拥挤度变化',
+        '当前景气度历史百分位': '景气度历史百分位变化',
+        '当前PE历史百分位': 'PE历史百分位变化',
+        '当前PB历史百分位': 'PB历史百分位变化',
     }
     df_start = df_start.rename(columns=column_mapping)
     df_end = df_end.rename(columns=column_mapping)
 
     # 定义完整的numeric_columns列表
-    full_numeric_columns = ['行业景气度', '当前景气度历史百分位', '行业PE', '当前PE历史百分位',
-                            '行业PB', '当前PB历史百分位', '行业趋势强度', '行业拥挤度']
+    full_numeric_columns = ['行业景气度变化', '景气度历史百分位变化', '行业PE变化', 'PE历史百分位变化',
+                            '行业PB变化', 'PB历史百分位变化', '行业趋势强度变化', '行业拥挤度变化']
     # 如果利用了历史数据，那么会少一些列
     # 检查df_start和df_end的列是否与完整的numeric_columns列表相同
     if set(df_start.columns) == set(full_numeric_columns) and set(df_end.columns) == set(full_numeric_columns):
         numeric_columns = full_numeric_columns
     else:
-        numeric_columns = ['行业景气度', '行业PE', '行业PB', '行业趋势强度', '行业拥挤度']
+        numeric_columns = ['行业景气度变化', '行业PE变化', '行业PB变化', '行业趋势强度变化', '行业拥挤度变化']
 
     # 计算指标变化
     change_df = df_end[numeric_columns] - df_start[numeric_columns]
-    change_df = change_df.sort_values(by='行业景气度', ascending=False)
+    change_df = change_df.sort_values(by='行业景气度变化', ascending=False)
 
     return change_df
 
 
 def save_to_excel(selected_industries, change_df, directory):
     # 获取当前时间戳,精确到年月日时
-    timestamp = datetime.now().strftime('%Y%m%d%H')
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M')
 
     # 生成输出文件名
-    output_file = os.path.join(directory, f'output_{timestamp}.xlsx')
+    output_file = os.path.join(directory, 'output', f'output_{timestamp}.xlsx')
 
     # 创建一个新的 ExcelWriter 对象
     with pd.ExcelWriter(output_file) as writer:
@@ -142,7 +150,7 @@ print("高景气、低估值、低拥挤的行业:")
 print(selected_industries)
 
 # 进行动态分析
-change_df = dynamic_analysis(dfs, start_date='20240331', end_date='20240418')
+change_df = dynamic_analysis(dfs, history_data, start_date='20240331', end_date='20240418')
 print("指标变化:")
 print(change_df)
 
