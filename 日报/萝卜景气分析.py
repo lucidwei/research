@@ -31,9 +31,14 @@ def read_data(directory):
 
 
 def read_history_data(file_path):
-    # 读取参考数据的Excel文件
-    history_data = pd.read_excel(file_path, index_col=0)
-    history_data.index = pd.to_datetime(history_data.index).strftime('%Y%m%d')
+    # 读取参考数据的Excel文件,并将所有sheet存储在一个字典中
+    history_data = pd.read_excel(file_path, sheet_name=None, index_col=0)
+
+    # 对每个sheet的数据进行处理
+    for sheet_name, sheet_data in history_data.items():
+        sheet_data.index = pd.to_datetime(sheet_data.index).strftime('%Y%m%d')
+        history_data[sheet_name] = sheet_data
+
     return history_data
 
 
@@ -66,17 +71,42 @@ def dynamic_analysis(dfs, start_date=None, end_date=None):
         start_date = pd.to_datetime(end_date) - pd.Timedelta(days=7)
         start_date = start_date.strftime('%Y%m%d')
 
-    df_start = dfs[start_date]
-    df_end = dfs[end_date]
+    def get_df(dfs, history_data, date):
+        if date in dfs.keys():
+            return dfs[date]
+        else:
+            df = pd.DataFrame(index=history_data['行业景气度'].columns)
+            for sheet_name, sheet_data in history_data.items():
+                if date in sheet_data.index:
+                    df[sheet_name] = sheet_data.loc[date]
+            return df
 
-    # 计算指标变化
-    numeric_columns = ['最新行业景气度', '当前景气度历史百分位', '行业平均PE(TTM)', '当前PE历史百分位',
-                       '行业平均PB(MRQ)', '当前PB历史百分位', '行业趋势强度', '行业拥挤度']
+    # 获取起始日期和结束日期对应的df
+    df_start = get_df(dfs, history_data, start_date)
+    df_end = get_df(dfs, history_data, end_date)
+
+    # 定义列名映射关系, 重命名列名
+    column_mapping = {
+        '最新行业景气度': '行业景气度',
+        '行业平均PE(TTM)': '行业PE',
+        '行业平均PB(MRQ)': '行业PB'
+    }
+    df_start = df_start.rename(columns=column_mapping)
+    df_end = df_end.rename(columns=column_mapping)
+
+    # 定义完整的numeric_columns列表
+    full_numeric_columns = ['行业景气度', '当前景气度历史百分位', '行业PE', '当前PE历史百分位',
+                            '行业PB', '当前PB历史百分位', '行业趋势强度', '行业拥挤度']
+    # 如果利用了历史数据，那么会少一些列
+    # 检查df_start和df_end的列是否与完整的numeric_columns列表相同
+    if set(df_start.columns) == set(full_numeric_columns) and set(df_end.columns) == set(full_numeric_columns):
+        numeric_columns = full_numeric_columns
+    else:
+        numeric_columns = ['行业景气度', '行业PE', '行业PB', '行业趋势强度', '行业拥挤度']
 
     # 计算指标变化
     change_df = df_end[numeric_columns] - df_start[numeric_columns]
-
-    change_df = change_df.sort_values(by='最新行业景气度', ascending=False)
+    change_df = change_df.sort_values(by='行业景气度', ascending=False)
 
     return change_df
 
@@ -112,7 +142,7 @@ print("高景气、低估值、低拥挤的行业:")
 print(selected_industries)
 
 # 进行动态分析
-change_df = dynamic_analysis(dfs, start_date='20240411', end_date='20240418')
+change_df = dynamic_analysis(dfs, start_date='20240331', end_date='20240418')
 print("指标变化:")
 print(change_df)
 
