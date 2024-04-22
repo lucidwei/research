@@ -16,7 +16,7 @@ mpl.rcParams['axes.unicode_minus'] = False           # 解决保存图像是负号'-'显示
 
 
 class DynamicFactorModeler:
-    def __init__(self, preprocessor: DataPreprocessor, k_factors: int, financial: str):
+    def __init__(self, preprocessor: DataPreprocessor, k_factors: int, factor_orders: int, financial: str):
         """
         DynamicFactorMQ 建模和评估类的初始化方法
         :param data: 预处理后的数据,DataFrame 格式
@@ -27,6 +27,7 @@ class DynamicFactorModeler:
         self.data = preprocessor.data
         self.financial = preprocessor.df_finalcials[financial]
         self.k_factors = k_factors
+        self.factor_orders = factor_orders
 
     def apply_dynamic_factor_model(self):
         """
@@ -35,7 +36,7 @@ class DynamicFactorModeler:
         em_kwargs = {
             'tolerance': 1e-7,  # 设置收敛阈值
         }
-        model = DynamicFactorMQ(self.data, factors=self.k_factors, factor_orders=2, idiosyncratic_ar1=False)
+        model = DynamicFactorMQ(self.data, factors=self.k_factors, factor_orders=self.factor_orders, idiosyncratic_ar1=False)
         print(model.summary())
         self.results = model.fit_em(maxiter=1000)
         # fitted_data用来观察补全后的空值（但对原始数据变化很大）
@@ -62,7 +63,7 @@ class DynamicFactorModeler:
         corr = np.corrcoef(extracted_factor_filtered[15:], factor_filtered[15:])[0, 1]
         print(f"后期Correlation: {corr:.4f}")
         corr = np.corrcoef(extracted_factor_filtered[:15], factor_filtered[:15])[0, 1]
-        print(f"早期Correlation between extracted factor and original factor: {corr:.4f}")
+        print(f"早期Correlation: {corr:.4f}")
         corr = np.corrcoef(extracted_factor_filtered, factor_filtered)[0, 1]
         print(f"Correlation between extracted factor and original factor: {corr:.4f}")
         self.corr = corr
@@ -106,7 +107,7 @@ class DynamicFactorModeler:
             ax1.axvline(pd.to_datetime(f'{year}-01-01'), color='gray', linestyle='--', linewidth=0.8)
 
         # 设置 x 轴标签
-        ax1.set_xlabel('Date')
+        # ax1.set_xlabel('Date')
 
         # 设置第一个 y 轴标签
         ax1.set_ylabel('景气综合指标')
