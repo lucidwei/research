@@ -37,10 +37,11 @@ class DynamicFactorModeler:
             'tolerance': 1e-7,  # 设置收敛阈值
         }
         model = DynamicFactorMQ(self.data, factors=self.k_factors, factor_orders=self.factor_orders, idiosyncratic_ar1=False)
-        print(model.summary())
+
         self.results = model.fit_em(maxiter=1000)
+        print(self.results.summary())
         # fitted_data用来观察补全后的空值（但对原始数据变化很大）
-        fitted_data = self.results.predict()
+        self.fitted_data = self.results.predict()
 
     def evaluate_model(self):
         """
@@ -50,6 +51,7 @@ class DynamicFactorModeler:
             raise ValueError("Please run apply_dynamic_factor_model() first.")
 
         extracted_factor = self.results.factors.filtered['0']
+        self.extracted_factor = extracted_factor
 
         # 将 self.financial 的索引转换为月频
         financial_monthly = self.financial.resample('M').last()
@@ -67,6 +69,47 @@ class DynamicFactorModeler:
         corr = np.corrcoef(extracted_factor_filtered, factor_filtered)[0, 1]
         print(f"Correlation between extracted factor and original factor: {corr:.4f}")
         self.corr = corr
+
+    def analyze_factor_contribution(self, start_date, end_date):
+        """
+        分析给定时间段内各变量对共同因子变化的贡献
+        """
+        if self.results is None:
+            raise ValueError("Please run apply_dynamic_factor_model() first.")
+
+        # 获取平滑后的状态分解
+        decomposition = self.results.get_smoothed_decomposition()
+        data_contributions = decomposition[0].loc[pd.IndexSlice['0', :], :]
+
+        # 将日期转换为 DataFrame 的行索引
+        data_contributions.index = data_contributions.index.droplevel(0)
+
+        # 提取给定时间段内的贡献
+        factor_contributions = data_contributions.loc[start_date:end_date].T
+        if self.corr < 0:
+            factor_contributions *= -1
+
+        df = factor_contributions.copy(deep=True)
+        for column in df.columns:
+            print(f"Column: {column}")
+
+            # 对当前列进行降序排序并去除nan值
+            sorted_column = df[column].sort_values(ascending=False).dropna()
+
+            # 获取前三个值及其Index
+            head_values = sorted_column.head(3)
+            print("Top 3:")
+            for index, value in head_values.items():
+                print(f"Index: {index}, Value: {value}")
+
+            # 获取后三个值及其Index
+            tail_values = sorted_column.tail(3)
+            print("Bottom 3:")
+            for index, value in tail_values.items():
+                print(f"Index: {index}, Value: {value}")
+
+            print("---")
+        return
 
     def plot_factors(self):
         """
@@ -129,4 +172,9 @@ class DynamicFactorModeler:
         """
         self.apply_dynamic_factor_model()
         self.evaluate_model()
+        # 分析给定时间段内各变量对共同因子变化的贡献
+        start_date = '2024-02-29'
+        end_date = '2024-04-30'
+        print(f"Variable contributions to factor change from {start_date} to {end_date}:")
+        self.analyze_factor_contribution(start_date, end_date)
         self.plot_factors()

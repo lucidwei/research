@@ -104,6 +104,48 @@ def transform_cumulative_data(series: pd.Series, data_type: str, period: int = 1
         raise ValueError(f"不支持的数据类型: {data_type}")
 
 
+# def decompose_series(series, stationary_type):
+#     if stationary_type == 'diff-stationary':
+#         diff_series = series.diff().dropna()
+#         stl = STL(diff_series, period=12)
+#         decomposed = stl.fit()
+#         trend = decomposed.trend.cumsum()
+#         trend += series.iloc[0]
+#         resid = decomposed.resid
+#     elif stationary_type == 'trend-stationary':
+#         x = np.arange(len(series))
+#         trend = np.polyfit(x, series, 1)[0] * x
+#         resid = series - trend
+#     else:  # 'non-stationary'
+#         series = np.log(series)  # 取对数,使序列接近平稳
+#         stl = STL(series, period=12)
+#         decomposed = stl.fit()
+#         trend = decomposed.trend
+#         resid = decomposed.resid
+#
+#     return pd.DataFrame({'trend': trend, 'resid': resid}, index=series.index)
+#
+#
+# def process_dataframe(df, record):
+#     original_index = df.index
+#     decomposed_dfs = []
+#
+#     for col_ind, col in df.items():
+#         if record[col_ind] != 'stationary':
+#             col_series = col.dropna()
+#             decomposed_df = decompose_series(col_series, record[col_ind])
+#             decomposed_df = decomposed_df.reindex(original_index)
+#             decomposed_df.columns = [f'{col_ind}_{c}' for c in decomposed_df.columns]
+#             decomposed_dfs.append(decomposed_df)
+#
+#     if len(decomposed_dfs) > 0:
+#         decomposed_df = pd.concat(decomposed_dfs, axis=1)
+#         df = pd.concat([df, decomposed_df], axis=1)
+#         df.drop(columns=[col for col in record if record[col] != 'stationary'], inplace=True)
+#
+#     return df
+
+
 class DataPreprocessor(PgDbUpdaterBase):
     def __init__(self, base_config: BaseConfig, date_start: str = '2010-01-01', industry: str = None):
         """
@@ -245,6 +287,7 @@ class DataPreprocessor(PgDbUpdaterBase):
             except:
                 raise Exception
 
+        # self.data = process_dataframe(self.data, record)
         for col_ind, col in df.items():
             if record[col_ind] != 'stationary':
                 original_index = df.index
@@ -259,7 +302,7 @@ class DataPreprocessor(PgDbUpdaterBase):
                         col_ind + '_trend': decomposed.trend.cumsum(),
                         col_ind + '_resid': decomposed.resid
                     }, index=diff_series.index)
-                    decomposed_df[col_ind + '_trend'] += col_series.iloc[0]
+                    # decomposed_df[col_ind + '_trend'] += col_series.iloc[0]
 
                 elif record[col_ind] == 'trend-stationary':
                     x = np.arange(len(col_series))
@@ -268,7 +311,8 @@ class DataPreprocessor(PgDbUpdaterBase):
                     stl = STL(detrended_series, period=12)
                     decomposed = stl.fit()
                     decomposed_df = pd.DataFrame({
-                        col_ind + '_trend': decomposed.trend + trend,
+                        # col_ind + '_trend': decomposed.trend + trend,
+                        col_ind + '_trend': decomposed.trend,
                         col_ind + '_resid': decomposed.resid
                     }, index=col_series.index)
 
@@ -285,6 +329,50 @@ class DataPreprocessor(PgDbUpdaterBase):
                 df.drop(col_ind, inplace=True, axis=1)
 
         self.data = df
+        # for col_ind, col in df.items():
+        #     if record[col_ind] != 'stationary':
+        #         original_index = df.index
+        #         col_series = pd.Series(col, index=original_index)
+        #         col_series = col_series.dropna()
+        #
+        #         if record[col_ind] == 'diff-stationary':
+        #             diff_series = col_series.diff().dropna()
+        #             stl = STL(diff_series, period=12)
+        #             decomposed = stl.fit()
+        #             decomposed_df = pd.DataFrame({
+        #                 col_ind + '_trend': decomposed.trend.cumsum(),
+        #                 col_ind + '_resid': decomposed.resid
+        #             }, index=diff_series.index)
+        #             decomposed_df[col_ind + '_trend'] += col_series.iloc[0]
+        #
+        #         elif record[col_ind] == 'trend-stationary':
+        #             x = np.arange(len(col_series))
+        #             trend = np.polyfit(x, col_series, 1)[0] * x
+        #             detrended_series = col_series - trend
+        #             stl = STL(detrended_series, period=12)
+        #             decomposed = stl.fit()
+        #             decomposed_df = pd.DataFrame({
+        #                 col_ind + '_trend': trend,  # 使用线性趋势而非STL分解的趋势
+        #                 col_ind + '_resid': decomposed.resid
+        #             }, index=col_series.index)
+        #
+        #         else:  # 'non-stationary'
+        #             log_series = np.log(col_series)  # 对非平稳序列取对数
+        #             stl = STL(log_series, period=12)
+        #             decomposed = stl.fit()
+        #             decomposed_df = pd.DataFrame({
+        #                 col_ind + '_trend': np.exp(decomposed.trend),  # 趋势项取指数还原
+        #                 col_ind + '_resid': decomposed.resid
+        #             }, index=col_series.index)
+        #
+        #         decomposed_df = decomposed_df.dropna(axis=1, how='all')
+        #         decomposed_df = decomposed_df.reindex(original_index)
+        #         df = pd.concat([df, decomposed_df], axis=1)
+        #         df.drop(col_ind, inplace=True, axis=1)
+        #
+        # self.data = df
+
+
 
     @staticmethod
     def station_test(ts):
