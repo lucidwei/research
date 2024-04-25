@@ -147,7 +147,7 @@ def transform_cumulative_data(series: pd.Series, data_type: str, period: int = 1
 
 
 class DataPreprocessor(PgDbUpdaterBase):
-    def __init__(self, base_config: BaseConfig, date_start: str = '2010-01-01', industry: str = None):
+    def __init__(self, base_config: BaseConfig, date_start: str = '2010-01-01', industry: str = None, stationary: bool = True):
         """
         数据预处理类的初始化方法
         :param data: 原始数据,DataFrame格式
@@ -157,6 +157,7 @@ class DataPreprocessor(PgDbUpdaterBase):
         super().__init__(base_config)
         self.date_start = date_start
         self.industry = industry
+        self.stationary = stationary
 
     def preprocess(self):
         """
@@ -169,7 +170,8 @@ class DataPreprocessor(PgDbUpdaterBase):
         self.special_mannual_treatment()
         self.align_to_month()
         self.fill_internal_missing()
-        self.get_stationary()
+        if self.stationary:
+            self.get_stationary()
         self.cap_outliers()
 
     def read_data_and_info(self):
@@ -313,7 +315,7 @@ class DataPreprocessor(PgDbUpdaterBase):
                     decomposed_df = pd.DataFrame({
                         # col_ind + '_trend': decomposed.trend + trend,
                         col_ind + '_trend': decomposed.trend,
-                        col_ind + '_resid': decomposed.resid
+                        # col_ind + '_resid': decomposed.resid
                     }, index=col_series.index)
 
                 else:  # 'non-stationary'

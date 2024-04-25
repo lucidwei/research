@@ -9,6 +9,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from preprocess import DataPreprocessor
+from datetime import datetime
 
 from pylab import mpl
 mpl.rcParams['font.sans-serif'] = ['STZhongsong']    # 指定默认字体：解决plot不能显示中文问题
@@ -90,8 +91,13 @@ class DynamicFactorModeler:
             factor_contributions *= -1
 
         df = factor_contributions.copy(deep=True)
+
+        output = ""  # 存储所有的输出信息
         for column in df.columns:
+            print(f"---")
+            output += f"---\n"
             print(f"Column: {column}")
+            output += f"Column: {column}\n"
 
             # 对当前列进行降序排序并去除nan值
             sorted_column = df[column].sort_values(ascending=False).dropna()
@@ -99,19 +105,22 @@ class DynamicFactorModeler:
             # 获取前三个值及其Index
             head_values = sorted_column.head(3)
             print("Top 3:")
+            output += "Top 3:\n"
             for index, value in head_values.items():
-                print(f"Index: {index}, Value: {value}")
+                print(f"'{index}' at '{column.strftime('%Y-%m-%d')}', impact {value:.3f}")
+                output += f"'{index}' at '{column.strftime('%Y-%m-%d')}', impact {value:.3f}\n"
 
             # 获取后三个值及其Index
             tail_values = sorted_column.tail(3)
             print("Bottom 3:")
+            output += "Bottom 3:\n"
             for index, value in tail_values.items():
-                print(f"Index: {index}, Value: {value}")
+                print(f"'{index}' at '{column.strftime('%Y-%m-%d')}', impact {value:.3f}")
+                output += f"'{index}' at '{column.strftime('%Y-%m-%d')}', impact {value:.3f}\n"
 
-            print("---")
-        return
+        return output
 
-    def plot_factors(self):
+    def plot_factors(self, save_or_show='show'):
         """
         绘制提取的因子和原始因子的图像
         """
@@ -164,7 +173,17 @@ class DynamicFactorModeler:
         ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
 
         plt.title(rf'{self.preprocessor.industry}')
-        plt.show()
+        if save_or_show == 'show':
+            plt.show()
+        elif save_or_show == 'save':
+            # 保存图像到文件
+            current_time = datetime.now().strftime("%Y%m%d_%H%M")
+            stationary_flag = 'stationary' if self.preprocessor.stationary else 'fast'
+            image_path = rf'{self.preprocessor.base_config.excels_path}/景气/{self.preprocessor.industry}_{stationary_flag}_factor_plot_{current_time}.png'
+            plt.savefig(image_path)
+            plt.close(fig)
+
+            return image_path
 
     def run(self):
         """
@@ -177,4 +196,4 @@ class DynamicFactorModeler:
         end_date = '2024-04-30'
         print(f"Variable contributions to factor change from {start_date} to {end_date}:")
         self.analyze_factor_contribution(start_date, end_date)
-        self.plot_factors()
+        self.plot_factors(save_or_show='save')
