@@ -94,29 +94,30 @@ class DynamicFactorModeler:
 
         output = ""  # 存储所有的输出信息
         for column in df.columns:
-            print(f"---")
-            output += f"---\n"
-            print(f"Column: {column}")
-            output += f"Column: {column}\n"
+            print(f"对于{column.strftime('%Y-%m-%d')}景气度指数:")
+            output += f"对于{column.strftime('%Y-%m-%d')}景气度指数:\n"
 
             # 对当前列进行降序排序并去除nan值
             sorted_column = df[column].sort_values(ascending=False).dropna()
 
             # 获取前三个值及其Index
             head_values = sorted_column.head(3)
-            print("Top 3:")
-            output += "Top 3:\n"
+            print("Top 3 正贡献:")
+            output += "Top 3 正贡献:\n"
             for index, value in head_values.items():
-                print(f"'{index}' at '{column.strftime('%Y-%m-%d')}', impact {value:.3f}")
-                output += f"'{index}' at '{column.strftime('%Y-%m-%d')}', impact {value:.3f}\n"
+                print(f"'{index[0]}' at '{index[1].strftime('%Y-%m-%d')}', impact {value:.3f}")
+                output += f"'{index[0]}' at '{index[1].strftime('%Y-%m-%d')}', impact {value:.3f}\n"
 
             # 获取后三个值及其Index
             tail_values = sorted_column.tail(3)
-            print("Bottom 3:")
-            output += "Bottom 3:\n"
+            print("Bottom 3 负贡献:")
+            output += "Bottom 3 负贡献:\n"
             for index, value in tail_values.items():
-                print(f"'{index}' at '{column.strftime('%Y-%m-%d')}', impact {value:.3f}")
-                output += f"'{index}' at '{column.strftime('%Y-%m-%d')}', impact {value:.3f}\n"
+                print(f"'{index[0]}' at '{index[1].strftime('%Y-%m-%d')}', impact {value:.3f}")
+                output += f"'{index[0]}' at '{index[1].strftime('%Y-%m-%d')}', impact {value:.3f}\n"
+
+            print("\n")
+            output += "\n"
 
         return output
 
@@ -179,7 +180,7 @@ class DynamicFactorModeler:
             # 保存图像到文件
             current_time = datetime.now().strftime("%Y%m%d_%H%M")
             stationary_flag = 'stationary' if self.preprocessor.stationary else 'fast'
-            image_path = rf'{self.preprocessor.base_config.excels_path}/景气/{self.preprocessor.industry}_{stationary_flag}_factor_plot_{current_time}.png'
+            image_path = rf'{self.preprocessor.base_config.excels_path}/景气/pics/{self.preprocessor.industry}_{stationary_flag}_factor_plot_{current_time}.png'
             plt.savefig(image_path)
             plt.close(fig)
 
@@ -196,4 +197,4 @@ class DynamicFactorModeler:
         end_date = '2024-04-30'
         print(f"Variable contributions to factor change from {start_date} to {end_date}:")
         self.analyze_factor_contribution(start_date, end_date)
-        self.plot_factors(save_or_show='save')
+        self.plot_factors(save_or_show='show')
