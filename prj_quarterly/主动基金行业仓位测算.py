@@ -1,4 +1,4 @@
-import glob, os, re
+import glob, os, re, datetime
 import numpy as np
 import pandas as pd
 from filterpy.kalman import KalmanFilter
@@ -26,7 +26,9 @@ class CalcFundPosition(PgDbUpdaterBase):
         self.prepare_data()
 
     def config_quarterly_dates(self):
-        self.quarterly_dates = w.tdays('2018-11-20', '2024-01-01', "Period=Q").Data[0]
+        today = datetime.date.today()
+        self.quarterly_dates = w.tdays('2018-11-20', today.strftime('%Y-%m-%d'), "Period=Q").Data[0]
+        self.quarterly_dates = [x for x in self.quarterly_dates if x.date() != today]
         self.quarterly_dates_str = [str(x) for x in self.quarterly_dates]
 
         # 四个季度的末尾月份，用于确定季度
@@ -270,7 +272,7 @@ class CalcFundPosition(PgDbUpdaterBase):
         self.pre_calibration_positions = {}
         self.post_calibration_positions = {}
         full_calibrate_dict = {k: v for k, v in self.quarterly_dates_dict.items() if "q2" in k or "q4" in k}
-        full_calibrate_dict.pop("23q4", None)  # 23q4年报还没出
+        # full_calibrate_dict.pop("23q4", None)  # 23q4年报还没出
         swapped_dict = {value: key for key, value in self.quarterly_dates_dict.items()}
 
         alpha = 0.9  # 平滑系数，用于调整当前估计与前一天估计的权重
@@ -560,7 +562,7 @@ if __name__ == "__main__":
 
     # if __name__ == "do not save":
     if __name__ == "__main__":
-        file_path = rf"{obj.base_config.excels_path}基金仓位测算\全基金仓位测算自22q4(总仓位cali).xlsx"
+        file_path = rf"{obj.base_config.excels_path}基金仓位测算\output\全基金仓位测算自22q4(总仓位cali).xlsx"
         with pd.ExcelWriter(file_path) as writer:
             state_estimates_post.to_excel(writer, sheet_name='卡尔曼滤波结果', index=True)
             # active_adjustments.to_excel(writer, sheet_name='主动调仓(全部持仓占比)', index=True)

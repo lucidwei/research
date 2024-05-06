@@ -6,21 +6,22 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from pylab import mpl
 from matplotlib import cm
 from datetime import datetime
+from pylab import mpl
 mpl.rcParams['font.sans-serif'] = ['STZhongsong']    # 指定默认字体：解决plot不能显示中文问题
 mpl.rcParams['axes.unicode_minus'] = False           # 解决保存图像是负号'-'显示为方块的问题
 
 # 设置参数
 file_path = rf"D:\WPS云盘\WPS云盘\工作-麦高\定期汇报\日报模板整理\python用"
 sheet_name = '分钟'
+# sheet_name = '日K'
 draw_both_sides = True
 draw_lunch_break = False
 latest_n_days = 0  # >0,最近n个交易日; =0,今天; <0, 今天往前推几天
 # 用户定义的截断点，可以根据实际情况进行调整
-user_break_points分钟 = ['10:11', '11:22', '14:39']
-# user_break_points分钟 = ['25-11:18', '26-13:36', '26-14:41', '28-09:44', '28-13:03', '28-14:34']
+user_break_points分钟 = ['11:21', ]
+# user_break_points分钟 = ['23-14:27', ]
 # 用户定义的截断点，对于日度数据，这些是日期
 user_break_points日K = ['2024-01-23', '2024-01-26', '2024-02-05', '2024-02-23',  '2024-03-18',  '2024-03-27']
 
@@ -238,7 +239,7 @@ def draw_chart(draw_both_sides):
     #     ax.set_xticklabels(tick_labels[::tick_spacing], rotation=45, ha='right')  # 设置标签
 
     # 设置图例
-    ax.legend()
+    # ax.legend()
 
     # 设置标题和标签
     ax.set_title('指数和波段行业贡献')

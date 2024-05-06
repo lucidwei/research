@@ -196,6 +196,8 @@ class DataPreprocessor(PgDbUpdaterBase):
             for key, value in df_dict.items()
         }
 
+        assert df_dict['基本面'].index.is_unique, "中观基本面数据 的 Index 含有重复值"
+
         # 定义一个列表, 存储要剔除的列名, 挑选只在info中出现的指标进行处理
         financials_cols = ['净资产收益率ROE', '归属母公司股东的净利润同比增长率', '营业收入同比增长率']
         indicators_cols = self.info.index.tolist()

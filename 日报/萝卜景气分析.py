@@ -116,15 +116,15 @@ def dynamic_analysis(dfs, history_data, start_date=None, end_date=None):
     change_df = df_end[numeric_columns] - df_start[numeric_columns]
     change_df = change_df.sort_values(by='行业景气度变化', ascending=False)
 
-    return change_df
+    return change_df, start_date, end_date
 
 
-def save_to_excel(selected_industries, change_df, directory):
+def save_to_excel(selected_industries, change_df, directory, start_date, end_date):
     # 获取当前时间戳,精确到年月日时
     timestamp = datetime.now().strftime('%Y%m%d_%H%M')
 
     # 生成输出文件名
-    output_file = os.path.join(directory, 'output', f'output_{timestamp}.xlsx')
+    output_file = os.path.join(directory, 'output', f'output_{end_date}-{start_date}_{timestamp}.xlsx')
 
     # 创建一个新的 ExcelWriter 对象
     with pd.ExcelWriter(output_file) as writer:
@@ -150,10 +150,10 @@ print("高景气、低估值、低拥挤的行业:")
 print(selected_industries)
 
 # 进行动态分析
-change_df = dynamic_analysis(dfs, history_data, start_date='20240331', end_date='20240418')
+change_df, start_date, end_date = dynamic_analysis(dfs, history_data, start_date='20240428', end_date='20240505')
 print("指标变化:")
 print(change_df)
 
 # 将结果保存到 Excel 文件
-output_file = save_to_excel(selected_industries, change_df, directory)
+output_file = save_to_excel(selected_industries, change_df, directory, start_date, end_date)
 print(f"结果已保存到 {output_file}")
