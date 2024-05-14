@@ -18,7 +18,8 @@ print(matplotlib.get_backend())
 
 
 # 假设我们有一个DataFrame 'df'，其中包含了比特币历史价格数据
-df = pd.read_csv(rf"D:\WPS云盘\WPS云盘\工作-麦高\研究trial\btc history.csv", encoding='GBK', thousands=',') # 数据路径需自己提供
+# df = pd.read_csv(rf"D:\WPS云盘\WPS云盘\个人研究\btc-pi\btc history.csv", encoding='GBK', thousands=',') # 数据路径需自己提供
+df = pd.read_csv(rf"D:\WPS云盘\WPS云盘\个人研究\btc-pi\btc history - 副本.csv", encoding='GBK', thousands=',') # 数据路径需自己提供
 df['Date'] = pd.to_datetime(df['日期'])
 df = df.set_index('Date')
 df = df.sort_index(ascending=True)
