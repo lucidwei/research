@@ -87,8 +87,8 @@ class DynamicFactorModeler:
 
         # 提取给定时间段内的贡献
         factor_contributions = data_contributions.loc[start_date:end_date].T
-        # if self.corr < 0:
-        #     factor_contributions *= -1
+        if self.corr < 0:
+            factor_contributions *= -1
 
         df = factor_contributions.copy(deep=True)
 
