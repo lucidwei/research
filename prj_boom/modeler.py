@@ -94,8 +94,8 @@ class DynamicFactorModeler:
 
         output = ""  # 存储所有的输出信息
         for column in df.columns:
-            print(f"对于{column.strftime('%Y-%m-%d')}景气度指数:")
-            output += f"对于{column.strftime('%Y-%m-%d')}景气度指数:\n"
+            print(f"对于{column.strftime('%Y-%m-%d')} {self.preprocessor.industry} 景气度指数:")
+            output += f"对于{column.strftime('%Y-%m-%d')} {self.preprocessor.industry} 景气度指数:\n"
 
             # 对当前列进行降序排序并去除nan值
             sorted_column = df[column].sort_values(ascending=False).dropna()

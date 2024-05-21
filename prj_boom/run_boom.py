@@ -12,7 +12,8 @@ from datetime import datetime
 
 base_config = BaseConfig('boom')
 
-single_batch = 'single'
+# single_batch = 'single'
+single_batch = 'batch'
 
 if single_batch == 'single':
     # preprocessor = DataPreprocessor(base_config, industry='石油石化')
@@ -39,8 +40,8 @@ if single_batch == 'single':
     # preprocessor = DataPreprocessor(base_config, industry='电力')
     # preprocessor = DataPreprocessor(base_config, industry='国防军工')
     # preprocessor = DataPreprocessor(base_config, industry='国防军工', stationary=False)
-    preprocessor = DataPreprocessor(base_config, industry='交通运输')
-    # preprocessor = DataPreprocessor(base_config, industry='交通运输', stationary=False)
+    # preprocessor = DataPreprocessor(base_config, industry='交通运输')
+    preprocessor = DataPreprocessor(base_config, industry='交通运输', stationary=False)
     # preprocessor = DataPreprocessor(base_config, industry='汽车')
     # preprocessor = DataPreprocessor(base_config, industry='家电')
     # preprocessor = DataPreprocessor(base_config, industry='医药')
