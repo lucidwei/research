@@ -5,6 +5,7 @@
 # Software: PyCharm
 import numpy as np
 import pandas as pd
+from utils_risk_parity import align_signals
 
 
 class StockSignalGenerator:
@@ -101,7 +102,7 @@ class GoldSignalGenerator:
         vix_signal = self.vix_signal(vix_window, vix_threshold)
         gold_momentum_signal = self.gold_momentum_signal(gold_momentum_window)
 
-        us_tips_signal = us_tips_signal[vix_signal.index]
+        us_tips_signal, vix_signal = align_signals(us_tips_signal, vix_signal)
 
         combined_signal = us_tips_signal + vix_signal + gold_momentum_signal
         signal = pd.Series(index=combined_signal.index, dtype='float64')

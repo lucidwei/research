@@ -10,7 +10,7 @@ from prj_risk_parity.signal_generator import StockSignalGenerator, GoldSignalGen
 import pandas as pd
 import numpy as np
 from scipy.optimize import minimize, basinhopping
-from utils import timeit
+from utils_risk_parity import align_signals
 import warnings
 warnings.filterwarnings("ignore", message="Values in x were outside bounds during a minimize step, clipping to bounds")
 
@@ -74,7 +74,6 @@ class StrategicAllocator:
         self.data = data
         self.risk_budget = stk_bond_gold_risk_budget
 
-    @timeit
     def calc_strategic_monthly_weight(self, start_date, end_date):
         stock_prices = self.data.data_dict['csi']['close']
         bond_prices = self.data.data_dict['cba']['close']
@@ -187,8 +186,7 @@ class TacticalAllocator:
         gold_momentum_signal = self.gold_signal_generator.gold_momentum_signal()
 
         # 调整日期
-        erp_signal = erp_signal[volume_ma_signal.index]
-        us_tips_signal = us_tips_signal[volume_ma_signal.index]
+        erp_signal, us_tips_signal, volume_ma_signal = align_signals(erp_signal, us_tips_signal, volume_ma_signal)
 
         # 将个别信号整合到一个 DataFrame 中
         individual_signal_report = pd.concat([erp_signal, ma_signal, volume_signal, volume_ma_signal,

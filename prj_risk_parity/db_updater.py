@@ -11,7 +11,6 @@ from base_config import BaseConfig
 from pgdb_manager import PgDbManager
 from pgdb_updater_base import PgDbUpdaterBase
 from sqlalchemy import text, MetaData, Table
-from pypinyin import lazy_pinyin
 
 
 class DatabaseUpdater(PgDbUpdaterBase):

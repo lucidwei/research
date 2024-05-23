@@ -10,17 +10,17 @@ from WindPy import w
 from base_config import BaseConfig
 from pgdb_manager import PgDbManager
 from utils import check_wind, timeit
-from sqlalchemy import Table, MetaData, text, select
+from sqlalchemy import text
 import tushare as ts
 
 
 class PgDbUpdaterBase(PgDbManager):
-    connection_checked = False
+    # connection_checked = False
 
     def __init__(self, base_config: BaseConfig):
-        if not PgDbUpdaterBase.connection_checked:
-            check_wind()
-            PgDbUpdaterBase.connection_checked = True
+        # if not PgDbUpdaterBase.connection_checked:
+        #     check_wind()
+        #     PgDbUpdaterBase.connection_checked = True
         super().__init__(base_config)
         self.pro = ts.pro_api('3c0eb978b70236184bebf8378aab04fa29867f6ddb0dc1c578e1f9d1')
         self.set_dates()
@@ -119,7 +119,8 @@ class PgDbUpdaterBase(PgDbManager):
             if not dates_update:
                 continue
             print(
-                f'Wind downloading {code} for table high_freq_long between {str(dates_update[0])} and {str(dates_update[-1])}')
+                f'Wind downloading {code} {self.conversion_dicts["id_to_english"][code]} for table high_freq_long '
+                f'between {str(dates_update[0])} and {str(dates_update[-1])}')
             downloaded_df = w.edb(code, str(dates_update[0]), str(dates_update[-1]), usedf=True)[1]
             # wind返回的df有毛病，日期为一天和多天的格式不一样
             try:
@@ -138,7 +139,81 @@ class PgDbUpdaterBase(PgDbManager):
 
             # 将新行插入数据库中
             downloaded_df = downloaded_df.melt(id_vars=['date'], var_name='metric_name', value_name='value')
-            downloaded_df.to_sql('high_freq_long', self.alch_engine, if_exists='append', index=False)
+            self.upsert_dataframe_to_postgresql(downloaded_df, 'high_freq_long', ['date', 'metric_name'])
+
+    def upsert_dataframe_to_postgresql(self, df, table_name, primary_keys):
+        """
+        将 DataFrame 数据批量插入 PostgreSQL 表中，并在遇到主键冲突时执行 UPSERT 操作。
+
+        该函数使用临时表来提高批量插入和 UPSERT 操作的性能。首先创建一个与目标表结构相同的临时表，
+        然后将 DataFrame 数据插入临时表，最后从临时表中将数据插入目标表并处理冲突。
+
+        参数：
+        - df: pandas.DataFrame，包含要插入的数据。DataFrame 的列名应与目标表的列名一致。
+        - table_name: str，目标表的名称。
+        - primary_keys: list，包含主键列的名称。
+
+        操作步骤：
+        1. 创建与目标表结构相同的临时表。
+        2. 将 DataFrame 数据逐行插入临时表。
+        3. 从临时表中将数据插入目标表，并在遇到主键冲突时执行 UPSERT 操作。
+
+        注意：
+        - 该函数假定目标表具有指定的主键约束。
+        - 数据库连接使用 SQLAlchemy 的 `self.alch_engine.connect()` 方法。
+
+        例子：
+        ```
+        # 假设 self 是一个包含 SQLAlchemy 引擎的对象
+        df = pd.DataFrame({
+            'date': ['2023-01-01', '2023-01-02'],
+            'metric_name': ['metric1', 'metric2'],
+            'value': [100, 200]
+        })
+        self.upsert_dataframe_to_postgresql(df, 'metric_static_info', ['date', 'metric_name'])
+        ```
+        """
+        # 创建临时表的 SQL 语句
+        temp_table_name = f"{table_name}_temp"
+        drop_temp_table_query = f"DROP TABLE IF EXISTS {temp_table_name};"
+        create_temp_table_query = f"""
+            CREATE TEMP TABLE {temp_table_name} AS 
+            SELECT * FROM {table_name} LIMIT 0
+        """
+
+        # 插入数据到临时表的 SQL 语句
+        df_columns = list(df.columns)
+        columns_str = ', '.join(df_columns)
+        values_str = ', '.join([f":{col}" for col in df_columns])
+        temp_insert_query = f"""
+            INSERT INTO {temp_table_name} ({columns_str}) VALUES ({values_str})
+        """
+
+        # UPSERT 操作的 SQL 语句
+        primary_keys_str = ', '.join(primary_keys)
+        columns_update_str = ', '.join([f"{col} = EXCLUDED.{col}" for col in df_columns if col not in primary_keys])
+        upsert_query = f"""
+            INSERT INTO {table_name} ({columns_str})
+            SELECT {columns_str} FROM {temp_table_name}
+            ON CONFLICT ({primary_keys_str})
+            DO UPDATE SET {columns_update_str}
+        """
+
+        # 使用 SQLAlchemy 的风格执行原生 SQL
+        with self.alch_engine.connect() as conn:
+            # 删除可能存在的临时表
+            # conn.execute(text(drop_temp_table_query))
+            # 创建临时表
+            conn.execute(text(create_temp_table_query))
+
+            # 插入数据到临时表
+            for _, row in df.iterrows():
+                conn.execute(text(temp_insert_query), row.to_dict())
+
+            # 执行 UPSERT 操作
+            conn.execute(text(upsert_query))
+            conn.execute(text(drop_temp_table_query))
+            conn.commit()
 
     @timeit
     def update_markets_daily_by_wsd_id_fields(self, code: str, fields: str):
@@ -148,7 +223,7 @@ class PgDbUpdaterBase(PgDbManager):
 
         for field in fields_list:
             existing_dates = self.select_existing_dates_from_long_table("markets_daily_long",
-                                                                        metric_name=
+                                                                        product_name=
                                                                         self.conversion_dicts['id_to_english'][
                                                                             code],
                                                                         field=field.lower())
@@ -156,6 +231,12 @@ class PgDbUpdaterBase(PgDbManager):
             if len(dates_missing) == 0:
                 print(f'No missing data for {code} {field} in markets_daily_long, skipping download')
                 return
+            if len(dates_missing) == 1:  # 避免更新今日未完成数据
+                missing_date = dates_missing[0]
+                now = datetime.datetime.now()
+                # 检查缺失的日期是否为今天，且当前时间是否在15:30之前
+                if missing_date == now.date() and now.time() < datetime.time(15, 30):
+                    return
 
             print(
                 f'Wind downloading {code} {field} for markets_daily_long between {str(dates_missing[0])} and {str(dates_missing[-1])}')
@@ -188,10 +269,11 @@ class PgDbUpdaterBase(PgDbManager):
 
             # 将新行插入数据库中, df要非空
             if downloaded_df.iloc[0, 0] != 0:
-                print('Uploading data to database...')
+                print(f'Uploading {code} {field} data to database...')
                 downloaded_df['product_name'] = product_name
                 downloaded_df['metric_static_info_id'] = internal_id
-                downloaded_df.to_sql('markets_daily_long', self.alch_engine, if_exists='append', index=False)
+                downloaded_df['code'] = source_code
+                self.upsert_dataframe_to_postgresql(downloaded_df, 'markets_daily_long', ['date', 'product_name', 'field', 'code'])
 
     @timeit
     def update_low_freq_from_excel_meta(self, excel_file: str, name_mapping: dict, sheet_name=None, if_rename=False):
@@ -757,23 +839,23 @@ class PgDbUpdaterBase(PgDbManager):
 
         return sorted(list(missing_values))
 
-    def is_markets_daily_long_updated_today(self, field: str, product_name_key_word: str):
-        # TODO: 此函数的存在不太合理 不应该有使用它的情境
-        # 获取今天的日期
-        today = self.all_dates[-1]
-
-        # 构建原始 SQL 查询
-        sql = text(
-            f"SELECT MAX(date) FROM markets_daily_long WHERE field = '{field}' AND product_name LIKE '%{product_name_key_word}%' ")
-
-        # 执行查询并获取结果
-        result = self.alch_conn.execute(sql).scalar()
-
-        # 比较结果与今天的日期
-        if result == today:
-            return True
-        else:
-            return False
+    # def is_markets_daily_long_updated_today(self, field: str, product_name_key_word: str):
+    #     # TODO: 此函数的存在不太合理 不应该有使用它的情境
+    #     # 获取今天的日期
+    #     today = self.all_dates[-1]
+    #
+    #     # 构建原始 SQL 查询
+    #     sql = text(
+    #         f"SELECT MAX(date) FROM markets_daily_long WHERE field = '{field}' AND product_name LIKE '%{product_name_key_word}%' ")
+    #
+    #     # 执行查询并获取结果
+    #     result = self.alch_conn.execute(sql).scalar()
+    #
+    #     # 比较结果与今天的日期
+    #     if result == today:
+    #         return True
+    #     else:
+    #         return False
 
     def upload_joined_products_wide_table(self, full_name_keyword: str):
         # 使用SQLAlchemy执行SQL查询

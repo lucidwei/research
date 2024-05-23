@@ -106,6 +106,7 @@ financial_list = ['¾»×Ê²úÊÕÒæÂÊROE']  # , '¹éÊôÄ¸¹«Ë¾¹É¶«µÄ¾»ÀûÈóÍ¬±ÈÔö³¤ÂÊ', 'Ó
 if single_batch == 'batch':
     all_results = []
     for industry in industries:
+        print(f'Processing industry {industry}')
         for stationary in [True, False]:
             results = process_industry(industry, stationary, base_config, financial_list)
             all_results.extend(results)
