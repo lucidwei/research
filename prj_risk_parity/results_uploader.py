@@ -4,11 +4,10 @@
 # FileName: results_uploader.py
 # Software: PyCharm
 import pandas as pd
-from sqlalchemy import create_engine, text
-from pgdb_manager import PgDbManager
+from pgdb_updater_base import PgDbUpdaterBase
 
 
-class ResultsUploader(PgDbManager):
+class ResultsUploader(PgDbUpdaterBase):
     def __init__(self, evaluator, base_config):
         super().__init__(base_config)
         self.evaluator = evaluator
@@ -51,4 +50,6 @@ class ResultsUploader(PgDbManager):
         results_df = pd.DataFrame(results)
 
         # Upload results to the database
-        results_df.to_sql('results_display_long', self.alch_engine, if_exists='append', index=False)
+        # results_df.to_sql('results_display_long', self.alch_engine, if_exists='replace', index=False)  # 保留，可能需要replace
+        self.upsert_dataframe_to_postgresql(results_df, 'results_display_long',
+                                            ['date', 'project', 'metric_name'])

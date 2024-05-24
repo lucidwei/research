@@ -5,7 +5,7 @@
 # Software: PyCharm
 import time
 
-from prj_risk_parity.db_reader import DatabaseReader
+from prj_risk_parity.db_interact import DatabaseReader
 from prj_risk_parity.signal_generator import StockSignalGenerator, GoldSignalGenerator
 import pandas as pd
 import numpy as np
@@ -132,9 +132,9 @@ class StrategicAllocator:
         def total_weight_constraint(x):
             return np.sum(x) - 1.0
 
-        w0 = np.ones(cov.shape[0]) / cov.shape[0]
+        initial_weights = np.array([0.15, 0.75, 0.1])
         cons = ({'type': 'eq', 'fun': total_weight_constraint},)
-        bounds = ((0, 0.6), (0.1, 1), (0, 0.5))
+        bounds = ((0.02, 0.4), (0.1, 1), (0.02, 0.4))
         options = {"maxiter": 1000, "ftol": 1e-10}
         minimizer_kwargs = {
             "method": "SLSQP",
@@ -144,7 +144,7 @@ class StrategicAllocator:
             "options": options,
         }
         # 求解出权重
-        solution = basinhopping(risk_budget_objective, w0, minimizer_kwargs=minimizer_kwargs)
+        solution = basinhopping(risk_budget_objective, x0=initial_weights, minimizer_kwargs=minimizer_kwargs)
         weight = solution.x
 
         return weight
@@ -186,7 +186,10 @@ class TacticalAllocator:
         gold_momentum_signal = self.gold_signal_generator.gold_momentum_signal()
 
         # 调整日期
-        erp_signal, us_tips_signal, volume_ma_signal = align_signals(erp_signal, us_tips_signal, volume_ma_signal)
+        aligned_signals = align_signals(erp_signal=erp_signal, us_tips_signal=us_tips_signal, volume_ma_signal=volume_ma_signal)
+        erp_signal = aligned_signals['erp_signal']
+        us_tips_signal = aligned_signals['us_tips_signal']
+        volume_ma_signal = aligned_signals['volume_ma_signal']
 
         # 将个别信号整合到一个 DataFrame 中
         individual_signal_report = pd.concat([erp_signal, ma_signal, volume_signal, volume_ma_signal,
@@ -206,16 +209,16 @@ class TacticalAllocator:
 
         self.signals = {'individual': individual_signal_report, 'combined': combined_signal_report}
 
-    def allocate_tactical_assets(self, start_date, end_date, frequency='M'):
-
-        if frequency == 'M':
-            erp_signal = erp_signal.resample('M').last()
-        elif frequency == 'W':
-            erp_signal = erp_signal.resample('W').last()
-        else:
-            raise ValueError("Invalid frequency. Use 'M' for monthly or 'W' for weekly.")
-
-        tactical_allocation = erp_signal.loc[start_date:end_date]
-
-        return tactical_allocation
+    # def allocate_tactical_assets(self, start_date, end_date, frequency='M'):
+    #
+    #     if frequency == 'M':
+    #         erp_signal = erp_signal.resample('M').last()
+    #     elif frequency == 'W':
+    #         erp_signal = erp_signal.resample('W').last()
+    #     else:
+    #         raise ValueError("Invalid frequency. Use 'M' for monthly or 'W' for weekly.")
+    #
+    #     tactical_allocation = erp_signal.loc[start_date:end_date]
+    #
+    #     return tactical_allocation
 

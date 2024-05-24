@@ -11,10 +11,10 @@ from utils_risk_parity import align_signals
 class StockSignalGenerator:
 
     def __init__(self, stock_prices, stock_volume, pe_ttm, bond_yields):
-        self.stock_prices = stock_prices
-        self.stock_volume = stock_volume
-        self.pe_ttm = pe_ttm
-        self.bond_yields = bond_yields
+        self.stock_prices = stock_prices.dropna().sort_index()
+        self.stock_volume = stock_volume.dropna().sort_index()
+        self.pe_ttm = pe_ttm.dropna().sort_index()
+        self.bond_yields = bond_yields.dropna().sort_index()
         self.calculate_erp()
 
     def calculate_erp(self):
@@ -71,15 +71,15 @@ class StockSignalGenerator:
         # 其他情况不发出信号
         combined_signal[(erp_signal != volume_ma_signal)] = 0
 
-        return combined_signal
+        return combined_signal.dropna()
 
 
 class GoldSignalGenerator:
 
     def __init__(self, tips_10y, vix, gold_prices):
-        self.tips_10y = tips_10y
-        self.vix = vix
-        self.gold_prices = gold_prices
+        self.tips_10y = tips_10y.dropna().sort_index()
+        self.vix = vix.dropna().sort_index()
+        self.gold_prices = gold_prices.dropna().sort_index()
 
     def us_tips_signal(self, window=20):
         ma = self.tips_10y.rolling(window=window).mean()
@@ -102,7 +102,9 @@ class GoldSignalGenerator:
         vix_signal = self.vix_signal(vix_window, vix_threshold)
         gold_momentum_signal = self.gold_momentum_signal(gold_momentum_window)
 
-        us_tips_signal, vix_signal = align_signals(us_tips_signal, vix_signal)
+        aligned_signals = align_signals(us_tips_signal=us_tips_signal, vix_signal=vix_signal)
+        vix_signal = aligned_signals['vix_signal']
+        us_tips_signal = aligned_signals['us_tips_signal']
 
         combined_signal = us_tips_signal + vix_signal + gold_momentum_signal
         signal = pd.Series(index=combined_signal.index, dtype='float64')
@@ -110,4 +112,4 @@ class GoldSignalGenerator:
         signal[combined_signal < 0] = -1
         signal[(combined_signal >= 0) & (combined_signal < 2)] = 0
 
-        return signal
+        return signal.dropna()

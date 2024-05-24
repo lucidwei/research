@@ -234,9 +234,14 @@ class PgDbUpdaterBase(PgDbManager):
             if len(dates_missing) == 1:  # 避免更新今日未完成数据
                 missing_date = dates_missing[0]
                 now = datetime.datetime.now()
-                # 检查缺失的日期是否为今天，且当前时间是否在15:30之前
-                if missing_date == now.date() and now.time() < datetime.time(15, 30):
+                if missing_date == now.date() and code == "VIX.GI":
+                    # 美国方面数据在中国的今日日期是没有的，跳过
                     return
+                if missing_date == now.date() and now.time() < datetime.time(15, 30):
+                    # 如果缺失的日期是否为今天，且当前时间是否在15:30之前，那么还没有收盘价，跳过
+                    return
+                # wind返回的单日数据的格式有问题(没有date)，懒得做特殊处理，直接跳过算了
+                return
 
             print(
                 f'Wind downloading {code} {field} for markets_daily_long between {str(dates_missing[0])} and {str(dates_missing[-1])}')
