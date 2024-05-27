@@ -79,11 +79,17 @@ class DynamicFactorModeler:
             raise ValueError("Please run apply_dynamic_factor_model() first.")
 
         # 获取平滑后的状态分解
-        decomposition = self.results.get_smoothed_decomposition()
+        decomposition = self.results.get_smoothed_decomposition(decomposition_of='smoothed_state')
         data_contributions = decomposition[0].loc[pd.IndexSlice['0', :], :]
 
         # 将日期转换为 DataFrame 的行索引
         data_contributions.index = data_contributions.index.droplevel(0)
+
+        # 自动计算默认的起止日期为最后三个月
+        if start_date is None or end_date is None:
+            end_date = data_contributions.index[-1]
+            start_date = data_contributions.index[-3]
+        print(f"Variable contributions to factor change from {start_date} to {end_date}:")
 
         # 提取给定时间段内的贡献
         factor_contributions = data_contributions.loc[start_date:end_date].T
@@ -119,6 +125,42 @@ class DynamicFactorModeler:
             print("\n")
             output += "\n"
 
+        # 增量分析：计算最后一次数据变化（从4月到5月）的贡献
+        if len(df.columns) >= 2:
+            prev_month = df.columns[-2]
+            curr_month = df.columns[-1]
+
+            print(
+                f"Comparing contributions from {prev_month.strftime('%Y-%m-%d')} to {curr_month.strftime('%Y-%m-%d')}")
+            output += f"Comparing contributions from {prev_month.strftime('%Y-%m-%d')} to {curr_month.strftime('%Y-%m-%d')}\n"
+
+            # 计算每个变量的贡献变化
+            contrib_change = df[curr_month] - df[prev_month]
+
+            # 对贡献变化进行排序
+            sorted_contrib_change = contrib_change.sort_values(ascending=False).dropna()
+
+            print(f"对于{curr_month.strftime('%Y-%m-%d')} {self.preprocessor.industry} 景气度指数变化:")
+            output += f"对于{curr_month.strftime('%Y-%m-%d')} {self.preprocessor.industry} 景气度指数变化:\n"
+
+            # 获取前三个正贡献变化值及其Index
+            top_positive_changes = sorted_contrib_change.head(3)
+            print("Top 3 正贡献变化:")
+            output += "Top 3 正贡献变化:\n"
+            for index, value in top_positive_changes.items():
+                print(f"'{index[0]}' at '{index[1].strftime('%Y-%m-%d')}', impact change {value:.3f}")
+                output += f"'{index[0]}' at '{index[1].strftime('%Y-%m-%d')}', impact change {value:.3f}\n"
+            # 获取后三个负贡献变化值及其Index
+            bottom_negative_changes = sorted_contrib_change.tail(3)
+            print("Bottom 3 负贡献变化:")
+            output += "Bottom 3 负贡献变化:\n"
+            for index, value in bottom_negative_changes.items():
+                print(f"'{index[0]}' at '{index[1].strftime('%Y-%m-%d')}', impact change {value:.3f}")
+                output += f"'{index[0]}' at '{index[1].strftime('%Y-%m-%d')}', impact change {value:.3f}\n"
+
+            print("\n")
+            output += "\n"
+
         return output
 
     def plot_factors(self, save_or_show='show'):
@@ -146,9 +188,12 @@ class DynamicFactorModeler:
 
         # 获取最新的两个时间点
         latest_dates = extracted_factor_filtered.index[-2:]
-
-        # 绘制最新两期数据变化的红线
-        ax1.plot(latest_dates, extracted_factor_filtered[latest_dates], color='red', linewidth=2)
+        # 在图中标注最新一期的日期范围
+        start_date = latest_dates[0].strftime('%Y-%m-%d')
+        end_date = latest_dates[1].strftime('%Y-%m-%d')
+        latest_period_label = f"Latest Period: {start_date} to {end_date}"
+        # 绘制最新一期数据变化的红线
+        ax1.plot(latest_dates, extracted_factor_filtered[latest_dates], color='red', linewidth=2, label=latest_period_label)
 
         # 创建第二个 y 轴
         ax2 = ax1.twinx()
@@ -158,9 +203,6 @@ class DynamicFactorModeler:
         years = sorted(set(dt.year for dt in extracted_factor_filtered.index))
         for year in years:
             ax1.axvline(pd.to_datetime(f'{year}-01-01'), color='gray', linestyle='--', linewidth=0.8)
-
-        # 设置 x 轴标签
-        # ax1.set_xlabel('Date')
 
         # 设置第一个 y 轴标签
         ax1.set_ylabel('景气综合指标')
@@ -192,9 +234,6 @@ class DynamicFactorModeler:
         """
         self.apply_dynamic_factor_model()
         self.evaluate_model()
-        # 分析给定时间段内各变量对共同因子变化的贡献
-        start_date = '2024-02-29'
-        end_date = '2024-04-30'
-        print(f"Variable contributions to factor change from {start_date} to {end_date}:")
-        self.analyze_factor_contribution(start_date, end_date)
+        # 分析给定时间段内各变量对共同因子变化的贡献，默认为最后三个月
+        self.analyze_factor_contribution(None, None)
         self.plot_factors(save_or_show='show')

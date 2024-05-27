@@ -12,8 +12,8 @@ from datetime import datetime
 
 base_config = BaseConfig('boom')
 
-# single_batch = 'single'
-single_batch = 'batch'
+single_batch = 'single'
+# single_batch = 'batch'
 
 if single_batch == 'single':
     # preprocessor = DataPreprocessor(base_config, industry='石油石化')
@@ -41,14 +41,14 @@ if single_batch == 'single':
     # preprocessor = DataPreprocessor(base_config, industry='国防军工')
     # preprocessor = DataPreprocessor(base_config, industry='国防军工', stationary=False)
     # preprocessor = DataPreprocessor(base_config, industry='交通运输')
-    preprocessor = DataPreprocessor(base_config, industry='交通运输', stationary=False)
+    # preprocessor = DataPreprocessor(base_config, industry='交通运输', stationary=False)
     # preprocessor = DataPreprocessor(base_config, industry='汽车')
     # preprocessor = DataPreprocessor(base_config, industry='家电')
     # preprocessor = DataPreprocessor(base_config, industry='医药')
     # preprocessor = DataPreprocessor(base_config, industry='医药', stationary=False)
     # preprocessor = DataPreprocessor(base_config, industry='食品饮料')
     # preprocessor = DataPreprocessor(base_config, industry='农林牧渔')
-    # preprocessor = DataPreprocessor(base_config, industry='农林牧渔', stationary=False)
+    preprocessor = DataPreprocessor(base_config, industry='农林牧渔', stationary=False)
     # preprocessor = DataPreprocessor(base_config, industry='白酒')
     # preprocessor = DataPreprocessor(base_config, industry='食品')
     # preprocessor = DataPreprocessor(base_config, industry='饮料')
@@ -95,10 +95,10 @@ def process_industry(industry, stationary, base_config, financial_list):
     return results
 
 
-industries = ['石油石化', '煤炭', '有色金属', '钢铁', '基础化工', '建材',
+industries = ['石油石化', '煤炭', '有色金属', '钢铁', '基础化工', '建材', '农林牧渔'
               '电子', '传媒', '计算机',
               '机械', '电新', '电力', '国防军工',
-              '汽车', '家电', '医药', '食品饮料', '白酒', '食品', '饮料', '消费服务', '纺服', '商贸零售',
+              '汽车', '家电', '医药', '食品饮料', '白酒', '食品', '饮料', '消费服务', '纺服', '商贸零售', '交通运输',
               '房地产', '非银金融']
 financial_list = ['净资产收益率ROE']  # , '归属母公司股东的净利润同比增长率', '营业收入同比增长率']
 
