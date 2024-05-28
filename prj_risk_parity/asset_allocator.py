@@ -22,7 +22,56 @@ class AssetAllocator:
         self.strategic_allocator = StrategicAllocator(self.data, parameters['risk_budget'])
         self.tactical_allocator = TacticalAllocator(self.data)
         self.signals = self.tactical_allocator.signals
+        self.calculate_daily_win_rate()
         self.generate_asset_positions()
+
+    def calculate_daily_win_rate(self):
+        def calculate_signal_win_rate(signal_data, returns_data, signal_col, return_col):
+            """
+            计算指定信号的胜率，排除 signal 为 0 的情况。
+
+            :param signal_data: 包含信号的 DataFrame
+            :param returns_data: 包含收益率的 DataFrame
+            :param signal_col: 信号列的名称
+            :param return_col: 收益率列的名称
+            :return: 胜率（float）
+            """
+            # 确保索引为日期
+            signal_data.index = pd.to_datetime(signal_data.index)
+            returns_data.index = pd.to_datetime(returns_data.index)
+
+            # 合并数据
+            merged_data = pd.concat([signal_data, returns_data], axis=1, join='inner')
+
+            # 过滤掉 signal 为 0 的数据
+            filtered_data = merged_data[merged_data[signal_col] != 0]
+
+            # 计算信号的正确性
+            filtered_data['correct'] = ((filtered_data[signal_col] > 0) & (filtered_data[return_col] > 0)) | \
+                                       ((filtered_data[signal_col] < 0) & (filtered_data[return_col] < 0))
+
+            # 计算信号胜率
+            win_rate = filtered_data['correct'].mean()
+
+            # 计算累计净值
+            filtered_data['strategy_return'] = filtered_data[signal_col] * filtered_data[return_col]
+            filtered_data['cumulative_net_value'] = (1 + filtered_data['strategy_return']).cumprod()
+
+            return win_rate, filtered_data['cumulative_net_value']
+
+        # 计算股票信号的胜率
+        stock_win_rate, stock_cumulative_net_value = calculate_signal_win_rate(self.signals['combined'], self.strategic_allocator.returns_data,
+                                                   'combined_stock_signal',
+                                                   'stock')
+        print(f"Stock Signal Win Rate: {stock_win_rate:.2%}")
+        print(f"Stock Cumulative Net Value: {stock_cumulative_net_value}")
+
+        # 计算黄金信号的胜率
+        gold_win_rate, gold_cumulative_net_value = calculate_signal_win_rate(self.signals['combined'], self.strategic_allocator.returns_data,
+                                                  'combined_gold_signal',
+                                                  'gold')
+        print(f"Gold Signal Win Rate: {gold_win_rate:.2%}")
+        print(f"Gold Cumulative Net Value: {gold_cumulative_net_value}")
 
     def limit_stock_weight(self, weights):
         stock_weight_limit = 0.3
@@ -73,8 +122,9 @@ class StrategicAllocator:
     def __init__(self, data: DatabaseReader, stk_bond_gold_risk_budget: list):
         self.data = data
         self.risk_budget = stk_bond_gold_risk_budget
+        self.get_returns_data()
 
-    def calc_strategic_monthly_weight(self, start_date, end_date):
+    def get_returns_data(self):
         stock_prices = self.data.data_dict['csi']['close']
         bond_prices = self.data.data_dict['cba']['close']
         gold_prices = self.data.data_dict['gold']['close']
@@ -85,6 +135,10 @@ class StrategicAllocator:
 
         returns_data = pd.concat([stock_returns, bond_returns, gold_returns], axis=1)
         returns_data.columns = ['stock', 'bond', 'gold']
+        self.returns_data = returns_data
+
+    def calc_strategic_monthly_weight(self, start_date, end_date):
+        returns_data = self.returns_data
 
         # 计算月度收益率
         returns_data.index = pd.to_datetime(returns_data.index)
