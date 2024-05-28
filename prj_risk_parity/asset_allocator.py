@@ -34,7 +34,7 @@ class AssetAllocator:
             :param returns_data: 包含收益率的 DataFrame
             :param signal_col: 信号列的名称
             :param return_col: 收益率列的名称
-            :return: 胜率（float）
+            :return: 当日胜率、次日胜率、累计净值
             """
             # 确保索引为日期
             signal_data.index = pd.to_datetime(signal_data.index)
@@ -43,34 +43,61 @@ class AssetAllocator:
             # 合并数据
             merged_data = pd.concat([signal_data, returns_data], axis=1, join='inner')
 
+            # 筛选出索引在 self.data.tradedays 中的行
+            filtered_index = pd.Index(merged_data.index.date).isin(self.data.tradedays)
+            merged_data = merged_data[filtered_index]
+
+            # 计算次日收益率
+            merged_data['next_day_return'] = merged_data[return_col].shift(-1)
+
             # 过滤掉 signal 为 0 的数据
             filtered_data = merged_data[merged_data[signal_col] != 0]
 
-            # 计算信号的正确性
-            filtered_data['correct'] = ((filtered_data[signal_col] > 0) & (filtered_data[return_col] > 0)) | \
+            # 计算信号的正确性（当日）
+            filtered_data.loc[:, 'correct'] = ((filtered_data[signal_col] > 0) & (filtered_data[return_col] > 0)) | \
                                        ((filtered_data[signal_col] < 0) & (filtered_data[return_col] < 0))
 
-            # 计算信号胜率
+            # 计算信号当日胜率
             win_rate = filtered_data['correct'].mean()
 
-            # 计算累计净值
-            filtered_data['strategy_return'] = filtered_data[signal_col] * filtered_data[return_col]
-            filtered_data['cumulative_net_value'] = (1 + filtered_data['strategy_return']).cumprod()
+            # 计算信号的正确性（次日）
+            filtered_data['next_day_correct'] = ((filtered_data[signal_col] > 0) & (
+                        filtered_data['next_day_return'] > 0)) | \
+                                                ((filtered_data[signal_col] < 0) & (
+                                                            filtered_data['next_day_return'] < 0))
 
-            return win_rate, filtered_data['cumulative_net_value']
+            # 计算信号次日胜率
+            next_day_win_rate = filtered_data['next_day_correct'].mean()
+
+            # 计算累计净值
+            filtered_data.loc[:, 'strategy_return'] = filtered_data[signal_col] * filtered_data['next_day_return']
+            filtered_data.loc[:, 'cumulative_net_value'] = (1 + filtered_data['strategy_return']).cumprod()
+
+            # 计算并打印 'correct' 列分别为 True 和 False 时 'next_day_correct' 为 True 的正确率
+            correct_true_next_day_correct_rate = filtered_data[filtered_data['correct']]['next_day_correct'].mean()
+            correct_false_next_day_correct_rate = filtered_data[~filtered_data['correct']]['next_day_correct'].mean()
+
+            print(f"Next day correct rate when 'correct' is True: {correct_true_next_day_correct_rate}")
+            print(f"Next day correct rate when 'correct' is False: {correct_false_next_day_correct_rate}")
+
+            return win_rate, next_day_win_rate, filtered_data['cumulative_net_value']
 
         # 计算股票信号的胜率
-        stock_win_rate, stock_cumulative_net_value = calculate_signal_win_rate(self.signals['combined'], self.strategic_allocator.returns_data,
-                                                   'combined_stock_signal',
-                                                   'stock')
+        stock_win_rate, stock_next_day_win_rate, stock_cumulative_net_value = calculate_signal_win_rate(
+            self.signals['combined'], self.strategic_allocator.returns_data,
+            'combined_stock_signal', 'stock'
+        )
         print(f"Stock Signal Win Rate: {stock_win_rate:.2%}")
+        print(f"Stock Signal Next Day Win Rate: {stock_next_day_win_rate:.2%}")
         print(f"Stock Cumulative Net Value: {stock_cumulative_net_value}")
 
         # 计算黄金信号的胜率
-        gold_win_rate, gold_cumulative_net_value = calculate_signal_win_rate(self.signals['combined'], self.strategic_allocator.returns_data,
-                                                  'combined_gold_signal',
-                                                  'gold')
+        gold_win_rate, gold_next_day_win_rate, gold_cumulative_net_value = calculate_signal_win_rate(
+            self.signals['combined'], self.strategic_allocator.returns_data,
+            'combined_gold_signal', 'gold'
+        )
         print(f"Gold Signal Win Rate: {gold_win_rate:.2%}")
+        print(f"Gold Signal Next Day Win Rate: {gold_next_day_win_rate:.2%}")
         print(f"Gold Cumulative Net Value: {gold_cumulative_net_value}")
 
     def limit_stock_weight(self, weights):
