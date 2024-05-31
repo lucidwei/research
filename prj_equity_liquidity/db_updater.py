@@ -30,6 +30,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
         self.price_valuation_updater = PriceValuationUpdater(self)
         self.repo_updater = RepoUpdater(self)
         self.bonus_updater = BonusUpdater(self)
+        self.ipo_updater = IPOUpdater(self)
 
     def run_all_updater(self):
         self.all_funds_info_updater.update_all_funds_info()
@@ -40,6 +41,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
         self.price_valuation_updater.logic_price_valuation()
         self.repo_updater.logic_repo()
         self.bonus_updater.update_bonus()
+        self.ipo_updater.update_ipo()
 
     def _check_data_table(self, table_name, type_identifier, **kwargs):
         # Retrieve the optional filter condition
@@ -149,8 +151,8 @@ class DatabaseUpdater(PgDbUpdaterBase):
     def process_stk_meta_data(self, stk_info_to_add):
         # check all historic_stocks in meta table (and have industry label，检查过了基本都有)
         existing_stks_df = self.select_existing_values_in_target_column('product_static_info',
-                                                                                 ['code', 'stk_industry_cs', 'chinese_name'],
-                                                                                 ('product_type', 'stock'))
+                                                                        ['code', 'stk_industry_cs', 'chinese_name'],
+                                                                        ('product_type', 'stock'))
         existing_value = existing_stks_df['code'].tolist()
         missing_value = set(stk_info_to_add['证券代码'].tolist()) - set(existing_value)
 
@@ -170,7 +172,8 @@ class DatabaseUpdater(PgDbUpdaterBase):
                     continue
                 industry = info_df.iloc[0]['INDUSTRY_CITIC']
                 df_meta.loc[code, 'stk_industry_cs'] = industry
-                df_meta.loc[code, 'chinese_name'] = stk_info_to_add[stk_info_to_add['证券代码'] == code]['证券简称'].values[0]
+                df_meta.loc[code, 'chinese_name'] = \
+                stk_info_to_add[stk_info_to_add['证券代码'] == code]['证券简称'].values[0]
                 df_meta.loc[code, 'update_date'] = date
             # 上传metadata
             df_meta['source'] = 'wind'
@@ -406,9 +409,9 @@ class AllFundsInfoUpdater:
                                                                                  "product_type='fund'")
         trimmed_code_list = [c[:-3] for c in existing_codes]
         equity_funds = pd.read_excel(self.db_updater.base_config.excels_path + '股票开放式基金.xls', header=0,
-                                  engine='xlrd').iloc[:, :2]
+                                     engine='xlrd').iloc[:, :2]
         equity_etfs = pd.read_excel(self.db_updater.base_config.excels_path + '股票型ETF.xls', header=0,
-                                  engine='xlrd').iloc[:, :2].dropna()
+                                    engine='xlrd').iloc[:, :2].dropna()
 
         df1_cleaned = equity_funds.drop(equity_funds[equity_funds['证券代码'].isin(existing_codes)].index)
         df2_cleaned = equity_etfs.drop(equity_etfs[equity_etfs['证券代码'].isin(existing_codes)].index)
@@ -515,7 +518,7 @@ class AllFundsInfoUpdater:
             print(f'Updating {code} name')
             self.db_updater.upload_product_static_info(downloaded.squeeze(), task='fund_name')
 
-    #23-11-25 今日发现有些基金的发行份额和日期是错的，因为同名基金（不同代码不同全称）数据被刷了。
+    # 23-11-25 今日发现有些基金的发行份额和日期是错的，因为同名基金（不同代码不同全称）数据被刷了。
     # _correct_all_fund_info来解决这个问题
     # 取不到数，暂不更新
     # def _update_funds_issueshare(self):
@@ -771,6 +774,7 @@ class RepoUpdater:
     虽然记录‘预计回购金额’，但Metabase不应针对它进行统计，因为没有对股票市场资金流产生影响。
     Metabase统计的是已回购金额，对于空值，用已回购数量乘以当日股价估算。
     """
+
     def __init__(self, db_updater):
         self.db_updater = db_updater
 
@@ -790,24 +794,27 @@ class RepoUpdater:
         self.weekly_update_repo()
 
     def process_historic_repo(self):
-        historic_repo_stats = pd.read_excel(self.db_updater.base_config.excels_path + '股票回购统计2000-202309.xlsx', header=0,
-                                  engine='openpyxl')
+        historic_repo_stats = pd.read_excel(self.db_updater.base_config.excels_path + '股票回购统计2000-202309.xlsx',
+                                            header=0,
+                                            engine='openpyxl')
         historic_stk_codes = historic_repo_stats.dropna(subset='证券简称')[['证券代码', '证券简称']]
         self.db_updater.process_stk_meta_data(historic_stk_codes)
 
         historic_stk_codes_list = historic_repo_stats.dropna(subset='证券简称')['证券代码'].to_list()
 
         latest_date = max(self.existing_dates)
-        filtered_date_ranges = [date_range for date_range in self.db_updater.base_config.weekly_date_ranges if date_range[1] > latest_date]
+        filtered_date_ranges = [date_range for date_range in self.db_updater.base_config.weekly_date_ranges if
+                                date_range[1] > latest_date]
         for date_range in filtered_date_ranges:
             print(
                 f'Wind downloading cac_repoamt from {date_range[0] - timedelta(days=1)} to {date_range[1] + timedelta(days=1)}')
             repo_amount = w.wss(historic_stk_codes_list, "cac_repoamt",
-                                f"unit=1;startDate={date_range[0]-timedelta(days=1)};"
-                                f"endDate={date_range[1]+timedelta(days=1)};currencyType=",
+                                f"unit=1;startDate={date_range[0] - timedelta(days=1)};"
+                                f"endDate={date_range[1] + timedelta(days=1)};currencyType=",
                                 usedf=True)[1]
             repo_amount = repo_amount.dropna()
-            df_upload = repo_amount.reset_index(names='product_name').rename(columns={'CAC_REPOAMT': '区间回购金额(周度末)'})
+            df_upload = repo_amount.reset_index(names='product_name').rename(
+                columns={'CAC_REPOAMT': '区间回购金额(周度末)'})
             df_upload['date'] = date_range[1]
             df_upload = df_upload.melt(id_vars=['date', 'product_name'], var_name='field',
                                        value_name='value').dropna()
@@ -823,19 +830,21 @@ class RepoUpdater:
         date_ranges = split_tradedays_into_weekly_ranges(filtered_dates)
 
         # get all stocks list
-        all_stks = w.wset("sectorconstituent",f"date={self.db_updater.tradedays_str[-1]};sectorid=a001010100000000",
-                                usedf=True)[1]
-        all_stks_info = all_stks[['wind_code', 'sec_name']].rename(columns={'wind_code': '证券代码', 'sec_name': '证券简称'})
+        all_stks = w.wset("sectorconstituent", f"date={self.db_updater.tradedays_str[-1]};sectorid=a001010100000000",
+                          usedf=True)[1]
+        all_stks_info = all_stks[['wind_code', 'sec_name']].rename(
+            columns={'wind_code': '证券代码', 'sec_name': '证券简称'})
         self.db_updater.process_stk_meta_data(all_stks_info)
 
         # update new data
         all_stks_codes_list = all_stks['wind_code'].tolist()
 
         for date_range in date_ranges:
-            print(f'Wind downloading cac_repoamt from {date_range[0]-timedelta(days=1)} to {date_range[1]+timedelta(days=1)}')
+            print(
+                f'Wind downloading cac_repoamt from {date_range[0] - timedelta(days=1)} to {date_range[1] + timedelta(days=1)}')
             repo_amount = w.wss(",".join(all_stks_codes_list), "cac_repoamt",
-                                f"unit=1;startDate={date_range[0]-timedelta(days=1)};"
-                                f"endDate={date_range[1]+timedelta(days=1)};currencyType=",
+                                f"unit=1;startDate={date_range[0] - timedelta(days=1)};"
+                                f"endDate={date_range[1] + timedelta(days=1)};currencyType=",
                                 usedf=True)[1]
             repo_amount = repo_amount.dropna()
             df_upload = repo_amount.reset_index(names='product_name').rename(
@@ -880,7 +889,8 @@ class MajorHolderUpdater:
         if len(existing_dates) == 0:
             missing_dates = self.db_updater.tradedays
         else:
-            missing_dates = self.db_updater.get_missing_dates(all_dates=self.db_updater.all_dates, existing_dates=existing_dates)
+            missing_dates = self.db_updater.get_missing_dates(all_dates=self.db_updater.all_dates,
+                                                              existing_dates=existing_dates)
 
         if not missing_dates:
             print(f"No missing dates for check_data_table, type_identifier=major_holder")
@@ -909,7 +919,8 @@ class MajorHolderUpdater:
             df_meta = downloaded_df.drop_duplicates()
             existing_codes = self.db_updater.select_existing_values_in_target_column('product_static_info', 'code',
                                                                                      (
-                                                                                     'type_identifier', 'major_holder'),
+                                                                                         'type_identifier',
+                                                                                         'major_holder'),
                                                                                      'stk_industry_cs IS NOT NULL')
             df_meta = df_meta[~df_meta['code'].isin(existing_codes)]
             if df_meta.empty:
@@ -971,7 +982,7 @@ class MajorHolderUpdater:
             for i, row in selected_df.iterrows():
                 code = row['code']
                 print(f'Wind downloading mkt_cap_ard for {code} on {date}')
-                info_df = w.wsd(code, "mkt_cap_ard", f'{date-timedelta(days=2)}', f'{date}', "unit=1;industryType=1",
+                info_df = w.wsd(code, "mkt_cap_ard", f'{date - timedelta(days=2)}', f'{date}', "unit=1;industryType=1",
                                 usedf=True)[1]
                 if info_df.empty or 'MKT_CAP_ARD' not in info_df.columns:
                     print(f"Missing data for {code} on {date}, no data downloaded for mkt_cap_ard")
@@ -1104,7 +1115,8 @@ class MarginTradeByIndustryUpdater:
             selected_column=f'date',
             filter_condition=f"metric_static_info.type_identifier = 'margin_by_industry'"
         )
-        fridays_needing_update = [date for date in existing_dates if date.weekday() == 4 and date >= datetime.datetime(2023, 4, 1).date()]
+        fridays_needing_update = [date for date in existing_dates if
+                                  date.weekday() == 4 and date >= datetime.datetime(2023, 4, 1).date()]
         for date in fridays_needing_update:
             df_upload = self.download_and_process_data(date)
             if df_upload is not None:
@@ -1160,6 +1172,7 @@ class BonusUpdater:
     """
     股票分红
     """
+
     def __init__(self, db_updater):
         self.db_updater = db_updater
 
@@ -1167,15 +1180,16 @@ class BonusUpdater:
         start = self.db_updater.tradedays_str[-20]
         end = self.db_updater.tradedays_str[-1]
         print(f'Wind downloading wset("bonus",) from {start} to {end}')
-        downloaded_df = w.wset("bonus",f"orderby=record_date;startdate={start};enddate={end};"
-                                       "sectorid=a001010100000000;"
-                                       "field=wind_code,sec_name,dividendsper_share_aftertax,share_benchmark,"
-                                       "shareregister_date",
+        downloaded_df = w.wset("bonus", f"orderby=record_date;startdate={start};enddate={end};"
+                                        "sectorid=a001010100000000;"
+                                        "field=wind_code,sec_name,dividendsper_share_aftertax,share_benchmark,"
+                                        "shareregister_date",
                                usedf=True)[1]
         if downloaded_df.empty:
             print(f"Missing data from {start} to {end}, no data downloaded for update_bonus")
             return
-        downloaded_df['分红金额(元)'] = downloaded_df['dividendsper_share_aftertax'] * downloaded_df['share_benchmark'] * 1e4
+        downloaded_df['分红金额(元)'] = downloaded_df['dividendsper_share_aftertax'] * downloaded_df[
+            'share_benchmark'] * 1e4
         downloaded_df = downloaded_df.dropna(subset='dividendsper_share_aftertax')
 
         # 数据库中读取分红数据，从downloaded_df中剔除掉已存在的条目
@@ -1202,15 +1216,16 @@ class BonusUpdater:
             return
         else:
             df_upload = filtered_df.melt(id_vars=['date', 'product_name', 'code'], var_name='field',
-                                            value_name='value').dropna()
+                                         value_name='value').dropna()
             print(f'uploading new bonus records...length={len(df_upload)}')
             df_upload.to_sql('markets_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
 
     def upload_bonus_history(self):
         historic_bonus = pd.read_excel(self.db_updater.base_config.excels_path + '历史分红.xlsx', header=6,
-                                  engine='openpyxl')
+                                       engine='openpyxl')
         # 剔除只转增不分红的记录，提出少许的重复公告条目
-        historic_bonus = historic_bonus.rename(columns={'交易代码': '证券代码', '名称': '证券简称'}).dropna(subset='每股派息(税后)')
+        historic_bonus = historic_bonus.rename(columns={'交易代码': '证券代码', '名称': '证券简称'}).dropna(
+            subset='每股派息(税后)')
         historic_bonus = historic_bonus.drop_duplicates(subset=['证券代码', '股权登记日'])
 
         historic_stk_codes = historic_bonus[['证券代码', '证券简称']].drop_duplicates()
@@ -1220,7 +1235,7 @@ class BonusUpdater:
         historic_bonus = historic_bonus[['证券代码', '证券简称', '分红金额(元)', '股权登记日']].rename(columns={
             '证券代码': 'code', '证券简称': 'product_name', '股权登记日': 'date'})
         df_upload = historic_bonus.melt(id_vars=['date', 'product_name', 'code'], var_name='field',
-                                   value_name='value').dropna()
+                                        value_name='value').dropna()
         print('uploading bonus_history...')
         df_upload.to_sql('markets_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
 
@@ -1229,5 +1244,89 @@ class IPOUpdater:
     """
     IPO、再融资等，直接用wset-股权融资规模(Wind统计)
     """
+
     def __init__(self, db_updater):
         self.db_updater = db_updater
+
+    def update_ipo(self):
+        start = self.db_updater.tradedays_str[-20]
+        end = self.db_updater.tradedays[-1] + pd.Timedelta(days=2)
+        print(f'Wind downloading wset("sizeofequityfinancingbywind",) from {start} to {end}')
+        downloaded_df = w.wset("sizeofequityfinancingbywind", "sectorid=a001010100000000;"
+                                                              f"datetype=by_issue_date;reporttype=week;startdate={start}"
+                                                              f";enddate={end};valuetype=value",
+                               usedf=True)[1]
+        if downloaded_df.empty:
+            print(f"Missing data from {start} to {end}, no data downloaded for update_bonus")
+            return
+
+        rename_dict = {
+            'raise_count': '募集家数(家)',
+            'total_raised_funds': '募集资金(亿元)',
+            'num_of_ipo': '首发家数(家)',
+            'raised_funds_by_ipo': '首发募集资金(亿元)',
+            'num_of_additional_offering': '增发家数(家)',
+            'capital_raised_through_additional_offering': '增发募集资金(亿元)',
+            'directional_additional_offering_num': '定增家次',
+            'directional_additional_offering_capital': '定增募资(亿元)',
+            'public_additional_offering_num': '公开增发家数(家)',
+            'public_additional_offering_capital': '公开增发募资(亿元)',
+            'num_of_ration_shares': '配股家数(家)',
+            'raising_funds_by_ration_shares': '配股募集资金(亿元)',
+            'num_of_preference_share': '优先股家数(家)',
+            'raised_funds_by_preference_share': '优先股募集资金(亿元)',
+            'convert_bond_counts': '可转债家数(家)',
+            'raised_funds_by_convert_bond': '可转债募集资金(亿元)',
+            'exchange_bond_counts': '可交换债家数(家)',
+            'raised_funds_by_exchange_bond': '可交换债募集资金(亿元)',
+        }
+
+        transformed_df = downloaded_df.rename(columns=rename_dict)
+
+        # 选择 '募集资金(亿元)' 列为 NaN 的行
+        mask = transformed_df['募集资金(亿元)'].isna()
+        # 将这些行的 '募集资金(亿元)' 列和 '募集家数(家)' 列赋值为 0
+        transformed_df.loc[mask, ['募集资金(亿元)', '募集家数(家)']] = 0
+
+        # 将最新日期设置为周日日期
+        # 确保 'date' 列是日期格式
+        transformed_df['date'] = pd.to_datetime(transformed_df['date'])
+        # 获取最新日期和倒数第二新的日期
+        latest_date = transformed_df['date'].max()
+        second_latest_date = transformed_df['date'].nlargest(2).iloc[-1]
+        # 将最新日期修改为倒数第二新的日期加上7天
+        transformed_df.loc[transformed_df['date'] == latest_date, 'date'] = second_latest_date + pd.Timedelta(days=7)
+
+        # 将 DataFrame 转换为长格式
+        recent_ipo_long = transformed_df.melt(id_vars=['date'], var_name='metric_name', value_name='value').dropna()
+
+        print('upserting recent_ipo_long...')
+        self.db_updater.upsert_dataframe_to_postgresql(recent_ipo_long, 'high_freq_long', ['date', 'metric_name'])
+
+    def upload_ipo_history(self):
+        """
+        只运行一次
+        """
+        historic_ipo = pd.read_excel(self.db_updater.base_config.excels_path + '股权融资规模(Wind统计)20240531.xlsx',
+                                     header=1,
+                                     engine='openpyxl')
+        # 删除第一列
+        historic_ipo = historic_ipo.drop(historic_ipo.columns[0], axis=1)
+        # 删除最后两行
+        historic_ipo = historic_ipo.iloc[:-2]
+
+        # 将新的第一列命名为 `date`
+        historic_ipo.rename(columns={historic_ipo.columns[0]: 'date'}, inplace=True)
+        # 将 `date` 列转换为日期格式
+        historic_ipo['date'] = pd.to_datetime(historic_ipo['date'])
+
+        # 选择 '募集资金(亿元)' 列为 NaN 的行
+        mask = historic_ipo['募集资金(亿元)'].isna()
+        # 将这些行的 '募集资金(亿元)' 列和 '募集家数(家)' 列赋值为 0
+        historic_ipo.loc[mask, ['募集资金(亿元)', '募集家数(家)']] = 0
+
+        # 将 DataFrame 转换为长格式
+        historic_ipo_long = historic_ipo.melt(id_vars=['date'], var_name='metric_name', value_name='value').dropna()
+
+        print('uploading ipo_history...')
+        historic_ipo_long.to_sql('high_freq_long', self.db_updater.alch_engine, if_exists='append', index=False)
