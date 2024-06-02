@@ -81,6 +81,8 @@ def split_dataframe(whole_df):
                     # 删除列名中的"单季度."字符串
                     sub_df.columns = sub_df.columns.str.replace('单季度.', '')
 
+                # 仅包含空格字符串的cell，将其转换为 NaN，否则类型转换会报错
+                sub_df = sub_df.replace(r'^\s*$', np.nan, regex=True)
                 df_dict[df_name] = sub_df.astype(float)
             start_idx = idx + 1
 

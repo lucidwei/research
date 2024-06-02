@@ -12,8 +12,8 @@ from datetime import datetime
 
 base_config = BaseConfig('boom')
 
-single_batch = 'single'
-# single_batch = 'batch'
+# single_batch = 'single'
+single_batch = 'batch'
 
 if single_batch == 'single':
     # preprocessor = DataPreprocessor(base_config, industry='石油石化')
@@ -48,14 +48,14 @@ if single_batch == 'single':
     # preprocessor = DataPreprocessor(base_config, industry='医药', stationary=False)
     # preprocessor = DataPreprocessor(base_config, industry='食品饮料')
     # preprocessor = DataPreprocessor(base_config, industry='农林牧渔')
-    preprocessor = DataPreprocessor(base_config, industry='农林牧渔', stationary=False)
+    # preprocessor = DataPreprocessor(base_config, industry='农林牧渔', stationary=False)
     # preprocessor = DataPreprocessor(base_config, industry='白酒')
     # preprocessor = DataPreprocessor(base_config, industry='食品')
     # preprocessor = DataPreprocessor(base_config, industry='饮料')
     # preprocessor = DataPreprocessor(base_config, industry='消费服务')
     # preprocessor = DataPreprocessor(base_config, industry='纺服')
     # preprocessor = DataPreprocessor(base_config, industry='纺服', stationary=False)
-    # preprocessor = DataPreprocessor(base_config, industry='商贸零售')
+    preprocessor = DataPreprocessor(base_config, industry='商贸零售')
     # preprocessor = DataPreprocessor(base_config, industry='商贸零售', stationary=False)
     # preprocessor = DataPreprocessor(base_config, industry='房地产')
     # preprocessor = DataPreprocessor(base_config, industry='非银金融')
@@ -95,7 +95,7 @@ def process_industry(industry, stationary, base_config, financial_list):
     return results
 
 
-industries = ['石油石化', '煤炭', '有色金属', '钢铁', '基础化工', '建材', '农林牧渔'
+industries = ['石油石化', '煤炭', '有色金属', '钢铁', '基础化工', '建材', '农林牧渔',
               '电子', '传媒', '计算机',
               '机械', '电新', '电力', '国防军工',
               '汽车', '家电', '医药', '食品饮料', '白酒', '食品', '饮料', '消费服务', '纺服', '商贸零售', '交通运输',
