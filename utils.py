@@ -79,21 +79,17 @@ def get_tradedays(start, end):
     if start > end:
         start, end = end, start
 
-    tradedays_df = w.tdays(start, end, "", usedf=True)[1]
-    tradedays = tradedays_df.iloc[:, 0].dt.date.tolist()
+    # 不再从数据接口读取交易日，太浪费quota
+    # tradedays_df = w.tdays(start, end, "", usedf=True)[1]
+    tradedays_df = pd.read_excel(rf"D:\WPS云盘\WPS云盘\工作-麦高\数据库相关\交易日.xlsx")
 
-    # counts = 0
-    # tradedays = []
-    # while True:
-    #     if start > end:
-    #         break
-    #     if is_holiday(start) or start.weekday() == 5 or start.weekday() == 6:
-    #         start += timedelta(days=1)
-    #         continue
-    #     counts += 1
-    #     tradedays.append(start)
-    #     start += timedelta(days=1)
-    # # return sorted(tradedays, reverse=True)
+    # 将 “上交所” 列转换为日期格式
+    tradedays_df['上交所'] = pd.to_datetime(tradedays_df['上交所']).dt.date
+    # 筛选出在 start 和 end 之间的交易日
+    tradedays_between = tradedays_df[(tradedays_df['上交所'] >= start) & (tradedays_df['上交所'] <= end)]
+    # 提取日期列表
+    tradedays = tradedays_between['上交所'].tolist()
+
     return sorted(tradedays)
 
 

@@ -12,8 +12,8 @@ from datetime import datetime
 
 base_config = BaseConfig('boom')
 
-# single_batch = 'single'
-single_batch = 'batch'
+single_batch = 'single'
+# single_batch = 'batch'
 
 if single_batch == 'single':
     # preprocessor = DataPreprocessor(base_config, industry='石油石化')
@@ -55,11 +55,13 @@ if single_batch == 'single':
     # preprocessor = DataPreprocessor(base_config, industry='消费服务')
     # preprocessor = DataPreprocessor(base_config, industry='纺服')
     # preprocessor = DataPreprocessor(base_config, industry='纺服', stationary=False)
-    preprocessor = DataPreprocessor(base_config, industry='商贸零售')
+    # preprocessor = DataPreprocessor(base_config, industry='商贸零售')
     # preprocessor = DataPreprocessor(base_config, industry='商贸零售', stationary=False)
     # preprocessor = DataPreprocessor(base_config, industry='房地产')
     # preprocessor = DataPreprocessor(base_config, industry='非银金融')
     # preprocessor = DataPreprocessor(base_config, industry='非银金融', stationary=False)
+    # preprocessor = DataPreprocessor(base_config, industry='失业率')
+    preprocessor = DataPreprocessor(base_config, industry='失业率', stationary=False)
 
     preprocessor.preprocess()
     modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, financial='净资产收益率ROE')
