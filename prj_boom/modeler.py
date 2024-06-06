@@ -17,18 +17,24 @@ mpl.rcParams['axes.unicode_minus'] = False           # 解决保存图像是负号'-'显示
 
 
 class DynamicFactorModeler:
-    def __init__(self, preprocessor: DataPreprocessor, k_factors: int, factor_orders: int, financial: str):
+    def __init__(self, preprocessor: DataPreprocessor, k_factors: int, factor_orders: int, compare_to: str):
         """
         DynamicFactorMQ 建模和评估类的初始化方法
         :param data: 预处理后的数据,DataFrame 格式
         :param k_factors: 因子数量
-        :param financial: 金融指标序列,用于评估模型效果,Series 格式
+        :param compare_to: 金融指标序列,用于评估模型效果,Series 格式
         """
         self.preprocessor = preprocessor
         self.data = preprocessor.data
-        self.financial = preprocessor.df_finalcials[financial]
         self.k_factors = k_factors
         self.factor_orders = factor_orders
+        # 在 df_finalcials 和 df_indicators 中寻找 compare_to 字符串
+        if compare_to in preprocessor.df_finalcials:
+            self.series_compared_to = preprocessor.df_finalcials[compare_to]
+        elif compare_to in preprocessor.df_indicators:
+            self.series_compared_to = preprocessor.df_indicators[compare_to]
+        else:
+            raise ValueError(f"'{compare_to}' not found in df_finalcials or df_indicators")
 
     def apply_dynamic_factor_model(self):
         """
@@ -41,6 +47,14 @@ class DynamicFactorModeler:
 
         self.results = model.fit_em(maxiter=1000)
         print(self.results.summary())
+
+        # 提取因子载荷（factor loadings），即每个观察变量的权重
+        num_loadings = len([param for param in self.results.params.index if 'loading' in param])
+        self.factor_loadings = self.results.params[:num_loadings]
+        self.factor_loadings.index = self.factor_loadings.index.str.replace('loading.0->', '', regex=False)
+        # 提取状态转移矩阵，历史数据对当前因子的影响通过状态方程和滞后项来实现，而不是通过因子载荷。
+        # self.transition_matrix = self.results.transition
+
         # fitted_data用来观察补全后的空值（但对原始数据变化很大）
         self.fitted_data = self.results.predict()
 
@@ -55,7 +69,7 @@ class DynamicFactorModeler:
         self.extracted_factor = extracted_factor
 
         # 将 self.financial 的索引转换为月频
-        financial_monthly = self.financial.resample('M').last()
+        financial_monthly = self.series_compared_to.resample('M').last()
 
         # 对齐两个时间序列的索引
         combined_data = pd.merge(extracted_factor, financial_monthly, left_index=True, right_index=True, how='inner')
@@ -95,10 +109,13 @@ class DynamicFactorModeler:
         factor_contributions = data_contributions.loc[start_date:end_date].T
         if self.corr < 0:
             factor_contributions *= -1
+            self.factor_loadings *= -1
 
         df = factor_contributions.copy(deep=True)
 
-        output = ""  # 存储所有的输出信息
+        # 新增：存储各个变量的权重
+        output = f"各指标权重：{self.factor_loadings}\n"  # 存储所有的输出信息
+        print(output)
         for column in df.columns:
             print(f"对于{column.strftime('%Y-%m-%d')} {self.preprocessor.industry} 景气度指数:")
             output += f"对于{column.strftime('%Y-%m-%d')} {self.preprocessor.industry} 景气度指数:\n"
@@ -174,7 +191,7 @@ class DynamicFactorModeler:
         if self.corr < 0:
             extracted_factor *= -1
 
-        factor = self.financial.dropna().astype(float)
+        factor = self.series_compared_to.dropna().astype(float)
 
         # 对齐两个时间序列的索引
         combined_data = pd.merge(extracted_factor, factor, left_index=True,

@@ -19,7 +19,7 @@ class BaseConfig:
     def __init__(self, project: str, auto_save_fig: bool = True):
         self.auto_save_fig = auto_save_fig
         self.project = project
-        check_wind()  # 需要wind获取tradedays
+        check_wind()
         self.config_paths()
         self.config_dates()
         self.config_db()

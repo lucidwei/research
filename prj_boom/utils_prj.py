@@ -75,11 +75,14 @@ def split_dataframe(whole_df):
 
                 if df_name == '基本面':
                     sub_df = sub_df.replace(0, np.nan)
-                if df_name == '财务':
+                elif df_name == '财务':
                     # 对每列数据求MA4
                     sub_df = sub_df.sort_index(ascending=True).rolling(window=4).mean().sort_index(ascending=False)
                     # 删除列名中的"单季度."字符串
                     sub_df.columns = sub_df.columns.str.replace('单季度.', '')
+                elif df_name == '行情':
+                    # 对“行情”数据没有特殊处理，但显式说明
+                    pass
 
                 # 仅包含空格字符串的cell，将其转换为 NaN，否则类型转换会报错
                 sub_df = sub_df.replace(r'^\s*$', np.nan, regex=True)

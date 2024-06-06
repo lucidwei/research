@@ -12,10 +12,10 @@ from datetime import datetime
 
 base_config = BaseConfig('boom')
 
-single_batch = 'single'
-# single_batch = 'batch'
+SINGLE_BATCH_MODE = 'single'
+# SINGLE_BATCH_MODE = 'batch'
 
-if single_batch == 'single':
+if SINGLE_BATCH_MODE == 'single':
     # preprocessor = DataPreprocessor(base_config, industry='石油石化')
     # preprocessor = DataPreprocessor(base_config, industry='石油石化', stationary=False)
     # preprocessor = DataPreprocessor(base_config, industry='煤炭')
@@ -60,52 +60,56 @@ if single_batch == 'single':
     # preprocessor = DataPreprocessor(base_config, industry='房地产')
     # preprocessor = DataPreprocessor(base_config, industry='非银金融')
     # preprocessor = DataPreprocessor(base_config, industry='非银金融', stationary=False)
-    # preprocessor = DataPreprocessor(base_config, industry='失业率')
-    preprocessor = DataPreprocessor(base_config, industry='失业率', stationary=False)
+    # preprocessor = DataPreprocessor(base_config, industry='就业状况')
+    # preprocessor = DataPreprocessor(base_config, industry='就业状况', stationary=False)
+    # preprocessor = DataPreprocessor(base_config, industry='社零综指')
+    preprocessor = DataPreprocessor(base_config, industry='社零综指', stationary=False, date_start='2020-01-01')
 
     preprocessor.preprocess()
-    modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, financial='净资产收益率ROE')
+    # modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, compare_to='净资产收益率ROE')
+    modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2,
+                                   compare_to='中国:社会消费品零售总额:当月同比')
     # modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, financial='归属母公司股东的净利润同比增长率')
     # modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, financial='营业收入同比增长率')
     modeler.run()
 
-
-def process_industry(industry, stationary, base_config, financial_list):
-    preprocessor = DataPreprocessor(base_config, industry=industry, stationary=stationary)
-    preprocessor.preprocess()
-
-    results = []
-    for financial in financial_list:
-        modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, financial=financial)
-        modeler.apply_dynamic_factor_model()
-        modeler.evaluate_model()
-
-        start_date = '2024-02-29'
-        end_date = '2024-04-30'
-
-        contribution_text = f"{industry}行业 中观数据对综合景气指数的影响拆解({start_date} to {end_date}):\n"
-        contribution_text += modeler.analyze_factor_contribution(start_date, end_date)
-
-        results.append({
-            'industry': industry,
-            'stationary': stationary,
-            'financial': financial,
-            'figure': modeler.plot_factors(save_or_show='save'),
-            'contribution_text': contribution_text
-        })
-
-    return results
+if SINGLE_BATCH_MODE == 'batch':
+    industries = ['石油石化', '煤炭', '有色金属', '钢铁', '基础化工', '建材', '农林牧渔',
+                  '电子', '传媒', '计算机',
+                  '机械', '电新', '电力', '国防军工',
+                  '汽车', '家电', '医药', '食品饮料', '白酒', '食品', '饮料', '消费服务', '纺服', '商贸零售',
+                  '交通运输',
+                  '房地产', '非银金融']
+    financial_list = ['净资产收益率ROE']  # , '归属母公司股东的净利润同比增长率', '营业收入同比增长率']
 
 
-industries = ['石油石化', '煤炭', '有色金属', '钢铁', '基础化工', '建材', '农林牧渔',
-              '电子', '传媒', '计算机',
-              '机械', '电新', '电力', '国防军工',
-              '汽车', '家电', '医药', '食品饮料', '白酒', '食品', '饮料', '消费服务', '纺服', '商贸零售', '交通运输',
-              '房地产', '非银金融']
-financial_list = ['净资产收益率ROE']  # , '归属母公司股东的净利润同比增长率', '营业收入同比增长率']
+    def process_industry(industry, stationary, base_config, financial_list):
+        preprocessor = DataPreprocessor(base_config, industry=industry, stationary=stationary)
+        preprocessor.preprocess()
+
+        results = []
+        for financial in financial_list:
+            modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, compare_to=financial)
+            modeler.apply_dynamic_factor_model()
+            modeler.evaluate_model()
+
+            start_date = '2024-02-29'
+            end_date = '2024-04-30'
+
+            contribution_text = f"{industry}行业 中观数据对综合景气指数的影响拆解({start_date} to {end_date}):\n"
+            contribution_text += modeler.analyze_factor_contribution(start_date, end_date)
+
+            results.append({
+                'industry': industry,
+                'stationary': stationary,
+                'financial': financial,
+                'figure': modeler.plot_factors(save_or_show='save'),
+                'contribution_text': contribution_text
+            })
+
+        return results
 
 
-if single_batch == 'batch':
     all_results = []
     for industry in industries:
         print(f'Processing industry {industry}')

@@ -75,7 +75,7 @@ def transform_cumulative_data(series: pd.Series, data_type: str, period: int = 1
                 else:
                     covered_months += 1
             elif current_month == 1 and pd.isna(cumulative_yoy.iloc[i]):
-                start_month_index = i+1
+                start_month_index = i + 1
                 covered_months = 1
                 continue
 
@@ -85,7 +85,7 @@ def transform_cumulative_data(series: pd.Series, data_type: str, period: int = 1
                     current_yoy.iloc[i] = cumulative_yoy.iloc[i]
                 else:
                     current_month_yoy = (cumulative_yoy.iloc[i] * covered_months - cumulative_yoy.iloc[i - 1] * (
-                                covered_months - 1))
+                            covered_months - 1))
                     current_yoy.iloc[i] = current_month_yoy
 
         # 处理一月份累计值为空的情况
@@ -147,7 +147,9 @@ def transform_cumulative_data(series: pd.Series, data_type: str, period: int = 1
 
 
 class DataPreprocessor(PgDbUpdaterBase):
-    def __init__(self, base_config: BaseConfig, date_start: str = '2010-01-01', industry: str = None, stationary: bool = True):
+
+    def __init__(self, base_config: BaseConfig, date_start: str = '2010-01-01', industry: str = None,
+                 stationary: bool = True):
         """
         数据预处理类的初始化方法
         :param data: 原始数据,DataFrame格式
@@ -158,6 +160,10 @@ class DataPreprocessor(PgDbUpdaterBase):
         self.date_start = date_start
         self.industry = industry
         self.stationary = stationary
+        self.excel_file_mapping = {'就业状况': '宏观数据',
+                                   '社零综指': '宏观数据'}
+        self.additional_data_mapping = {'就业状况': '宏观数据',
+                                        '社零综指': '中国:社会消费品零售总额:当月同比'}
 
     def preprocess(self):
         """
@@ -187,7 +193,11 @@ class DataPreprocessor(PgDbUpdaterBase):
 
         # 读取宏观指标
         # 将指标名称设为列，日期为index
-        df = pd.read_excel(rf'{file_path}/行业景气数据库.xlsx', sheet_name=self.industry)
+        if self.industry in self.excel_file_mapping:
+            excel_file_name = self.excel_file_mapping[self.industry]
+        else:
+            excel_file_name = '行业景气数据库'
+        df = pd.read_excel(rf'{file_path}/{excel_file_name}.xlsx', sheet_name=self.industry)
         df_dict = split_dataframe(whole_df=df)
 
         # 对df_dict中的每个DataFrame进行筛选日期并排序
@@ -201,7 +211,10 @@ class DataPreprocessor(PgDbUpdaterBase):
         # 定义一个列表, 存储要剔除的列名, 挑选只在info中出现的指标进行处理
         financials_cols = ['净资产收益率ROE', '归属母公司股东的净利润同比增长率', '营业收入同比增长率']
         indicators_cols = self.info.index.tolist()
-        combined_data = pd.merge(df_dict['基本面'][indicators_cols], df_dict['财务'], left_index=True, right_index=True, how='outer')
+        indicators_cols.append(
+            self.additional_data_mapping[self.industry]) if self.industry in self.excel_file_mapping else None
+        combined_data = pd.merge(df_dict['基本面'][indicators_cols], df_dict['财务'], left_index=True, right_index=True,
+                                 how='outer')
         # 删除重复的列
         combined_data = combined_data.loc[:, ~combined_data.columns.duplicated()]
 
@@ -216,6 +229,8 @@ class DataPreprocessor(PgDbUpdaterBase):
         - 将累计值转换为月度值
         """
         X = self.df_indicators.copy(deep=True)
+        X = X.drop(
+            columns=[self.additional_data_mapping[self.industry]]) if self.industry in self.excel_file_mapping else X
         # 如果存在'M5528820'列,则将其与'M0329545'列合并
         if 'M5528820' in X.columns:
             X.loc[:, 'M0329545'] = X.M5528820.add(X.M0329545, fill_value=0).copy()
@@ -256,7 +271,7 @@ class DataPreprocessor(PgDbUpdaterBase):
             else:
                 ts = df.loc[:, id].resample('1M').last()
             month_end_df = pd.concat([month_end_df, ts], axis=1)
-        month_end_df.index = pd.to_datetime(month_end_df.index)#.to_period('M')
+        month_end_df.index = pd.to_datetime(month_end_df.index)  # .to_period('M')
         self.data = month_end_df
 
     def fill_internal_missing(self):
@@ -375,8 +390,6 @@ class DataPreprocessor(PgDbUpdaterBase):
         #         df.drop(col_ind, inplace=True, axis=1)
         #
         # self.data = df
-
-
 
     @staticmethod
     def station_test(ts):
