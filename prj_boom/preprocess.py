@@ -161,9 +161,14 @@ class DataPreprocessor(PgDbUpdaterBase):
         self.industry = industry
         self.stationary = stationary
         self.excel_file_mapping = {'就业状况': '宏观数据',
-                                   '社零综指': '宏观数据'}
+                                   '社零综指': '宏观数据',
+                                   '出口': '宏观数据',
+                                   }
         self.additional_data_mapping = {'就业状况': '宏观数据',
-                                        '社零综指': '中国:社会消费品零售总额:当月同比'}
+                                        '社零综指': '中国:社会消费品零售总额:当月同比',
+                                        '出口': '中国:出口金额:当月同比',
+                                        # '出口': '美国:销售总额:季调:同比-美国:库存总额:季调:同比:+6月',
+                                        }
 
     def preprocess(self):
         """
@@ -231,6 +236,8 @@ class DataPreprocessor(PgDbUpdaterBase):
         X = self.df_indicators.copy(deep=True)
         X = X.drop(
             columns=[self.additional_data_mapping[self.industry]]) if self.industry in self.excel_file_mapping else X
+        # 删除所有列全部为 NaN 的行
+        X = X.dropna(how='all', axis=0)
         # 如果存在'M5528820'列,则将其与'M0329545'列合并
         if 'M5528820' in X.columns:
             X.loc[:, 'M0329545'] = X.M5528820.add(X.M0329545, fill_value=0).copy()

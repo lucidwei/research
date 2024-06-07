@@ -63,12 +63,13 @@ if SINGLE_BATCH_MODE == 'single':
     # preprocessor = DataPreprocessor(base_config, industry='就业状况')
     # preprocessor = DataPreprocessor(base_config, industry='就业状况', stationary=False)
     # preprocessor = DataPreprocessor(base_config, industry='社零综指')
-    preprocessor = DataPreprocessor(base_config, industry='社零综指', stationary=False, date_start='2020-01-01')
+    # preprocessor = DataPreprocessor(base_config, industry='社零综指', stationary=False, date_start='2020-01-01')
+    preprocessor = DataPreprocessor(base_config, industry='出口', stationary=False, date_start='2010-01-01')
 
     preprocessor.preprocess()
     # modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, compare_to='净资产收益率ROE')
-    modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2,
-                                   compare_to='中国:社会消费品零售总额:当月同比')
+    modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, compare_to='中国:出口金额:当月同比')
+    # modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, compare_to='美国:销售总额:季调:同比-美国:库存总额:季调:同比:+6月')
     # modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, financial='归属母公司股东的净利润同比增长率')
     # modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, financial='营业收入同比增长率')
     modeler.run()

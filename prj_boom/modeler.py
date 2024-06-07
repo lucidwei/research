@@ -12,8 +12,9 @@ from preprocess import DataPreprocessor
 from datetime import datetime
 
 from pylab import mpl
-mpl.rcParams['font.sans-serif'] = ['STZhongsong']    # 指定默认字体：解决plot不能显示中文问题
-mpl.rcParams['axes.unicode_minus'] = False           # 解决保存图像是负号'-'显示为方块的问题
+
+mpl.rcParams['font.sans-serif'] = ['STZhongsong']  # 指定默认字体：解决plot不能显示中文问题
+mpl.rcParams['axes.unicode_minus'] = False  # 解决保存图像是负号'-'显示为方块的问题
 
 
 class DynamicFactorModeler:
@@ -43,7 +44,8 @@ class DynamicFactorModeler:
         em_kwargs = {
             'tolerance': 1e-7,  # 设置收敛阈值
         }
-        model = DynamicFactorMQ(self.data, factors=self.k_factors, factor_orders=self.factor_orders, idiosyncratic_ar1=False)
+        model = DynamicFactorMQ(self.data, factors=self.k_factors, factor_orders=self.factor_orders,
+                                idiosyncratic_ar1=False)
 
         self.results = model.fit_em(maxiter=1000)
         print(self.results.summary())
@@ -111,17 +113,17 @@ class DynamicFactorModeler:
             factor_contributions *= -1
             self.factor_loadings *= -1
 
-        df = factor_contributions.copy(deep=True)
+        factor_contributions_adjusted = factor_contributions.copy(deep=True)
 
         # 新增：存储各个变量的权重
         output = f"各指标权重：{self.factor_loadings}\n"  # 存储所有的输出信息
         print(output)
-        for column in df.columns:
+        for column in factor_contributions_adjusted.columns:
             print(f"对于{column.strftime('%Y-%m-%d')} {self.preprocessor.industry} 景气度指数:")
             output += f"对于{column.strftime('%Y-%m-%d')} {self.preprocessor.industry} 景气度指数:\n"
 
             # 对当前列进行降序排序并去除nan值
-            sorted_column = df[column].sort_values(ascending=False).dropna()
+            sorted_column = factor_contributions_adjusted[column].sort_values(ascending=False).dropna()
 
             # 获取前三个值及其Index
             head_values = sorted_column.head(3)
@@ -143,16 +145,20 @@ class DynamicFactorModeler:
             output += "\n"
 
         # 增量分析：计算最后一次数据变化（从4月到5月）的贡献
-        if len(df.columns) >= 2:
-            prev_month = df.columns[-2]
-            curr_month = df.columns[-1]
+        if len(factor_contributions_adjusted.columns) >= 2:
+            prev_month = factor_contributions_adjusted.columns[-2]
+            curr_month = factor_contributions_adjusted.columns[-1]
 
             print(
                 f"Comparing contributions from {prev_month.strftime('%Y-%m-%d')} to {curr_month.strftime('%Y-%m-%d')}")
             output += f"Comparing contributions from {prev_month.strftime('%Y-%m-%d')} to {curr_month.strftime('%Y-%m-%d')}\n"
 
             # 计算每个变量的贡献变化
-            contrib_change = df[curr_month] - df[prev_month]
+            contrib_change = factor_contributions_adjusted[curr_month] - factor_contributions_adjusted[prev_month]
+
+            # 不应再对contrib_change取负，因为factor_contributions_adjusted已经调整了符号
+            # if self.corr < 0:
+            #     contrib_change *= -1
 
             # 对贡献变化进行排序
             sorted_contrib_change = contrib_change.sort_values(ascending=False).dropna()
@@ -210,7 +216,8 @@ class DynamicFactorModeler:
         end_date = latest_dates[1].strftime('%Y-%m-%d')
         latest_period_label = f"Latest Period: {start_date} to {end_date}"
         # 绘制最新一期数据变化的红线
-        ax1.plot(latest_dates, extracted_factor_filtered[latest_dates], color='red', linewidth=2, label=latest_period_label)
+        ax1.plot(latest_dates, extracted_factor_filtered[latest_dates], color='red', linewidth=2,
+                 label=latest_period_label)
 
         # 创建第二个 y 轴
         ax2 = ax1.twinx()
