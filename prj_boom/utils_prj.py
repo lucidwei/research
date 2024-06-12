@@ -79,7 +79,7 @@ def split_dataframe(whole_df):
                     # 对每列数据求MA4
                     sub_df = sub_df.sort_index(ascending=True).rolling(window=4).mean().sort_index(ascending=False)
                     # 删除列名中的"单季度."字符串
-                    sub_df.columns = sub_df.columns.str.replace('单季度.', '')
+                    sub_df.columns = sub_df.columns.str.replace('单季度.', '', regex=True)
                 elif df_name == '行情':
                     # 对“行情”数据没有特殊处理，但显式说明
                     pass

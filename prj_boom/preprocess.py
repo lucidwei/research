@@ -53,7 +53,7 @@ def transform_cumulative_data(series: pd.Series, data_type: str, period: int = 1
 
         # 将累计同比转换为当月同比
         cumulative_yoy = monthly_series.copy()
-        current_yoy = pd.Series(index=cumulative_yoy.index)
+        current_yoy = pd.Series(index=cumulative_yoy.index, dtype=float)
 
         # 初始化变量
         start_month_index = None
