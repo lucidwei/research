@@ -5,6 +5,7 @@
 # Software: PyCharm
 from statsmodels.tsa.statespace.dynamic_factor_mq import DynamicFactorMQ
 from statsmodels.tsa.stattools import grangercausalitytests
+from scipy.stats import pearsonr
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -39,17 +40,18 @@ class DynamicFactorModeler:
         else:
             raise ValueError(f"'{compare_to}' not found in df_finalcials or df_indicators")
 
-        self.find_statistically_significant_leading_indicators()
+        self.find_statistically_significant_indicators()
 
-    def find_statistically_significant_leading_indicators(self, max_lag=5, alpha=0.05, resample_freq='M'):
+    def find_statistically_significant_indicators(self, max_lag=5, alpha=0.05, resample_freq='M'):
         """
-        找到 df_indicators 中在统计学上显著领先于 compare_to 的时间序列
+        找到 df_indicators 中在统计学上显著领先于 compare_to 的时间序列, 并筛选出同步指标
         :param max_lag: 最大滞后阶数
         :param alpha: 显著性水平
         :param resample_freq: 重新采样频率，例如 'M' 表示按月
-        :return: 领先的时间序列名称及其显著滞后期数的字典
+        :return: 领先的时间序列及其显著滞后期数的字典，以及同步时间序列及其显著相关性的字典
         """
         leading_indicators = {}
+        synchronous_indicators = {}
 
         # 重新采样 self.series_compared_to
         series_compared_to_resampled = self.series_compared_to.resample(resample_freq).mean().interpolate()
@@ -67,19 +69,28 @@ class DynamicFactorModeler:
                 continue
 
             try:
+                # 同步性检验
+                correlation, p_value = pearsonr(combined_data.iloc[:, 0], combined_data.iloc[:, 1])
+                if p_value < alpha:
+                    synchronous_indicators[column] = correlation
+
+                # 进行格兰杰因果检验
                 test_result = grangercausalitytests(combined_data, max_lag, verbose=False)
 
                 # 检查每个滞后阶数下的 F-检验 p 值
                 for lag in range(1, max_lag + 1):
                     p_value = test_result[lag][0]['ssr_ftest'][1]
                     if p_value < alpha:
-                        leading_indicators[column] = lag
+                        if lag == 1:
+                            synchronous_indicators[column] = correlation
+                        else:
+                            leading_indicators[column] = lag
                         break  # 如果在任何滞后阶数下显著，则添加该列并跳出循环
             except ValueError as e:
                 print(f"Error processing {column}: {e}")
                 continue
 
-        return leading_indicators
+        return leading_indicators, synchronous_indicators
 
     def apply_dynamic_factor_model(self):
         """
