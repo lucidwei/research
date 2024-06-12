@@ -97,6 +97,11 @@ class DynamicFactorModeler:
         # 获取平滑后的状态分解
         decomposition = self.results.get_smoothed_decomposition(decomposition_of='smoothed_state')
         data_contributions = decomposition[0].loc[pd.IndexSlice['0', :], :]
+        # decomposition = self.results.filtered_state
+        # dates = self.results.data.dates  # 获取时间序列的日期
+        # variables = self.results.data.param_names  # 获取变量名称
+        # data_contributions = pd.DataFrame(data=decomposition.T, index=dates, columns=variables)
+
 
         # 将日期转换为 DataFrame 的行索引
         data_contributions.index = data_contributions.index.droplevel(0)
@@ -180,6 +185,16 @@ class DynamicFactorModeler:
             for index, value in bottom_negative_changes.items():
                 print(f"'{index[0]}' at '{index[1].strftime('%Y-%m-%d')}', impact change {value:.3f}")
                 output += f"'{index[0]}' at '{index[1].strftime('%Y-%m-%d')}', impact change {value:.3f}\n"
+
+            # 计算所有正贡献变化的总和
+            positive_sum = sorted_contrib_change[sorted_contrib_change > 0].sum()
+            print(f"正贡献变化总和: {positive_sum:.3f}")
+            output += f"正贡献变化总和: {positive_sum:.3f}\n"
+
+            # 计算所有负贡献变化的总和
+            negative_sum = sorted_contrib_change[sorted_contrib_change < 0].sum()
+            print(f"负贡献变化总和: {negative_sum:.3f}")
+            output += f"负贡献变化总和: {negative_sum:.3f}\n"
 
             print("\n")
             output += "\n"
