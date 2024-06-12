@@ -164,7 +164,7 @@ class DataPreprocessor(PgDbUpdaterBase):
                                    '社零综指': '宏观数据',
                                    '出口': '宏观数据',
                                    }
-        self.additional_data_mapping = {'就业状况': '宏观数据',
+        self.additional_data_mapping = {
                                         '社零综指': '中国:社会消费品零售总额:当月同比',
                                         '出口': '中国:出口金额:当月同比',
                                         # '出口': '美国:销售总额:季调:同比-美国:库存总额:季调:同比:+6月',
@@ -216,8 +216,8 @@ class DataPreprocessor(PgDbUpdaterBase):
         # 定义一个列表, 存储要剔除的列名, 挑选只在info中出现的指标进行处理
         financials_cols = ['净资产收益率ROE', '归属母公司股东的净利润同比增长率', '营业收入同比增长率']
         indicators_cols = self.info.index.tolist()
-        indicators_cols.append(
-            self.additional_data_mapping[self.industry]) if self.industry in self.excel_file_mapping else None
+        if self.industry in self.additional_data_mapping:
+            indicators_cols.append(self.additional_data_mapping[self.industry])
         combined_data = pd.merge(df_dict['基本面'][indicators_cols], df_dict['财务'], left_index=True, right_index=True,
                                  how='outer')
         # 删除重复的列
@@ -234,8 +234,8 @@ class DataPreprocessor(PgDbUpdaterBase):
         - 将累计值转换为月度值
         """
         X = self.df_indicators.copy(deep=True)
-        X = X.drop(
-            columns=[self.additional_data_mapping[self.industry]]) if self.industry in self.excel_file_mapping else X
+        if self.industry in self.additional_data_mapping:
+            X = X.drop(columns=[self.additional_data_mapping[self.industry]])
         # 删除所有列全部为 NaN 的行
         X = X.dropna(how='all', axis=0)
         # 如果存在'M5528820'列,则将其与'M0329545'列合并

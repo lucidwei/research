@@ -87,7 +87,7 @@ class DynamicFactorModeler:
         print(f"Correlation between extracted factor and original factor: {corr:.4f}")
         self.corr = corr
 
-    def analyze_factor_contribution(self, start_date, end_date):
+    def analyze_factor_contribution(self, start_date=None, end_date=None):
         """
         分析给定时间段内各变量对共同因子变化的贡献
         """
@@ -221,7 +221,14 @@ class DynamicFactorModeler:
 
         # 创建第二个 y 轴
         ax2 = ax1.twinx()
-        ax2.scatter(factor_filtered.index, factor_filtered.values, label=factor.name, color='red')
+        # 判断 NaN 的数量是否多于一半
+        nan_count = factor_filtered.isna().sum()
+        total_count = len(factor_filtered)
+
+        if nan_count > total_count / 2 or self.preprocessor.industry == '社零综指':
+            ax2.scatter(factor_filtered.index, factor_filtered.values, label=factor_filtered.name, color='red')
+        else:
+            ax2.plot(factor_filtered.index, factor_filtered.values, label=factor_filtered.name, color='red')
 
         # 绘制每年的纵向栅格
         years = sorted(set(dt.year for dt in extracted_factor_filtered.index))

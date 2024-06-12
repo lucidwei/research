@@ -68,6 +68,7 @@ if SINGLE_BATCH_MODE == 'single':
 
     preprocessor.preprocess()
     # modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, compare_to='净资产收益率ROE')
+    # modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, compare_to='中国:社会消费品零售总额:当月同比')
     modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, compare_to='中国:出口金额:当月同比')
     # modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, compare_to='美国:销售总额:季调:同比-美国:库存总额:季调:同比:+6月')
     # modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, financial='归属母公司股东的净利润同比增长率')
@@ -94,8 +95,10 @@ if SINGLE_BATCH_MODE == 'batch':
             modeler.apply_dynamic_factor_model()
             modeler.evaluate_model()
 
-            start_date = '2024-02-29'
-            end_date = '2024-04-30'
+            # start_date = '2024-02-29'
+            # end_date = '2024-04-30'
+            start_date = None
+            end_date = None
 
             contribution_text = f"{industry}行业 中观数据对综合景气指数的影响拆解({start_date} to {end_date}):\n"
             contribution_text += modeler.analyze_factor_contribution(start_date, end_date)
