@@ -301,21 +301,15 @@ class DynamicFactorModeler:
         extracted_factor_filtered = combined_data['0']
         factor_filtered = combined_data.loc[:, combined_data.columns != '0'].squeeze()
 
-        # 获取今天的日期
-        today = pd.Timestamp('today').normalize()
+        # 获取 factor_filtered 实际存在的真实数据中的最新日期
+        latest_date_existing = factor_filtered.dropna().index.max()
         # 找到今天之后的所有日期
-        predicted_dates = extracted_factor_filtered.index[extracted_factor_filtered.index >= today]
-        if predicted_dates.empty:
-            extracted_factor_filtered_without_predicted = extracted_factor_filtered
-            predicted_dates = extracted_factor_filtered.index[-3:]
-        else:
-            # 若有未来的领先数据，前向多纳入一个数据点，保证作图连贯
-            first_date_after_today = predicted_dates[0]
-            # 找到上一个数据点
-            prev_date = extracted_factor_filtered.index[extracted_factor_filtered.index < first_date_after_today][-1]
-            predicted_dates = extracted_factor_filtered.index[extracted_factor_filtered.index >= prev_date]
-            extracted_factor_filtered_without_predicted = extracted_factor_filtered[
-                extracted_factor_filtered.index <= predicted_dates[0]]
+        predicted_dates = extracted_factor_filtered.index[extracted_factor_filtered.index > latest_date_existing]
+        extracted_factor_filtered_without_predicted = extracted_factor_filtered[
+            extracted_factor_filtered.index < predicted_dates[0]]
+        # predicted_dates添加一个历史日期，保证画预测虚线时的连贯
+        prev_date = extracted_factor_filtered_without_predicted.index.max()
+        predicted_dates = extracted_factor_filtered.index[extracted_factor_filtered.index >= prev_date]
 
         # 绘制提取的因子和原始因子的图像
         fig, ax1 = plt.subplots(figsize=(12, 6))
@@ -324,7 +318,7 @@ class DynamicFactorModeler:
         # 在图中标注预测期的日期范围
         start_date = predicted_dates[1].strftime('%Y-%m-%d')
         end_date = predicted_dates[-1].strftime('%Y-%m-%d')
-        latest_period_label = f"预测期: {start_date} to {end_date}"
+        latest_period_label = f"预测期: {start_date} to {end_date}" if start_date != end_date else f"预测期: {start_date}"
         # 绘制最新一期数据变化的红线
         ax1.plot(predicted_dates, extracted_factor_filtered[predicted_dates], color='purple', linewidth=3,
                  linestyle=':', label=latest_period_label)
