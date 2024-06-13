@@ -48,10 +48,11 @@ class DynamicFactorModeler:
         :param max_lag: 最大滞后阶数
         :param alpha: 显著性水平
         :param resample_freq: 重新采样频率，例如 'M' 表示按月
-        :return: 领先的时间序列及其显著滞后期数的字典，以及同步时间序列及其显著相关性的字典
+        :return: 领先的时间序列及其显著滞后期数的字典, 同步时间序列及其显著相关性的字典, 被遗弃的时间序列列表
         """
         leading_indicators = {}
         synchronous_indicators = {}
+        discarded_indicators = []
 
         # 重新采样 self.series_compared_to
         series_compared_to_resampled = self.series_compared_to.resample(resample_freq).mean().interpolate()
@@ -59,13 +60,15 @@ class DynamicFactorModeler:
         # 遍历 df_indicators 中的每个时间序列
         for column in self.preprocessor.df_indicators.columns:
             # 重新采样每个指标时间序列
-            indicator_series_resampled = self.preprocessor.df_indicators[column].resample(resample_freq).mean().interpolate()
+            indicator_series_resampled = self.preprocessor.df_indicators[column].resample(
+                resample_freq).mean().interpolate()
 
             combined_data = pd.concat([series_compared_to_resampled, indicator_series_resampled], axis=1).dropna()
 
             # 检查数据长度是否足够
             if combined_data.shape[0] <= max_lag:
                 print(f"Skipping {column} due to insufficient data length.")
+                discarded_indicators.append(column)
                 continue
 
             try:
@@ -78,19 +81,27 @@ class DynamicFactorModeler:
                 test_result = grangercausalitytests(combined_data, max_lag, verbose=False)
 
                 # 检查每个滞后阶数下的 F-检验 p 值
+                significant = False
                 for lag in range(1, max_lag + 1):
                     p_value = test_result[lag][0]['ssr_ftest'][1]
                     if p_value < alpha:
+                        significant = True
                         if lag == 1:
                             synchronous_indicators[column] = correlation
                         else:
                             leading_indicators[column] = lag
                         break  # 如果在任何滞后阶数下显著，则添加该列并跳出循环
+
+                if not significant and column not in synchronous_indicators:
+                    discarded_indicators.append(column)
             except ValueError as e:
                 print(f"Error processing {column}: {e}")
+                discarded_indicators.append(column)
                 continue
-
-        return leading_indicators, synchronous_indicators
+        print(f'领先指标：{leading_indicators}')
+        print(f"同步指标：{{{', '.join([f'{key}: {value:.1f}' for key, value in synchronous_indicators.items()])}}}")
+        print(f'遗弃的指标：{discarded_indicators}')
+        return leading_indicators, synchronous_indicators, discarded_indicators
 
     def apply_dynamic_factor_model(self):
         """
