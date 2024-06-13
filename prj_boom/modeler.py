@@ -40,9 +40,19 @@ class DynamicFactorModeler:
         else:
             raise ValueError(f"'{compare_to}' not found in df_finalcials or df_indicators")
 
-        self.find_statistically_significant_indicators()
+    def run(self):
+        """
+        运行 DynamicFactorMQ 建模和评估的完整流程
+        """
+        leading_indicators, synchronous_indicators, _ = self.find_statistically_significant_indicators(
+            lag1_as_sync=False)
+        self.apply_dynamic_factor_model()
+        self.evaluate_model()
+        # 分析给定时间段内各变量对共同因子变化的贡献，默认为最后三个月
+        self.analyze_factor_contribution(None, None)
+        self.plot_factors(save_or_show='show')
 
-    def find_statistically_significant_indicators(self, max_lag=5, alpha=0.05, resample_freq='M'):
+    def find_statistically_significant_indicators(self, max_lag=5, alpha=0.05, resample_freq='M', lag1_as_sync=True):
         """
         找到 df_indicators 中在统计学上显著领先于 compare_to 的时间序列, 并筛选出同步指标
         :param max_lag: 最大滞后阶数
@@ -86,7 +96,7 @@ class DynamicFactorModeler:
                     p_value = test_result[lag][0]['ssr_ftest'][1]
                     if p_value < alpha:
                         significant = True
-                        if lag == 1:
+                        if lag == 1 and lag1_as_sync:
                             synchronous_indicators[column] = correlation
                         else:
                             leading_indicators[column] = lag
@@ -103,14 +113,20 @@ class DynamicFactorModeler:
         print(f'遗弃的指标：{discarded_indicators}')
         return leading_indicators, synchronous_indicators, discarded_indicators
 
-    def apply_dynamic_factor_model(self):
+    def apply_dynamic_factor_model(self, indicators_group=None):
         """
         应用 DynamicFactorMQ 模型进行建模和计算
         """
-        em_kwargs = {
-            'tolerance': 1e-7,  # 设置收敛阈值
-        }
-        model = DynamicFactorMQ(self.data, factors=self.k_factors, factor_orders=self.factor_orders,
+        if indicators_group is not None:
+            # 从指标组中提取列名
+            selected_columns = indicators_group.keys()
+            # 筛选 self.data 中的列
+            filtered_data = self.data[selected_columns]
+        else:
+            # 如果没有指定指标组，使用全部数据
+            filtered_data = self.data
+
+        model = DynamicFactorMQ(filtered_data, factors=self.k_factors, factor_orders=self.factor_orders,
                                 idiosyncratic_ar1=False)
 
         self.results = model.fit_em(maxiter=1000)
@@ -167,7 +183,6 @@ class DynamicFactorModeler:
         # dates = self.results.data.dates  # 获取时间序列的日期
         # variables = self.results.data.param_names  # 获取变量名称
         # data_contributions = pd.DataFrame(data=decomposition.T, index=dates, columns=variables)
-
 
         # 将日期转换为 DataFrame 的行索引
         data_contributions.index = data_contributions.index.droplevel(0)
@@ -286,19 +301,21 @@ class DynamicFactorModeler:
         extracted_factor_filtered = combined_data['0']
         factor_filtered = combined_data.loc[:, combined_data.columns != '0'].squeeze()
 
+        # 获取最新的n个时间点
+        n = 4
+        latest_dates = extracted_factor_filtered.index[-n-1:]
+
         # 绘制提取的因子和原始因子的图像
         fig, ax1 = plt.subplots(figsize=(12, 6))
-        ax1.plot(extracted_factor_filtered, label='景气综合指标')
+        ax1.plot(extracted_factor_filtered.iloc[:-n], label='景气综合指标')
 
-        # 获取最新的两个时间点
-        latest_dates = extracted_factor_filtered.index[-2:]
-        # 在图中标注最新一期的日期范围
-        start_date = latest_dates[0].strftime('%Y-%m-%d')
-        end_date = latest_dates[1].strftime('%Y-%m-%d')
-        latest_period_label = f"Latest Period: {start_date} to {end_date}"
+        # 在图中标注预测期的日期范围
+        start_date = latest_dates[1].strftime('%Y-%m-%d')
+        end_date = latest_dates[-1].strftime('%Y-%m-%d')
+        latest_period_label = f"预测期: {start_date} to {end_date}"
         # 绘制最新一期数据变化的红线
-        ax1.plot(latest_dates, extracted_factor_filtered[latest_dates], color='red', linewidth=2,
-                 label=latest_period_label)
+        ax1.plot(latest_dates, extracted_factor_filtered[latest_dates], color='purple', linewidth=3,
+                 linestyle=':', label=latest_period_label)
 
         # 创建第二个 y 轴
         ax2 = ax1.twinx()
@@ -309,7 +326,7 @@ class DynamicFactorModeler:
         if nan_count > total_count / 2 or self.preprocessor.industry == '社零综指':
             ax2.scatter(factor_filtered.index, factor_filtered.values, label=factor_filtered.name, color='red')
         else:
-            ax2.plot(factor_filtered.index, factor_filtered.values, label=factor_filtered.name, color='red')
+            ax2.plot(factor_filtered.index, factor_filtered.values, label=factor_filtered.name, color='red', alpha=0.6)
 
         # 绘制每年的纵向栅格
         years = sorted(set(dt.year for dt in extracted_factor_filtered.index))
@@ -339,13 +356,3 @@ class DynamicFactorModeler:
             plt.close(fig)
 
             return image_path
-
-    def run(self):
-        """
-        运行 DynamicFactorMQ 建模和评估的完整流程
-        """
-        self.apply_dynamic_factor_model()
-        self.evaluate_model()
-        # 分析给定时间段内各变量对共同因子变化的贡献，默认为最后三个月
-        self.analyze_factor_contribution(None, None)
-        self.plot_factors(save_or_show='show')
