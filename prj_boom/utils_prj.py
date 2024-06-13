@@ -25,8 +25,8 @@ def set_index_col_wind(data, col_locator: str) -> pd.DataFrame:
     col_name_row = data.iloc[:date_row, 0].str.contains(col_locator).fillna(False).idxmax()
     # 设置列名
     data.columns = data.iloc[col_name_row]
-    # 删除列名行及其上方的所有行
-    data = data.iloc[date_row + 1:]
+    # 保留具有日期的数据
+    data = data.iloc[date_row:]
     # 设置第一列为 index,并命名为 "date"
     data = data.set_index(data.columns[0])
     data.index.name = 'date'
