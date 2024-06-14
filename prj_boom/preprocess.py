@@ -163,11 +163,14 @@ class DataPreprocessor(PgDbUpdaterBase):
         self.excel_file_mapping = {'就业状况': '宏观数据',
                                    '社零综指': '宏观数据',
                                    '出口': '宏观数据',
+                                   'PPI': '宏观数据',
                                    }
         self.additional_data_mapping = {
                                         '社零综指': '中国:社会消费品零售总额:当月同比',
+                                        # '就业状况': '中国:城镇调查失业率',
                                         '出口': '中国:出口金额:当月同比',
                                         # '出口': '美国:销售总额:季调:同比-美国:库存总额:季调:同比:+6月',
+                                        'PPI': '中国:PPI:全部工业品:当月同比',
                                         }
 
     def preprocess(self):

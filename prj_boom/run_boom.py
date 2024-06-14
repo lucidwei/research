@@ -9,6 +9,10 @@ from prj_boom.modeler import DynamicFactorModeler
 from docx import Document
 from docx.shared import Inches
 from datetime import datetime
+import warnings
+
+# 忽略特定的 FutureWarning
+warnings.filterwarnings("ignore", category=FutureWarning, message='verbose is deprecated since functions should not print results')
 
 base_config = BaseConfig('boom')
 
@@ -58,19 +62,23 @@ if SINGLE_BATCH_MODE == 'single':
     # preprocessor = DataPreprocessor(base_config, industry='商贸零售')
     # preprocessor = DataPreprocessor(base_config, industry='商贸零售', stationary=False)
     # preprocessor = DataPreprocessor(base_config, industry='房地产')
+    # preprocessor = DataPreprocessor(base_config, industry='房地产', stationary=False)
     # preprocessor = DataPreprocessor(base_config, industry='非银金融')
     # preprocessor = DataPreprocessor(base_config, industry='非银金融', stationary=False)
     # preprocessor = DataPreprocessor(base_config, industry='就业状况')
-    # preprocessor = DataPreprocessor(base_config, industry='就业状况', stationary=False)
+    preprocessor = DataPreprocessor(base_config, industry='就业状况', stationary=False, date_start='2018-01-01')
     # preprocessor = DataPreprocessor(base_config, industry='社零综指')
     # preprocessor = DataPreprocessor(base_config, industry='社零综指', stationary=False, date_start='2020-01-01')
-    preprocessor = DataPreprocessor(base_config, industry='出口', stationary=False, date_start='2010-01-01')
+    # preprocessor = DataPreprocessor(base_config, industry='出口', stationary=False, date_start='2010-01-01')
+    # preprocessor = DataPreprocessor(base_config, industry='PPI', stationary=False, date_start='2010-01-01')
 
     preprocessor.preprocess()
     # modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, compare_to='净资产收益率ROE')
+    modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, compare_to='中国:城镇调查失业率')
     # modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, compare_to='中国:社会消费品零售总额:当月同比')
-    modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, compare_to='中国:出口金额:当月同比')
+    # modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, compare_to='中国:出口金额:当月同比')
     # modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, compare_to='美国:销售总额:季调:同比-美国:库存总额:季调:同比:+6月')
+    # modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, compare_to='中国:PPI:全部工业品:当月同比')
     # modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, financial='归属母公司股东的净利润同比增长率')
     # modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, financial='营业收入同比增长率')
     modeler.run()
