@@ -90,26 +90,29 @@ class DynamicFactorModeler:
                 # 进行格兰杰因果检验
                 test_result = grangercausalitytests(combined_data, max_lag, verbose=False)
 
-                # 检查每个滞后阶数下的 F-检验 p 值
-                significant = False
+                # 检查每个滞后阶数下的 F-检验 p 值，选取显著性最高的期数
+                best_lag = None
+                best_p_value = float('inf')
                 for lag in range(1, max_lag + 1):
                     p_value = test_result[lag][0]['ssr_ftest'][1]
-                    if p_value < alpha:
-                        significant = True
-                        if lag == 1 and lag1_as_sync:
-                            synchronous_indicators[column] = correlation
-                        else:
-                            leading_indicators[column] = lag
-                        break  # 如果在任何滞后阶数下显著，则添加该列并跳出循环
+                    if p_value < best_p_value:
+                        best_p_value = p_value
+                        best_lag = lag
 
-                if not significant and column not in synchronous_indicators:
+                if best_p_value < alpha:
+                    if best_lag == 1 and lag1_as_sync:
+                        synchronous_indicators[column] = correlation
+                    else:
+                        leading_indicators[column] = best_lag
+                else:
                     discarded_indicators.append(column)
             except ValueError as e:
                 print(f"Error processing {column}: {e}")
                 discarded_indicators.append(column)
                 continue
-        print(f'领先指标：{leading_indicators}')
-        print(f"同步指标：{{{', '.join([f'{key}: {value:.1f}' for key, value in synchronous_indicators.items()])}}}")
+
+        print(f'领先指标(领先期数)：{leading_indicators}')
+        print(f"同步指标(相关性)：{{{', '.join([f'{key}: {value:.2f}' for key, value in synchronous_indicators.items()])}}}")
         print(f'遗弃的指标：{discarded_indicators}')
         return leading_indicators, synchronous_indicators, discarded_indicators
 
