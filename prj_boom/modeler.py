@@ -46,6 +46,7 @@ class DynamicFactorModeler:
         """
         leading_indicators, synchronous_indicators, _ = self.find_statistically_significant_indicators(
             lag1_as_sync=False)
+        # self.apply_dynamic_factor_model(leading_indicators)
         self.apply_dynamic_factor_model()
         self.evaluate_model()
         # 分析给定时间段内各变量对共同因子变化的贡献，默认为最后三个月
@@ -121,10 +122,27 @@ class DynamicFactorModeler:
         应用 DynamicFactorMQ 模型进行建模和计算
         """
         if indicators_group is not None:
-            # 从指标组中提取列名
+            # 从指标组中提取列名和对应的领先期数
             selected_columns = indicators_group.keys()
-            # 筛选 self.data 中的列
-            filtered_data = self.data[selected_columns]
+            leading_periods = indicators_group.values()
+            periods_to_extend = max(leading_periods)
+
+            # 创建一个新的 DataFrame 来存储推移后的数据
+            future_dates = pd.date_range(start=self.data.index[-1], periods=periods_to_extend + 1, freq='M')[1:]
+            extended_index = self.data.index.append(future_dates)
+            extended_data = self.data.reindex(extended_index)
+
+            shifted_data = pd.DataFrame(index=extended_index)
+
+            for column, period in zip(selected_columns, leading_periods):
+                # 将列数据推移到未来
+                shifted_series = extended_data[column].shift(period)
+
+                # 将推移后的系列添加到新的 DataFrame 中
+                shifted_data[column] = shifted_series
+
+            # 对齐新的日期索引，处理可能不存在的月末日期
+            filtered_data = shifted_data.resample('M').asfreq().interpolate(method='time')
         else:
             # 如果没有指定指标组，使用全部数据
             filtered_data = self.data
@@ -324,7 +342,7 @@ class DynamicFactorModeler:
         latest_period_label = f"预测期: {start_date} to {end_date}" if start_date != end_date else f"预测期: {start_date}"
         # 绘制最新一期数据变化的红线
         ax1.plot(predicted_dates, extracted_factor_filtered[predicted_dates], color='purple', linewidth=3,
-                 linestyle=':', label=latest_period_label)
+                 linestyle='-', label=latest_period_label)
 
         # 创建第二个 y 轴
         ax2 = ax1.twinx()
