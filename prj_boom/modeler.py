@@ -251,10 +251,11 @@ class DynamicFactorModeler:
             print("\n")
             output += "\n"
 
-        # 增量分析：计算最后一次数据变化（从4月到5月）的贡献
+        # 增量分析：计算最后一次(或adjust后的月份)数据变化的贡献
+        adjust = 0
         if len(factor_contributions_adjusted.columns) >= 2:
-            prev_month = factor_contributions_adjusted.columns[-2]
-            curr_month = factor_contributions_adjusted.columns[-1]
+            prev_month = factor_contributions_adjusted.columns[-2-adjust]
+            curr_month = factor_contributions_adjusted.columns[-1-adjust]
 
             print(
                 f"Comparing contributions from {prev_month.strftime('%Y-%m-%d')} to {curr_month.strftime('%Y-%m-%d')}")

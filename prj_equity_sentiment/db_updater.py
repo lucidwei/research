@@ -23,7 +23,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
     def run_all_updater(self):
         self.industry_data_updater.logic_industry_volume()
         self.industry_data_updater.logic_industry_large_order()
-        self.industry_stk_updater.logic_industry_stk_price_volume()
+        # self.industry_stk_updater.logic_industry_stk_price_volume()
         # self.logic_analyst()
 
     def _check_data_table(self, type_identifier, **kwargs):
