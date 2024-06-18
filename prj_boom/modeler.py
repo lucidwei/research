@@ -20,7 +20,7 @@ mpl.rcParams['axes.unicode_minus'] = False  # ½â¾ö±£´æÍ¼ÏñÊÇ¸ººÅ'-'ÏÔÊ¾Îª·½¿éµÄÎ
 
 
 class DynamicFactorModeler:
-    def __init__(self, preprocessor: DataPreprocessor, k_factors: int, factor_orders: int, compare_to: str):
+    def __init__(self, preprocessor: DataPreprocessor, k_factors: int, factor_orders: int, compare_to: str, leading_prediction=False):
         """
         DynamicFactorMQ ½¨Ä£ºÍÆÀ¹ÀÀàµÄ³õÊ¼»¯·½·¨
         :param data: Ô¤´¦ÀíºóµÄÊý¾Ý,DataFrame ¸ñÊ½
@@ -31,6 +31,7 @@ class DynamicFactorModeler:
         self.data = preprocessor.data
         self.k_factors = k_factors
         self.factor_orders = factor_orders
+        self.leading_prediction = leading_prediction
 
         # ÔÚ df_finalcials ºÍ df_indicators ÖÐÑ°ÕÒ compare_to ×Ö·û´®
         if compare_to in preprocessor.df_finalcials:
@@ -44,16 +45,19 @@ class DynamicFactorModeler:
         """
         ÔËÐÐ DynamicFactorMQ ½¨Ä£ºÍÆÀ¹ÀµÄÍêÕûÁ÷³Ì
         """
-        leading_indicators, synchronous_indicators, _ = self.find_statistically_significant_indicators(
-            lag1_as_sync=False)
-        # self.apply_dynamic_factor_model(leading_indicators)
-        self.apply_dynamic_factor_model()
+        if self.leading_prediction:
+            leading_indicators, synchronous_indicators, _ = self.find_statistically_significant_indicators(
+                lag1_as_sync=False)
+            self.apply_dynamic_factor_model(leading_indicators)
+        else:
+            self.find_statistically_significant_indicators()
+            self.apply_dynamic_factor_model()
         self.evaluate_model()
         # ·ÖÎö¸ø¶¨Ê±¼ä¶ÎÄÚ¸÷±äÁ¿¶Ô¹²Í¬Òò×Ó±ä»¯µÄ¹±Ï×£¬Ä¬ÈÏÎª×îºóÈý¸öÔÂ
         self.analyze_factor_contribution(None, None)
         self.plot_factors(save_or_show='show')
 
-    def find_statistically_significant_indicators(self, max_lag=5, alpha=0.05, resample_freq='M', lag1_as_sync=True):
+    def find_statistically_significant_indicators(self, max_lag=15, alpha=0.05, resample_freq='M', lag1_as_sync=True):
         """
         ÕÒµ½ df_indicators ÖÐÔÚÍ³¼ÆÑ§ÉÏÏÔÖøÁìÏÈÓÚ compare_to µÄÊ±¼äÐòÁÐ, ²¢É¸Ñ¡³öÍ¬²½Ö¸±ê
         :param max_lag: ×î´óÖÍºó½×Êý
@@ -113,7 +117,8 @@ class DynamicFactorModeler:
                 continue
 
         print(f'ÁìÏÈÖ¸±ê(ÁìÏÈÆÚÊý)£º{leading_indicators}')
-        print(f"Í¬²½Ö¸±ê(Ïà¹ØÐÔ)£º{{{', '.join([f'{key}: {value:.2f}' for key, value in synchronous_indicators.items()])}}}")
+        print(
+            f"Í¬²½Ö¸±ê(Ïà¹ØÐÔ)£º{{{', '.join([f'{key}: {value:.2f}' for key, value in synchronous_indicators.items()])}}}")
         print(f'ÒÅÆúµÄÖ¸±ê£º{discarded_indicators}')
         return leading_indicators, synchronous_indicators, discarded_indicators
 
@@ -254,8 +259,8 @@ class DynamicFactorModeler:
         # ÔöÁ¿·ÖÎö£º¼ÆËã×îºóÒ»´Î(»òadjustºóµÄÔÂ·Ý)Êý¾Ý±ä»¯µÄ¹±Ï×
         adjust = 0
         if len(factor_contributions_adjusted.columns) >= 2:
-            prev_month = factor_contributions_adjusted.columns[-2-adjust]
-            curr_month = factor_contributions_adjusted.columns[-1-adjust]
+            prev_month = factor_contributions_adjusted.columns[-2 - adjust]
+            curr_month = factor_contributions_adjusted.columns[-1 - adjust]
 
             print(
                 f"Comparing contributions from {prev_month.strftime('%Y-%m-%d')} to {curr_month.strftime('%Y-%m-%d')}")
@@ -327,8 +332,11 @@ class DynamicFactorModeler:
         latest_date_existing = factor_filtered.dropna().index.max()
         # ÕÒµ½½ñÌìÖ®ºóµÄËùÓÐÈÕÆÚ
         predicted_dates = extracted_factor_filtered.index[extracted_factor_filtered.index > latest_date_existing]
-        extracted_factor_filtered_without_predicted = extracted_factor_filtered[
-            extracted_factor_filtered.index < predicted_dates[0]]
+        if len(predicted_dates) == 0:
+            extracted_factor_filtered_without_predicted = extracted_factor_filtered
+        else:
+            extracted_factor_filtered_without_predicted = extracted_factor_filtered[
+                extracted_factor_filtered.index < predicted_dates[0]]
         # predicted_datesÌí¼ÓÒ»¸öÀúÊ·ÈÕÆÚ£¬±£Ö¤»­Ô¤²âÐéÏßÊ±µÄÁ¬¹á
         prev_date = extracted_factor_filtered_without_predicted.index.max()
         predicted_dates = extracted_factor_filtered.index[extracted_factor_filtered.index >= prev_date]
