@@ -32,6 +32,7 @@ class DynamicFactorModeler:
         self.k_factors = k_factors
         self.factor_orders = factor_orders
         self.leading_prediction = leading_prediction
+        # self.leading_prediction = True
 
         # 在 df_finalcials 和 df_indicators 中寻找 compare_to 字符串
         if compare_to in preprocessor.df_finalcials:
@@ -140,8 +141,19 @@ class DynamicFactorModeler:
             shifted_data = pd.DataFrame(index=extended_index)
 
             for column, period in zip(selected_columns, leading_periods):
+                # 尝试直接使用 column 进行匹配
+                if column in extended_data.columns:
+                    target_column = column
+                else:
+                    # 如果匹配不上，则尝试在前面加上 '(月度化)'
+                    modified_column = f"(月度化){column}"
+                    if modified_column in extended_data.columns:
+                        target_column = modified_column
+                    else:
+                        raise ValueError(f"Column '{column}' or '{modified_column}' not found in extended_data")
+
                 # 将列数据推移到未来
-                shifted_series = extended_data[column].shift(period)
+                shifted_series = extended_data[target_column].shift(period)
 
                 # 将推移后的系列添加到新的 DataFrame 中
                 shifted_data[column] = shifted_series
@@ -217,6 +229,8 @@ class DynamicFactorModeler:
         if start_date is None or end_date is None:
             end_date = data_contributions.index[-1]
             start_date = data_contributions.index[-3]
+        # start_date = '2024-03-31'
+        # end_date = '2024-04-30'
         print(f"Variable contributions to factor change from {start_date} to {end_date}:")
 
         # 提取给定时间段内的贡献
