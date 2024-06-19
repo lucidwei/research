@@ -165,6 +165,7 @@ class DataPreprocessor(PgDbUpdaterBase):
                                    '出口': '宏观数据',
                                    'PPI': '宏观数据',
                                    '房价': '宏观数据',
+                                   '工业增加值': '宏观数据',
                                    }
         self.additional_data_mapping = {
                                         '社零综指': '中国:社会消费品零售总额:当月同比',
@@ -173,6 +174,7 @@ class DataPreprocessor(PgDbUpdaterBase):
                                         # '出口': '美国:销售总额:季调:同比-美国:库存总额:季调:同比:+6月',
                                         'PPI': '中国:PPI:全部工业品:当月同比',
                                         '房价': '中国:房屋销售价格指数:二手住宅:70个大中城市:当月同比',
+                                        '工业增加值': '中国:规模以上工业增加值:当月同比',
                                         }
 
     def preprocess(self):

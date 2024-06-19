@@ -89,29 +89,92 @@ class DynamicFactorModeler:
 
             try:
                 # 同步性检验
-                correlation, p_value = pearsonr(combined_data.iloc[:, 0], combined_data.iloc[:, 1])
-                if p_value < alpha:
+                correlation, pear_p_value = pearsonr(combined_data.iloc[:, 0], combined_data.iloc[:, 1])
+                if pear_p_value < alpha:
                     synchronous_indicators[column] = correlation
 
-                # 进行格兰杰因果检验
-                test_result = grangercausalitytests(combined_data, max_lag, verbose=False)
-
-                # 检查每个滞后阶数下的 F-检验 p 值，选取显著性最高的期数
                 best_lag = None
-                best_p_value = float('inf')
-                for lag in range(1, max_lag + 1):
-                    p_value = test_result[lag][0]['ssr_ftest'][1]
-                    if p_value < best_p_value:
-                        best_p_value = p_value
+                highest_correlation = -float('inf')
+
+                # 遍历不同的滞后期数，计算滞后后的相关性
+                for lag in range(0, max_lag + 1):
+                    # 滞后处理
+                    lagged_data = combined_data.copy()
+                    lagged_data.iloc[:, 1] = lagged_data.iloc[:, 1].shift(lag)
+                    lagged_data = lagged_data.dropna()
+
+                    # 计算滞后后的相关性
+                    correlation, p_val = pearsonr(lagged_data.iloc[:, 0], lagged_data.iloc[:, 1])
+
+                    # 选择相关性最高的滞后期数，不关注显著性
+                    if correlation > highest_correlation:
+                        highest_correlation = correlation
                         best_lag = lag
 
-                if best_p_value < alpha:
-                    if best_lag == 1 and lag1_as_sync:
-                        synchronous_indicators[column] = correlation
-                    else:
-                        leading_indicators[column] = best_lag
-                else:
+                if best_lag == 0:
+                    print(f'{column}仅为同步指标')
+                elif best_lag == 1 and lag1_as_sync:
+                    print(f'{column}为领先1期，被视为同步指标')
+                elif best_lag is not None:
+                    leading_indicators[column] = best_lag
+                elif best_lag is None and pear_p_value >= alpha:
                     discarded_indicators.append(column)
+                else:
+                    raise ValueError('Unexpected condition encountered')
+
+                # # 使用最佳滞后期数绘制时间序列图
+                # if best_lag is not None:
+                #     lagged_data = combined_data.copy()
+                #     lagged_data.iloc[:, 1] = lagged_data.iloc[:, 1].shift(best_lag)
+                #     lagged_data = lagged_data.dropna()
+                #
+                #     plt.figure(figsize=(12, 6))
+                #     plt.plot(lagged_data.iloc[:, 0], label='Target')
+                #     plt.plot(lagged_data.iloc[:, 1], label=f'Indicator (lag={best_lag})')
+                #     plt.xlabel('Time')
+                #     plt.ylabel('Value')
+                #     plt.title(f'{column}Time Series Comparison')
+                #     plt.legend()
+                #     plt.show()
+                # else:
+                #     print("No valid lag found")
+
+                # # 进行格兰杰因果检验
+                # test_result = grangercausalitytests(combined_data, max_lag, verbose=False)
+
+                # def plot_granger_causality_pvalues(combined_data, max_lag):
+                #     p_values = []
+                #     for lag in range(1, max_lag + 1):
+                #         test_result = grangercausalitytests(combined_data, lag, verbose=False)
+                #         p_value = test_result[lag][0]['ssr_ftest'][1]
+                #         p_values.append(p_value)
+                #
+                #     plt.plot(range(1, max_lag + 1), p_values, marker='o')
+                #     plt.xlabel('Lag')
+                #     plt.ylabel('p-value')
+                #     plt.title('Granger Causality Test p-values')
+                #     plt.show()
+                #
+                # # 绘制不同滞后期数下p值的变化图
+                # plot_granger_causality_pvalues(combined_data, max_lag=12)
+
+                # # 检查每个滞后阶数下的 F-检验 p 值，选取显著性最高的期数
+                # best_lag = None
+                # best_p_value = float('inf')
+                #
+                # for lag in range(1, max_lag + 1):
+                #     p_value = test_result[lag][0]['ssr_ftest'][1]
+                #     if p_value < alpha and p_value < best_p_value:
+                #         best_p_value = p_value
+                #         best_lag = lag
+                # if best_lag == 1 and lag1_as_sync:
+                #     continue
+                # elif best_lag is not None:
+                #     leading_indicators[column] = best_lag
+                # elif best_lag is None and pear_p_value >= alpha:
+                #     discarded_indicators.append(column)
+                # else:
+                #     print(f'{column}仅为同步指标')
             except ValueError as e:
                 print(f"Error processing {column}: {e}")
                 discarded_indicators.append(column)
@@ -360,7 +423,7 @@ class DynamicFactorModeler:
         ax1.plot(extracted_factor_filtered_without_predicted, label='景气综合指标')
 
         # 在图中标注预测期的日期范围
-        start_date = predicted_dates[1].strftime('%Y-%m-%d')
+        start_date = predicted_dates[0].strftime('%Y-%m-%d') if len(predicted_dates) == 1 else predicted_dates[1].strftime('%Y-%m-%d')
         end_date = predicted_dates[-1].strftime('%Y-%m-%d')
         latest_period_label = f"预测期: {start_date} to {end_date}" if start_date != end_date else f"预测期: {start_date}"
         # 绘制最新一期数据变化的红线
