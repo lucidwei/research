@@ -3,6 +3,7 @@
 # Author  : Lucid
 # FileName: modeler.py
 # Software: PyCharm
+from sklearn.preprocessing import MinMaxScaler
 from statsmodels.tsa.statespace.dynamic_factor_mq import DynamicFactorMQ
 from statsmodels.tsa.stattools import grangercausalitytests
 from scipy.stats import pearsonr
@@ -20,7 +21,8 @@ mpl.rcParams['axes.unicode_minus'] = False  # ½â¾ö±£´æÍ¼ÏñÊÇ¸ººÅ'-'ÏÔÊ¾Îª·½¿éµÄÎ
 
 
 class DynamicFactorModeler:
-    def __init__(self, preprocessor: DataPreprocessor, k_factors: int, factor_orders: int, compare_to: str, leading_prediction=False):
+    def __init__(self, preprocessor: DataPreprocessor, k_factors: int, factor_orders: int, compare_to: str,
+                 leading_prediction=False, single_line=False):
         """
         DynamicFactorMQ ½¨Ä£ºÍÆÀ¹ÀÀàµÄ³õÊ¼»¯·½·¨
         :param data: Ô¤´¦ÀíºóµÄÊı¾İ,DataFrame ¸ñÊ½
@@ -32,6 +34,7 @@ class DynamicFactorModeler:
         self.k_factors = k_factors
         self.factor_orders = factor_orders
         self.leading_prediction = leading_prediction
+        self.single_line = single_line
 
         # ÔÚ df_finalcials ºÍ df_indicators ÖĞÑ°ÕÒ compare_to ×Ö·û´®
         if compare_to in preprocessor.df_finalcials:
@@ -45,6 +48,16 @@ class DynamicFactorModeler:
         """
         ÔËĞĞ DynamicFactorMQ ½¨Ä£ºÍÆÀ¹ÀµÄÍêÕûÁ÷³Ì
         """
+        if self.single_line:
+            mannual_indicators_group = {
+                'PPI': {
+                    'ÖĞ¹ú:M1:Í¬±È': 9,
+                    'ÖĞ¹ú:ÊµÌå¾­¼Ã²¿ÃÅ¸Ü¸ËÂÊ:Í¬±ÈÔö¼Ó': 9,
+                }
+            }
+            # ÏÈ¼ÆËãÍ¬²½£¬ÔÙ¼ÆËãleading£¬ÔÙ½â¾ö»­Í¼ÎÊÌâ
+            results_concurrent = self.apply_dynamic_factor_model()
+            results_leading = self.apply_dynamic_factor_model(mannual_indicators_group[self.preprocessor.industry])
         if self.leading_prediction:
             leading_indicators, synchronous_indicators, _ = self.find_statistically_significant_indicators(
                 # lag1_as_sync=True) #½ö×÷Õ¹Ê¾¸÷Ö¸±êµÄÁìÏÈÆÚÊıÓÃ£¨»ñÈ¡×Ö·û´®£©
@@ -218,7 +231,7 @@ class DynamicFactorModeler:
                 # ½«ÁĞÊı¾İÍÆÒÆµ½Î´À´
                 # TODO ÊÖ¶¯-1¶ÔÆë¸ßµÍµã£¬¾ßÌåÔ­ÒòÎ´Ã÷
                 if self.leading_prediction:
-                    shifted_series = extended_data[target_column].shift(period-1)
+                    shifted_series = extended_data[target_column].shift(period - 1)
                 else:
                     shifted_series = extended_data[target_column].shift(period)
 
@@ -234,8 +247,9 @@ class DynamicFactorModeler:
         model = DynamicFactorMQ(filtered_data, factors=self.k_factors, factor_orders=self.factor_orders,
                                 idiosyncratic_ar1=False)
 
-        self.results = model.fit_em(maxiter=1000)
-        print(self.results.summary())
+        results = model.fit_em(maxiter=1000)
+        print(results.summary())
+        self.results = results
 
         # ÌáÈ¡Òò×ÓÔØºÉ£¨factor loadings£©£¬¼´Ã¿¸ö¹Û²ì±äÁ¿µÄÈ¨ÖØ
         num_loadings = len([param for param in self.results.params.index if 'loading' in param])
@@ -246,6 +260,7 @@ class DynamicFactorModeler:
 
         # fitted_dataÓÃÀ´¹Û²ì²¹È«ºóµÄ¿ÕÖµ£¨µ«¶ÔÔ­Ê¼Êı¾İ±ä»¯ºÜ´ó£©
         self.fitted_data = self.results.predict()
+        return results
 
     def evaluate_model(self):
         """
@@ -427,12 +442,13 @@ class DynamicFactorModeler:
         ax1.plot(extracted_factor_filtered_without_predicted, label='¾°Æø×ÛºÏÖ¸±ê')
 
         # ÔÚÍ¼ÖĞ±ê×¢Ô¤²âÆÚµÄÈÕÆÚ·¶Î§
-        start_date = predicted_dates[0].strftime('%Y-%m-%d') if len(predicted_dates) == 1 else predicted_dates[1].strftime('%Y-%m-%d')
+        start_date = predicted_dates[0].strftime('%Y-%m-%d') if len(predicted_dates) == 1 else predicted_dates[
+            1].strftime('%Y-%m-%d')
         end_date = predicted_dates[-1].strftime('%Y-%m-%d')
         latest_period_label = f"Ô¤²âÆÚ: {start_date} to {end_date}" if start_date != end_date else f"Ô¤²âÆÚ: {start_date}"
         # »æÖÆ×îĞÂÒ»ÆÚÊı¾İ±ä»¯µÄºìÏß
         ax1.plot(predicted_dates, extracted_factor_filtered[predicted_dates], color='purple', linewidth=3,
-                 linestyle='-', label=latest_period_label)
+                 linestyle=':' if self.leading_prediction else '-', label=latest_period_label)
 
         # ´´½¨µÚ¶ş¸ö y Öá
         ax2 = ax1.twinx()
@@ -473,3 +489,83 @@ class DynamicFactorModeler:
             plt.close(fig)
 
             return image_path
+
+    def plot_factors_single_line(self, results_concurrent, results_leading):
+        """
+        »æÖÆÌáÈ¡µÄÒò×ÓºÍÔ­Ê¼Òò×ÓµÄÍ¼Ïñ
+        """
+        extracted_factor_concurrent = self.results.factors.filtered['0']
+        if self.corr < 0:
+            extracted_factor *= -1
+
+        factor = self.series_compared_to.dropna().astype(float)
+
+        # ¶ÔÆëÁ½¸öÊ±¼äĞòÁĞµÄË÷Òı
+        combined_data = pd.merge(extracted_factor, factor, left_index=True,
+                                 right_index=True, how='outer')
+        extracted_factor_filtered = combined_data['0']
+        factor_filtered = combined_data.loc[:, combined_data.columns != '0'].squeeze()
+
+        # ¶ÔÆëÁ½¸öÊ±¼äĞòÁĞµÄscale
+        # Ê¹ÓÃ MinMaxScaler ¶Ô extracted_factor ½øĞĞËõ·Å£¬Ëõ·Å·¶Î§Îª factor µÄ×îĞ¡ÖµºÍ×î´óÖµ
+        scaler = MinMaxScaler(feature_range=(factor_filtered.min(), factor_filtered.max()))
+        # ¶Ô extracted_factor_filtered ½øĞĞËõ·Å
+        extracted_factor_scaled = scaler.fit_transform(extracted_factor_filtered.values.reshape(-1, 1))
+        # ½«Ëõ·ÅºóµÄÖµ×ª»»»Ø Series£¬²¢±£³ÖÔ­Ê¼Ë÷Òı
+        extracted_factor_scaled = pd.Series(extracted_factor_scaled.flatten(),
+                                            index=extracted_factor_filtered.index)
+
+        # »ñÈ¡ factor_filtered Êµ¼Ê´æÔÚµÄÕæÊµÊı¾İÖĞµÄ×îĞÂÈÕÆÚ
+        latest_date_existing = factor_filtered.dropna().index.max()
+        # ÕÒµ½½ñÌìÖ®ºóµÄËùÓĞÈÕÆÚ
+        predicted_dates = extracted_factor_scaled.index[extracted_factor_scaled.index > latest_date_existing]
+        if len(predicted_dates) == 0:
+            extracted_factor_filtered_without_predicted = extracted_factor_scaled
+        else:
+            extracted_factor_filtered_without_predicted = extracted_factor_scaled[
+                extracted_factor_scaled.index < predicted_dates[0]]
+        # predicted_datesÌí¼ÓÒ»¸öÀúÊ·ÈÕÆÚ£¬±£Ö¤»­Ô¤²âĞéÏßÊ±µÄÁ¬¹á
+        prev_date = extracted_factor_filtered_without_predicted.index.max()
+        predicted_dates = extracted_factor_scaled.index[extracted_factor_scaled.index >= prev_date]
+
+        # »æÖÆÌáÈ¡µÄÒò×ÓºÍÔ­Ê¼Òò×ÓµÄÍ¼Ïñ
+        fig, ax1 = plt.subplots(figsize=(12, 6))
+        ax1.plot(extracted_factor_filtered_without_predicted, label='¾°Æø×ÛºÏÖ¸±ê')
+
+        # ÔÚÍ¼ÖĞ±ê×¢Ô¤²âÆÚµÄÈÕÆÚ·¶Î§
+        start_date = predicted_dates[0].strftime('%Y-%m-%d') if len(predicted_dates) == 1 else predicted_dates[
+            1].strftime('%Y-%m-%d')
+        end_date = predicted_dates[-1].strftime('%Y-%m-%d')
+        latest_period_label = f"Ô¤²âÆÚ: {start_date} to {end_date}" if start_date != end_date else f"Ô¤²âÆÚ: {start_date}"
+        # »æÖÆ×îĞÂÒ»ÆÚÊı¾İ±ä»¯µÄºìÏß
+        ax1.plot(predicted_dates, extracted_factor_scaled[predicted_dates], color='purple', linewidth=3,
+                 linestyle=':' if self.leading_prediction else '-', label=latest_period_label)
+
+        # ´´½¨µÚ¶ş¸ö y Öá
+        ax2 = ax1.twinx()
+        # ÅĞ¶Ï NaN µÄÊıÁ¿ÊÇ·ñ¶àÓÚÒ»°ë
+        nan_count = factor_filtered.isna().sum()
+        total_count = len(factor_filtered)
+
+        if nan_count > total_count / 2 or self.preprocessor.industry == 'ÉçÁã×ÛÖ¸':
+            ax2.scatter(factor_filtered.index, factor_filtered.values, label=factor_filtered.name, color='red')
+        else:
+            ax2.plot(factor_filtered.index, factor_filtered.values, label=factor_filtered.name, color='red', alpha=0.6)
+
+        # »æÖÆÃ¿ÄêµÄ×İÏòÕ¤¸ñ
+        years = sorted(set(dt.year for dt in extracted_factor_scaled.index))
+        for year in years:
+            ax1.axvline(pd.to_datetime(f'{year}-01-01'), color='gray', linestyle='--', linewidth=0.8)
+
+        # ÉèÖÃµÚÒ»¸ö y Öá±êÇ©
+        ax1.set_ylabel('¾°Æø×ÛºÏÖ¸±ê')
+
+        # ÉèÖÃµÚ¶ş¸ö y Öá±êÇ©
+        ax2.set_ylabel(factor.name)
+
+        # ºÏ²¢Á½¸ö y ÖáµÄÍ¼Àı
+        lines1, labels1 = ax1.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
+
+        plt.title(rf'{self.preprocessor.industry}')
