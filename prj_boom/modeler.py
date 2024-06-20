@@ -32,7 +32,6 @@ class DynamicFactorModeler:
         self.k_factors = k_factors
         self.factor_orders = factor_orders
         self.leading_prediction = leading_prediction
-        # self.leading_prediction = True
 
         # 在 df_finalcials 和 df_indicators 中寻找 compare_to 字符串
         if compare_to in preprocessor.df_finalcials:
@@ -48,6 +47,7 @@ class DynamicFactorModeler:
         """
         if self.leading_prediction:
             leading_indicators, synchronous_indicators, _ = self.find_statistically_significant_indicators(
+                # lag1_as_sync=True) #仅作展示各指标的领先期数用（获取字符串）
                 lag1_as_sync=False)
             self.apply_dynamic_factor_model(leading_indicators)
         else:
@@ -89,12 +89,12 @@ class DynamicFactorModeler:
 
             try:
                 # 同步性检验
-                correlation, pear_p_value = pearsonr(combined_data.iloc[:, 0], combined_data.iloc[:, 1])
+                correlation_sync, pear_p_value = pearsonr(combined_data.iloc[:, 0], combined_data.iloc[:, 1])
                 if pear_p_value < alpha:
-                    synchronous_indicators[column] = correlation
+                    synchronous_indicators[column] = correlation_sync
 
-                best_lag = None
-                highest_correlation = -float('inf')
+                best_lag = 0
+                highest_correlation = correlation_sync
 
                 # 遍历不同的滞后期数，计算滞后后的相关性
                 for lag in range(0, max_lag + 1):
@@ -111,13 +111,13 @@ class DynamicFactorModeler:
                         highest_correlation = correlation
                         best_lag = lag
 
-                if best_lag == 0:
+                if best_lag == 0 and pear_p_value <= alpha:
                     print(f'{column}仅为同步指标')
                 elif best_lag == 1 and lag1_as_sync:
                     print(f'{column}为领先1期，被视为同步指标')
-                elif best_lag is not None:
+                elif best_lag >= 1:
                     leading_indicators[column] = best_lag
-                elif best_lag is None and pear_p_value >= alpha:
+                elif best_lag == 0 and pear_p_value >= alpha:
                     discarded_indicators.append(column)
                 else:
                     raise ValueError('Unexpected condition encountered')
@@ -216,7 +216,11 @@ class DynamicFactorModeler:
                         raise ValueError(f"Column '{column}' or '{modified_column}' not found in extended_data")
 
                 # 将列数据推移到未来
-                shifted_series = extended_data[target_column].shift(period)
+                # TODO 手动-1对齐高低点，具体原因未明
+                if self.leading_prediction:
+                    shifted_series = extended_data[target_column].shift(period-1)
+                else:
+                    shifted_series = extended_data[target_column].shift(period)
 
                 # 将推移后的系列添加到新的 DataFrame 中
                 shifted_data[column] = shifted_series
