@@ -526,22 +526,26 @@ class DynamicFactorModeler:
         predicted_dates = extracted_factor_aligned_concurrent.index[
             extracted_factor_aligned_concurrent.index >= prev_date]
 
-        # 绘制提取的因子和原始因子的图像
+        # 绘制提取的因子预测和原始因子的图像
         fig, ax1 = plt.subplots(figsize=(12, 6))
-        ax1.plot(extracted_factor_concurrent_without_predicted, label='综合指标(历史)')
+        ax1.plot(factor, label=f'{self.preprocessor.industry}(历史)')
 
         # 在图中标注预测期的日期范围
         start_date = predicted_dates[0].strftime('%Y-%m-%d') if len(predicted_dates) == 1 else predicted_dates[
             1].strftime('%Y-%m-%d')
         end_date = predicted_dates[-1].strftime('%Y-%m-%d')
         latest_period_label = f"当期预测: {start_date} to {end_date}" if start_date != end_date else f"当期预测: {start_date}"
+        # 调整数值保证连贯
+        extracted_factor_aligned_concurrent -= extracted_factor_aligned_concurrent.loc[predicted_dates[0]] - factor.loc[predicted_dates[0]]
         # 绘制最新一期数据变化的红线
         ax1.plot(predicted_dates, extracted_factor_aligned_concurrent[predicted_dates], color='purple', linewidth=2,
                  linestyle='-', label=latest_period_label)
 
         start_date = predicted_dates_leading[0].strftime('%Y-%m-%d')
         end_date = predicted_dates_leading[-1].strftime('%Y-%m-%d')
-        latest_period_label = f"远期预测: {start_date} to {end_date}" if start_date != end_date else f"远期预测: {start_date}"
+        latest_period_label = f"远期预期: {start_date} to {end_date}" if start_date != end_date else f"远期预期: {start_date}"
+        # 调整数值保证连贯
+        extracted_factor_aligned_leading -= extracted_factor_aligned_leading.loc[predicted_dates_leading[0]] - extracted_factor_aligned_concurrent.loc[predicted_dates_leading[0]]
         # 绘制最新一期数据变化的红线
         ax1.plot(predicted_dates_leading, extracted_factor_aligned_leading[predicted_dates_leading], color='purple',
                  linewidth=3,
