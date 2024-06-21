@@ -273,16 +273,11 @@ class DynamicFactorModeler:
             raise ValueError("Please run apply_dynamic_factor_model() first.")
 
         extracted_factor = self.results.factors.filtered['0']
-        self.extracted_factor = extracted_factor
-
         # 将 self.financial 的索引转换为月频
         financial_monthly = self.series_compared_to.resample('M').last()
 
         # 对齐两个时间序列的索引
-        combined_data = pd.merge(extracted_factor, financial_monthly, left_index=True, right_index=True, how='inner')
-        combined_data = combined_data.dropna()
-        extracted_factor_filtered = combined_data['0']
-        factor_filtered = combined_data.loc[:, combined_data.columns != '0'].squeeze().astype(float)
+        extracted_factor_filtered, factor_filtered = self.align_index_scale_corr(extracted_factor, financial_monthly, 'inner')
 
         corr = np.corrcoef(extracted_factor_filtered[15:], factor_filtered[15:])[0, 1]
         print(f"后期Correlation: {corr:.4f}")
@@ -290,7 +285,6 @@ class DynamicFactorModeler:
         print(f"早期Correlation: {corr:.4f}")
         corr = np.corrcoef(extracted_factor_filtered, factor_filtered)[0, 1]
         print(f"Correlation between extracted factor and original factor: {corr:.4f}")
-        self.corr = corr
 
     def analyze_factor_contribution(self, start_date=None, end_date=None):
         """
@@ -320,21 +314,16 @@ class DynamicFactorModeler:
 
         # 提取给定时间段内的贡献
         factor_contributions = data_contributions.loc[start_date:end_date].T
-        if self.corr < 0:
-            factor_contributions *= -1
-            self.factor_loadings *= -1
-
-        factor_contributions_adjusted = factor_contributions.copy(deep=True)
 
         # 新增：存储各个变量的权重
         output = f"各指标权重：{self.factor_loadings}\n"  # 存储所有的输出信息
         print(output)
-        for column in factor_contributions_adjusted.columns:
+        for column in factor_contributions.columns:
             print(f"对于{column.strftime('%Y-%m-%d')} {self.preprocessor.industry} 景气度指数:")
             output += f"对于{column.strftime('%Y-%m-%d')} {self.preprocessor.industry} 景气度指数:\n"
 
             # 对当前列进行降序排序并去除nan值
-            sorted_column = factor_contributions_adjusted[column].sort_values(ascending=False).dropna()
+            sorted_column = factor_contributions[column].sort_values(ascending=False).dropna()
 
             # 获取前三个值及其Index
             head_values = sorted_column.head(3)
@@ -357,20 +346,16 @@ class DynamicFactorModeler:
 
         # 增量分析：计算最后一次(或adjust后的月份)数据变化的贡献
         adjust = 0
-        if len(factor_contributions_adjusted.columns) >= 2:
-            prev_month = factor_contributions_adjusted.columns[-2 - adjust]
-            curr_month = factor_contributions_adjusted.columns[-1 - adjust]
+        if len(factor_contributions.columns) >= 2:
+            prev_month = factor_contributions.columns[-2 - adjust]
+            curr_month = factor_contributions.columns[-1 - adjust]
 
             print(
                 f"Comparing contributions from {prev_month.strftime('%Y-%m-%d')} to {curr_month.strftime('%Y-%m-%d')}")
             output += f"Comparing contributions from {prev_month.strftime('%Y-%m-%d')} to {curr_month.strftime('%Y-%m-%d')}\n"
 
             # 计算每个变量的贡献变化
-            contrib_change = factor_contributions_adjusted[curr_month] - factor_contributions_adjusted[prev_month]
-
-            # 不应再对contrib_change取负，因为factor_contributions_adjusted已经调整了符号
-            # if self.corr < 0:
-            #     contrib_change *= -1
+            contrib_change = factor_contributions[curr_month] - factor_contributions[prev_month]
 
             # 对贡献变化进行排序
             sorted_contrib_change = contrib_change.sort_values(ascending=False).dropna()
@@ -416,16 +401,9 @@ class DynamicFactorModeler:
             raise ValueError("Please run apply_dynamic_factor_model() first.")
 
         extracted_factor = self.results.factors.filtered['0']
-        if self.corr < 0:
-            extracted_factor *= -1
-
         factor = self.series_compared_to.dropna().astype(float)
 
-        # 对齐两个时间序列的索引
-        combined_data = pd.merge(extracted_factor, factor, left_index=True,
-                                 right_index=True, how='outer')
-        extracted_factor_filtered = combined_data['0']
-        factor_filtered = combined_data.loc[:, combined_data.columns != '0'].squeeze()
+        extracted_factor_filtered, factor_filtered = self.align_index_scale_corr(extracted_factor, factor, 'outer')
 
         # 获取 factor_filtered 实际存在的真实数据中的最新日期
         latest_date_existing = factor_filtered.dropna().index.max()
@@ -503,9 +481,9 @@ class DynamicFactorModeler:
         extracted_factor_leading = results_leading.factors.filtered['0']
 
         extracted_factor_aligned_concurrent, factor_aligned_concurrent = self.align_index_scale_corr(
-            extracted_factor_concurrent, factor)
+            extracted_factor_concurrent, factor, 'outer')
         extracted_factor_aligned_leading, factor_aligned_leading = self.align_index_scale_corr(extracted_factor_leading,
-                                                                                          factor)
+                                                                                          factor, 'outer')
 
         # 获取 factor_filtered 实际存在的真实数据中的最新日期
         latest_date_existing = factor.dropna().index.max()
@@ -563,21 +541,36 @@ class DynamicFactorModeler:
         ax1.set_title(rf'{self.preprocessor.industry} 综合指标')
         plt.show()
 
-    def align_index_scale_corr(self, extracted_factor, factor):
+    def align_index_scale_corr(self, extracted_factor, factor, merge_how):
         """
         对齐两个时间序列的索引
         对齐两个时间序列的scale
         调整正负号
         """
+        # 计算相关性的正负号
+        factor_monthly = factor.resample('M').last()
         # 对齐两个时间序列的索引
-        combined_data = pd.merge(extracted_factor, factor, left_index=True,
-                                 right_index=True, how='outer')
+        combined_data = pd.merge(extracted_factor, factor_monthly, left_index=True,
+                                 right_index=True, how=merge_how)
+        combined_data = combined_data.dropna()
+
         extracted_factor_filtered = combined_data['0']
         factor_filtered = combined_data.loc[:, combined_data.columns != '0'].squeeze()
 
+        # 方向调整
         corr = np.corrcoef(extracted_factor_filtered, factor_filtered)[0, 1]
         if corr < 0:
             extracted_factor *= -1
+            extracted_factor_filtered *= -1
+
+        # 保留原index
+        if merge_how == 'outer':
+            # 重新对齐两个时间序列的索引，不进行dropna
+            combined_data = pd.merge(extracted_factor, factor, left_index=True,
+                                     right_index=True, how=merge_how)
+
+            extracted_factor_filtered = combined_data['0']
+            factor_filtered = combined_data.loc[:, combined_data.columns != '0'].squeeze()
 
         # 对齐两个时间序列的scale
         # 使用 MinMaxScaler 对 extracted_factor 进行缩放，缩放范围为 factor 的最小值和最大值
