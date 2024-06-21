@@ -58,6 +58,9 @@ class DynamicFactorModeler:
             # 先计算同步，再计算leading，再解决画图问题
             results_concurrent = self.apply_dynamic_factor_model()
             results_leading = self.apply_dynamic_factor_model(mannual_indicators_group[self.preprocessor.industry])
+            self.plot_factors_single_line(results_concurrent, results_leading)
+            return
+
         if self.leading_prediction:
             leading_indicators, synchronous_indicators, _ = self.find_statistically_significant_indicators(
                 # lag1_as_sync=True) #仅作展示各指标的领先期数用（获取字符串）
@@ -494,17 +497,83 @@ class DynamicFactorModeler:
         """
         绘制提取的因子和原始因子的图像
         """
-        extracted_factor_concurrent = self.results.factors.filtered['0']
-        if self.corr < 0:
-            extracted_factor *= -1
 
         factor = self.series_compared_to.dropna().astype(float)
+        extracted_factor_concurrent = results_concurrent.factors.filtered['0']
+        extracted_factor_leading = results_leading.factors.filtered['0']
 
+        extracted_factor_aligned_concurrent, factor_aligned_concurrent = self.align_index_scale_corr(
+            extracted_factor_concurrent, factor)
+        extracted_factor_aligned_leading, factor_aligned_leading = self.align_index_scale_corr(extracted_factor_leading,
+                                                                                          factor)
+
+        # 获取 factor_filtered 实际存在的真实数据中的最新日期
+        latest_date_existing = factor.dropna().index.max()
+        # 找到今天之后的所有日期
+        predicted_dates_concurrent = extracted_factor_aligned_concurrent.index[
+            extracted_factor_aligned_concurrent.index > latest_date_existing]
+        predicted_dates_leading = extracted_factor_aligned_leading.index[
+            extracted_factor_aligned_leading.index > latest_date_existing]
+
+        # 针对同步指标可能不存在当月预测值的情况
+        if len(predicted_dates_concurrent) == 0:
+            extracted_factor_concurrent_without_predicted = extracted_factor_aligned_concurrent
+        else:
+            extracted_factor_concurrent_without_predicted = extracted_factor_aligned_concurrent[
+                extracted_factor_aligned_concurrent.index < predicted_dates_concurrent[0]]
+        # predicted_dates添加一个历史日期，保证画预测虚线时的连贯
+        prev_date = extracted_factor_concurrent_without_predicted.index.max()
+        predicted_dates = extracted_factor_aligned_concurrent.index[
+            extracted_factor_aligned_concurrent.index >= prev_date]
+
+        # 绘制提取的因子和原始因子的图像
+        fig, ax1 = plt.subplots(figsize=(12, 6))
+        ax1.plot(extracted_factor_concurrent_without_predicted, label='综合指标(历史)')
+
+        # 在图中标注预测期的日期范围
+        start_date = predicted_dates[0].strftime('%Y-%m-%d') if len(predicted_dates) == 1 else predicted_dates[
+            1].strftime('%Y-%m-%d')
+        end_date = predicted_dates[-1].strftime('%Y-%m-%d')
+        latest_period_label = f"当期预测: {start_date} to {end_date}" if start_date != end_date else f"当期预测: {start_date}"
+        # 绘制最新一期数据变化的红线
+        ax1.plot(predicted_dates, extracted_factor_aligned_concurrent[predicted_dates], color='purple', linewidth=2,
+                 linestyle='-', label=latest_period_label)
+
+        start_date = predicted_dates_leading[0].strftime('%Y-%m-%d')
+        end_date = predicted_dates_leading[-1].strftime('%Y-%m-%d')
+        latest_period_label = f"远期预测: {start_date} to {end_date}" if start_date != end_date else f"远期预测: {start_date}"
+        # 绘制最新一期数据变化的红线
+        ax1.plot(predicted_dates_leading, extracted_factor_aligned_leading[predicted_dates_leading], color='purple',
+                 linewidth=3,
+                 linestyle=':', label=latest_period_label)
+
+        # ax1.plot(factor_aligned_concurrent, label='原始值')
+
+        # 绘制每年的纵向栅格
+        years = sorted(set(dt.year for dt in extracted_factor_aligned_leading.index))
+        for year in years:
+            ax1.axvline(pd.to_datetime(f'{year}-01-01'), color='gray', linestyle='--', linewidth=0.8)
+
+        ax1.legend()
+        # ax1.set_ylabel('因子值')
+        ax1.set_title(rf'{self.preprocessor.industry} 综合指标')
+        plt.show()
+
+    def align_index_scale_corr(self, extracted_factor, factor):
+        """
+        对齐两个时间序列的索引
+        对齐两个时间序列的scale
+        调整正负号
+        """
         # 对齐两个时间序列的索引
         combined_data = pd.merge(extracted_factor, factor, left_index=True,
                                  right_index=True, how='outer')
         extracted_factor_filtered = combined_data['0']
         factor_filtered = combined_data.loc[:, combined_data.columns != '0'].squeeze()
+
+        corr = np.corrcoef(extracted_factor_filtered, factor_filtered)[0, 1]
+        if corr < 0:
+            extracted_factor *= -1
 
         # 对齐两个时间序列的scale
         # 使用 MinMaxScaler 对 extracted_factor 进行缩放，缩放范围为 factor 的最小值和最大值
@@ -515,57 +584,4 @@ class DynamicFactorModeler:
         extracted_factor_scaled = pd.Series(extracted_factor_scaled.flatten(),
                                             index=extracted_factor_filtered.index)
 
-        # 获取 factor_filtered 实际存在的真实数据中的最新日期
-        latest_date_existing = factor_filtered.dropna().index.max()
-        # 找到今天之后的所有日期
-        predicted_dates = extracted_factor_scaled.index[extracted_factor_scaled.index > latest_date_existing]
-        if len(predicted_dates) == 0:
-            extracted_factor_filtered_without_predicted = extracted_factor_scaled
-        else:
-            extracted_factor_filtered_without_predicted = extracted_factor_scaled[
-                extracted_factor_scaled.index < predicted_dates[0]]
-        # predicted_dates添加一个历史日期，保证画预测虚线时的连贯
-        prev_date = extracted_factor_filtered_without_predicted.index.max()
-        predicted_dates = extracted_factor_scaled.index[extracted_factor_scaled.index >= prev_date]
-
-        # 绘制提取的因子和原始因子的图像
-        fig, ax1 = plt.subplots(figsize=(12, 6))
-        ax1.plot(extracted_factor_filtered_without_predicted, label='景气综合指标')
-
-        # 在图中标注预测期的日期范围
-        start_date = predicted_dates[0].strftime('%Y-%m-%d') if len(predicted_dates) == 1 else predicted_dates[
-            1].strftime('%Y-%m-%d')
-        end_date = predicted_dates[-1].strftime('%Y-%m-%d')
-        latest_period_label = f"预测期: {start_date} to {end_date}" if start_date != end_date else f"预测期: {start_date}"
-        # 绘制最新一期数据变化的红线
-        ax1.plot(predicted_dates, extracted_factor_scaled[predicted_dates], color='purple', linewidth=3,
-                 linestyle=':' if self.leading_prediction else '-', label=latest_period_label)
-
-        # 创建第二个 y 轴
-        ax2 = ax1.twinx()
-        # 判断 NaN 的数量是否多于一半
-        nan_count = factor_filtered.isna().sum()
-        total_count = len(factor_filtered)
-
-        if nan_count > total_count / 2 or self.preprocessor.industry == '社零综指':
-            ax2.scatter(factor_filtered.index, factor_filtered.values, label=factor_filtered.name, color='red')
-        else:
-            ax2.plot(factor_filtered.index, factor_filtered.values, label=factor_filtered.name, color='red', alpha=0.6)
-
-        # 绘制每年的纵向栅格
-        years = sorted(set(dt.year for dt in extracted_factor_scaled.index))
-        for year in years:
-            ax1.axvline(pd.to_datetime(f'{year}-01-01'), color='gray', linestyle='--', linewidth=0.8)
-
-        # 设置第一个 y 轴标签
-        ax1.set_ylabel('景气综合指标')
-
-        # 设置第二个 y 轴标签
-        ax2.set_ylabel(factor.name)
-
-        # 合并两个 y 轴的图例
-        lines1, labels1 = ax1.get_legend_handles_labels()
-        lines2, labels2 = ax2.get_legend_handles_labels()
-        ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
-
-        plt.title(rf'{self.preprocessor.industry}')
+        return extracted_factor_scaled, factor_filtered
