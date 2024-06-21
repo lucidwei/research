@@ -240,27 +240,48 @@ class DataPreprocessor(PgDbUpdaterBase):
         - 合并某些列
         - 将累计值转换为月度值
         """
-        X = self.df_indicators.copy(deep=True)
+        df_indicators = self.df_indicators.copy(deep=True)
         if self.industry in self.additional_data_mapping:
-            X = X.drop(columns=[self.additional_data_mapping[self.industry]])
+            df_indicators = df_indicators.drop(columns=[self.additional_data_mapping[self.industry]])
         # 删除所有列全部为 NaN 的行
-        X = X.dropna(how='all', axis=0)
-        # 如果存在'M5528820'列,则将其与'M0329545'列合并
-        if 'M5528820' in X.columns:
-            X.loc[:, 'M0329545'] = X.M5528820.add(X.M0329545, fill_value=0).copy()
-            X.drop('M5528820', axis=1, inplace=True)
+        df_indicators = df_indicators.dropna(how='all', axis=0)
+        # # 如果存在'M5528820'列,则将其与'M0329545'列合并
+        # if 'M5528820' in df_indicators.columns:
+        #     df_indicators.loc[:, 'M0329545'] = df_indicators.M5528820.add(df_indicators.M0329545, fill_value=0).copy()
+        #     df_indicators.drop('M5528820', axis=1, inplace=True)
         # 对于info表中标记为累计值的列,将其转换为月度值
-        for name in X.columns:
+        for name in df_indicators.columns:
             if not pd.isna(self.info.loc[name, '是否累计值']):
                 new_name = '(月度化)' + name
                 # 转换指标名
                 self.info.loc[new_name] = self.info.loc[name]
                 self.info = self.info.drop(name)
                 # 累积值转为月度
-                X.loc[:, new_name] = transform_cumulative_data(X.loc[:, name], self.info.loc[new_name, '是否累计值'])
-                X.drop(name, axis=1, inplace=True)
+                df_indicators.loc[:, new_name] = transform_cumulative_data(df_indicators.loc[:, name], self.info.loc[new_name, '是否累计值'])
+                df_indicators.drop(name, axis=1, inplace=True)
 
-        self.data = X
+        self.data = df_indicators.copy(deep=True)
+
+        # 一二月受春节影响波动太大，合并成2月
+        if self.industry == '工业增加值':
+            indicator_name = self.additional_data_mapping[self.industry]
+            # 按月份分组
+            self.df_indicators['month'] = self.df_indicators.index.month
+            # 计算一月和二月的均值
+            # 创建一个临时列来存储一月和二月的均值
+            self.df_indicators['temp_mean'] = self.df_indicators.groupby(self.df_indicators.index.year)[
+                indicator_name].transform(lambda x: x.rolling(2, min_periods=1).mean())
+            # 仅将临时列的值应用到二月的数据上
+            self.df_indicators.loc[self.df_indicators['month'] == 2, indicator_name] = self.df_indicators.loc[
+                self.df_indicators['month'] == 2, 'temp_mean']
+            # 删除临时列
+            self.df_indicators.drop(columns=['temp_mean'], inplace=True)
+            # 删除一月的数据
+            self.df_indicators = self.df_indicators[self.df_indicators['month'] != 1]
+            # self.df_indicators = self.df_indicators[~self.df_indicators['month'].isin([1, 2])]
+            # 删除辅助列和空行
+            self.df_indicators.drop(columns=['month'], inplace=True)
+            self.df_indicators = self.df_indicators.dropna(how='all', axis=0)
 
     def align_to_month(self):
         """
