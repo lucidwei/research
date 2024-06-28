@@ -50,7 +50,7 @@ def static_analysis(dfs, date=None):
     df = dfs[date]
 
     # 计算行业拥挤度和行业趋势强度的90%分位数
-    crowdedness_90 = df['行业拥挤度'].quantile(0.7)
+    crowdedness_90 = df['行业拥挤度'].quantile(0.5)
     trend_strength_90 = df['行业趋势强度'].quantile(0.7)
 
     # 根据筛选条件创建布尔掩码
@@ -158,7 +158,16 @@ print("高景气、低估值、低拥挤的行业:")
 print(selected_industries)
 
 # 进行动态分析
-change_df, start_date, end_date = dynamic_analysis(dfs, history_data, start_date='20240517', end_date='20240524')
+change_df, start_date, end_date = dynamic_analysis(dfs, history_data, start_date='20240615', end_date='20240622')
+print("指标变化:")
+print(change_df)
+
+# 将结果保存到 Excel 文件
+output_file = save_to_excel(selected_industries, change_df, directory, start_date, end_date)
+print(f"结果已保存到 {output_file}")
+
+# 进行动态分析
+change_df, start_date, end_date = dynamic_analysis(dfs, history_data, start_date='20240522', end_date='20240622')
 print("指标变化:")
 print(change_df)
 
