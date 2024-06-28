@@ -12,7 +12,8 @@ from datetime import datetime
 import warnings
 
 # 忽略特定的 FutureWarning
-warnings.filterwarnings("ignore", category=FutureWarning, message='verbose is deprecated since functions should not print results')
+warnings.filterwarnings("ignore", category=FutureWarning,
+                        message='verbose is deprecated since functions should not print results')
 
 base_config = BaseConfig('boom')
 
@@ -20,73 +21,69 @@ SINGLE_BATCH_MODE = 'single'
 # SINGLE_BATCH_MODE = 'batch'
 
 if SINGLE_BATCH_MODE == 'single':
-    # preprocessor = DataPreprocessor(base_config, industry='石油石化')
-    # preprocessor = DataPreprocessor(base_config, industry='石油石化', stationary=False)
-    # preprocessor = DataPreprocessor(base_config, industry='煤炭')
-    # preprocessor = DataPreprocessor(base_config, industry='煤炭', stationary=False)
-    # preprocessor = DataPreprocessor(base_config, industry='有色金属')
-    # preprocessor = DataPreprocessor(base_config, industry='有色金属', stationary=False)
-    # preprocessor = DataPreprocessor(base_config, industry='钢铁')
-    # preprocessor = DataPreprocessor(base_config, industry='钢铁', stationary=False)
-    # preprocessor = DataPreprocessor(base_config, industry='基础化工')
-    # preprocessor = DataPreprocessor(base_config, industry='基础化工', stationary=False)
-    # preprocessor = DataPreprocessor(base_config, industry='建材')
-    # preprocessor = DataPreprocessor(base_config, industry='建材', stationary=False)
-    # preprocessor = DataPreprocessor(base_config, industry='电子')
-    # preprocessor = DataPreprocessor(base_config, industry='电子', stationary=False)
-    # preprocessor = DataPreprocessor(base_config, industry='传媒')
-    # preprocessor = DataPreprocessor(base_config, industry='计算机')
-    # preprocessor = DataPreprocessor(base_config, industry='通信')
-    # preprocessor = DataPreprocessor(base_config, industry='通信', stationary=False)
-    # preprocessor = DataPreprocessor(base_config, industry='机械')
-    # preprocessor = DataPreprocessor(base_config, industry='电新')
-    # preprocessor = DataPreprocessor(base_config, industry='电新', stationary=False)
-    # preprocessor = DataPreprocessor(base_config, industry='电力')
-    # preprocessor = DataPreprocessor(base_config, industry='国防军工')
-    # preprocessor = DataPreprocessor(base_config, industry='国防军工', stationary=False)
-    # preprocessor = DataPreprocessor(base_config, industry='交通运输')
-    # preprocessor = DataPreprocessor(base_config, industry='交通运输', stationary=False)
-    # preprocessor = DataPreprocessor(base_config, industry='汽车')
-    # preprocessor = DataPreprocessor(base_config, industry='家电')
-    # preprocessor = DataPreprocessor(base_config, industry='医药')
-    # preprocessor = DataPreprocessor(base_config, industry='医药', stationary=False)
-    # preprocessor = DataPreprocessor(base_config, industry='食品饮料')
-    # preprocessor = DataPreprocessor(base_config, industry='农林牧渔')
-    # preprocessor = DataPreprocessor(base_config, industry='农林牧渔', stationary=False)
-    # preprocessor = DataPreprocessor(base_config, industry='白酒')
-    # preprocessor = DataPreprocessor(base_config, industry='食品')
-    # preprocessor = DataPreprocessor(base_config, industry='饮料')
-    # preprocessor = DataPreprocessor(base_config, industry='消费服务')
-    # preprocessor = DataPreprocessor(base_config, industry='纺服')
-    # preprocessor = DataPreprocessor(base_config, industry='纺服', stationary=False)
-    # preprocessor = DataPreprocessor(base_config, industry='商贸零售')
-    # preprocessor = DataPreprocessor(base_config, industry='商贸零售', stationary=False)
-    # preprocessor = DataPreprocessor(base_config, industry='房地产')
-    # preprocessor = DataPreprocessor(base_config, industry='房地产', stationary=False)
-    # preprocessor = DataPreprocessor(base_config, industry='非银金融')
-    # preprocessor = DataPreprocessor(base_config, industry='非银金融', stationary=False)
-    # preprocessor = DataPreprocessor(base_config, industry='就业状况')
-    # preprocessor = DataPreprocessor(base_config, industry='就业状况', stationary=False, date_start='2018-01-01')
-    # preprocessor = DataPreprocessor(base_config, industry='社零综指')
-    # preprocessor = DataPreprocessor(base_config, industry='社零综指', stationary=False, date_start='2020-01-01')
-    # preprocessor = DataPreprocessor(base_config, industry='出口', stationary=False, date_start='2010-01-01')
-    preprocessor = DataPreprocessor(base_config, industry='PPI', stationary=False, date_start='2010-01-01')
-    # preprocessor = DataPreprocessor(base_config, industry='房价', stationary=False, date_start='2010-01-01')
-    # preprocessor = DataPreprocessor(base_config, industry='工业增加值', stationary=False, date_start='2010-01-01')
+    # 字典存储不同的配置，每个配置包含industry和compare_to等信息
+    # key包括：industry, compare_to, stationary, date_start, single_line
+    configs = [
+        # {'industry': '石油石化', 'compare_to': '净资产收益率ROE', 'stationary': False},
+        # {'industry': '石油石化', 'compare_to': '归属母公司股东的净利润同比增长率', 'stationary': False},
+        # {'industry': '煤炭', 'compare_to': '净资产收益率ROE', 'stationary': False},
+        # {'industry': '有色金属', 'compare_to': '净资产收益率ROE', 'stationary': False},
+        # {'industry': '钢铁', 'compare_to': '净资产收益率ROE', 'stationary': False},
+        # {'industry': '基础化工', 'compare_to': '净资产收益率ROE', 'stationary': False},
+        # {'industry': '建材', 'compare_to': '净资产收益率ROE', 'stationary': False},
+        # {'industry': '电子', 'compare_to': '净资产收益率ROE', 'stationary': False},
+        # {'industry': '传媒', 'compare_to': '净资产收益率ROE'},
+        # {'industry': '计算机', 'compare_to': '净资产收益率ROE'},
+        # {'industry': '通信', 'compare_to': '净资产收益率ROE', 'stationary': False},
+        # {'industry': '机械', 'compare_to': '净资产收益率ROE'},
+        # {'industry': '电新', 'compare_to': '净资产收益率ROE', 'stationary': False},
+        # {'industry': '电力', 'compare_to': '净资产收益率ROE'},
+        # {'industry': '国防军工', 'compare_to': '净资产收益率ROE', 'stationary': False},
+        # {'industry': '交通运输', 'compare_to': '净资产收益率ROE', 'stationary': False},
+        # {'industry': '汽车', 'compare_to': '净资产收益率ROE'},
+        # {'industry': '家电', 'compare_to': '净资产收益率ROE'},
+        # {'industry': '医药', 'compare_to': '净资产收益率ROE', 'stationary': False},
+        # {'industry': '食品饮料', 'compare_to': '净资产收益率ROE'},
+        # {'industry': '农林牧渔', 'compare_to': '净资产收益率ROE', 'stationary': False},
+        # {'industry': '白酒', 'compare_to': '净资产收益率ROE'},
+        # {'industry': '食品', 'compare_to': '净资产收益率ROE'},
+        # {'industry': '饮料', 'compare_to': '净资产收益率ROE'},
+        # {'industry': '消费服务', 'compare_to': '净资产收益率ROE'},
+        # {'industry': '纺服', 'compare_to': '净资产收益率ROE', 'stationary': False},
+        # {'industry': '商贸零售', 'compare_to': '净资产收益率ROE', 'stationary': False},
+        # {'industry': '美容护理', 'compare_to': '净资产收益率ROE', 'stationary': False},
+        # {'industry': '房地产', 'compare_to': '净资产收益率ROE', 'stationary': False},
+        # {'industry': '非银金融', 'compare_to': '净资产收益率ROE', 'stationary': False},
+        # {'industry': '就业状况', 'compare_to': '中国:城镇调查失业率', 'stationary': False, 'date_start': '2018-01-01'},
+        # {'industry': '社零综指', 'compare_to': '中国:社会消费品零售总额:当月同比', 'stationary': False, 'date_start': '2020-01-01'},
+        # {'industry': '出口', 'compare_to': '中国:出口金额:当月同比', 'stationary': False, 'date_start': '2010-01-01'},
+        # {'industry': 'PPI', 'compare_to': '中国:PPI:全部工业品:当月同比', 'stationary': False, 'date_start': '2010-01-01'},
+        # {'industry': '房价', 'compare_to': '中国:房屋销售价格指数:二手住宅:70个大中城市:当月同比', 'stationary': False, 'date_start': '2010-01-01'},
+        # {'industry': '工业增加值', 'compare_to': '中国:规模以上工业增加值:当月同比', 'stationary': False, 'date_start': '2010-01-01'},
+        {'industry': '制造业投资', 'compare_to': '(月度化)中国:固定资产投资完成额:制造业:累计同比', 'stationary': False,
+         'date_start': '2014-01-01', 'leading_prediction': False},
+        # {'industry': '制造业投资', 'compare_to': '中国:固定资产投资完成额:制造业:累计同比', 'stationary': False,
+        #  'date_start': '2014-01-01', 'leading_prediction': False},
+    ]
 
-    preprocessor.preprocess()
-    # modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, compare_to='净资产收益率ROE')
-    # modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, compare_to='中国:城镇调查失业率')
-    # modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, compare_to='中国:社会消费品零售总额:当月同比')
-    # modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, compare_to='中国:出口金额:当月同比')
-    # modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, compare_to='美国:销售总额:季调:同比-美国:库存总额:季调:同比:+6月')
-    modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, compare_to='中国:PPI:全部工业品:当月同比', leading_prediction=True)
-    # modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, compare_to='中国:PPI:全部工业品:当月同比', leading_prediction=False)
-    # modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, compare_to='中国:房屋销售价格指数:二手住宅:70个大中城市:当月同比')
-    # modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, compare_to='中国:规模以上工业增加值:当月同比')
-    # modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, financial='归属母公司股东的净利润同比增长率')
-    # modeler = DynamicFactorModeler(preprocessor, k_factors=1, factor_orders=2, financial='营业收入同比增长率')
-    modeler.run()
+    for config in configs:
+        preprocessor = DataPreprocessor(
+            base_config,
+            industry=config['industry'],
+            stationary=config.get('stationary', False),
+            date_start=config.get('date_start', '2013-01-01'),
+            compare_to=config['compare_to']
+        )
+        preprocessor.preprocess()
+
+        modeler = DynamicFactorModeler(
+            preprocessor,
+            k_factors=1,
+            factor_orders=2,
+            compare_to=config['compare_to'],
+            leading_prediction=config['leading_prediction'],
+        )
+        modeler.run()
 
 if SINGLE_BATCH_MODE == 'batch':
     industries = ['石油石化', '煤炭', '有色金属', '钢铁', '基础化工', '建材', '农林牧渔',
