@@ -149,7 +149,7 @@ def transform_cumulative_data(series: pd.Series, data_type: str, period: int = 1
 class DataPreprocessor(PgDbUpdaterBase):
 
     def __init__(self, base_config: BaseConfig, date_start: str = '2010-01-01', industry: str = None,
-                 stationary: bool = True):
+                 stationary: bool = True, compare_to: str = None):
         """
         数据预处理类的初始化方法
         :param data: 原始数据,DataFrame格式
@@ -160,14 +160,16 @@ class DataPreprocessor(PgDbUpdaterBase):
         self.date_start = date_start
         self.industry = industry
         self.stationary = stationary
+        self.compare_to = compare_to
         self.excel_file_mapping = {'就业状况': '宏观数据',
                                    '社零综指': '宏观数据',
                                    '出口': '宏观数据',
                                    'PPI': '宏观数据',
                                    '房价': '宏观数据',
                                    '工业增加值': '宏观数据',
+                                   '制造业投资': '宏观数据',
                                    }
-        self.additional_data_mapping = {
+        self.additional_indicator_mapping = {
                                         '社零综指': '中国:社会消费品零售总额:当月同比',
                                         # '就业状况': '中国:城镇调查失业率',
                                         '出口': '中国:出口金额:当月同比',
@@ -175,6 +177,7 @@ class DataPreprocessor(PgDbUpdaterBase):
                                         'PPI': '中国:PPI:全部工业品:当月同比',
                                         '房价': '中国:房屋销售价格指数:二手住宅:70个大中城市:当月同比',
                                         '工业增加值': '中国:规模以上工业增加值:当月同比',
+                                        '制造业投资': '中国:固定资产投资完成额:制造业:累计同比',
                                         }
 
     def preprocess(self):
@@ -223,8 +226,8 @@ class DataPreprocessor(PgDbUpdaterBase):
         # 定义一个列表, 存储要剔除的列名, 挑选只在info中出现的指标进行处理
         financials_cols = ['净资产收益率ROE', '归属母公司股东的净利润同比增长率', '营业收入同比增长率']
         indicators_cols = self.info.index.tolist()
-        if self.industry in self.additional_data_mapping:
-            indicators_cols.append(self.additional_data_mapping[self.industry])
+        if self.industry in self.additional_indicator_mapping:
+            indicators_cols.append(self.additional_indicator_mapping[self.industry])
         combined_data = pd.merge(df_dict['基本面'][indicators_cols], df_dict['财务'], left_index=True, right_index=True,
                                  how='outer')
         # 删除重复的列
@@ -234,15 +237,13 @@ class DataPreprocessor(PgDbUpdaterBase):
         self.df_indicators = combined_data[indicators_cols].replace(0, np.nan).astype(float)
         self.df_finalcials = combined_data[financials_cols]
 
-    def special_mannual_treatment(self):
+    def special_mannual_treatment(self, keep_original=True):
         """
         对数据进行特殊处理
         - 合并某些列
         - 将累计值转换为月度值
         """
         df_indicators = self.df_indicators.copy(deep=True)
-        if self.industry in self.additional_data_mapping:
-            df_indicators = df_indicators.drop(columns=[self.additional_data_mapping[self.industry]])
         # 删除所有列全部为 NaN 的行
         df_indicators = df_indicators.dropna(how='all', axis=0)
         # # 如果存在'M5528820'列,则将其与'M0329545'列合并
@@ -250,38 +251,53 @@ class DataPreprocessor(PgDbUpdaterBase):
         #     df_indicators.loc[:, 'M0329545'] = df_indicators.M5528820.add(df_indicators.M0329545, fill_value=0).copy()
         #     df_indicators.drop('M5528820', axis=1, inplace=True)
         # 对于info表中标记为累计值的列,将其转换为月度值
+        # 累积值转换
         for name in df_indicators.columns:
+            if name == self.additional_indicator_mapping[self.industry]:
+                continue
             if not pd.isna(self.info.loc[name, '是否累计值']):
                 new_name = '(月度化)' + name
                 # 转换指标名
                 self.info.loc[new_name] = self.info.loc[name]
-                self.info = self.info.drop(name)
-                # 累积值转为月度
+                # 累积值转为月度，并保留累计值
                 df_indicators.loc[:, new_name] = transform_cumulative_data(df_indicators.loc[:, name], self.info.loc[new_name, '是否累计值'])
-                df_indicators.drop(name, axis=1, inplace=True)
+                if '(月度化)' in self.compare_to:
+                    keep_original = False
+                if not keep_original:
+                    self.info = self.info.drop(name)
+                    df_indicators.drop(name, axis=1, inplace=True)
 
+        # 二者用途区别：self.data放入DFM模型，而self.df_indicators不放入。因此self.data需要剔除additional_indicator
         self.data = df_indicators.copy(deep=True)
+        if self.industry in self.additional_indicator_mapping:
+            self.data = self.data.drop(columns=[self.additional_indicator_mapping[self.industry]])
+
+        if '(月度化)' in self.compare_to:
+            indicator_name = self.compare_to.replace("(月度化)", "")
+            df_indicators.loc[:, self.compare_to] = transform_cumulative_data(df_indicators.loc[:, indicator_name],
+                                                                       '累计同比')
 
         # 一二月受春节影响波动太大，合并成2月
         if self.industry == '工业增加值':
-            indicator_name = self.additional_data_mapping[self.industry]
+            indicator_name = self.additional_indicator_mapping[self.industry]
             # 按月份分组
-            self.df_indicators['month'] = self.df_indicators.index.month
+            df_indicators['month'] = df_indicators.index.month
             # 计算一月和二月的均值
             # 创建一个临时列来存储一月和二月的均值
-            self.df_indicators['temp_mean'] = self.df_indicators.groupby(self.df_indicators.index.year)[
+            df_indicators['temp_mean'] = df_indicators.groupby(df_indicators.index.year)[
                 indicator_name].transform(lambda x: x.rolling(2, min_periods=1).mean())
             # 仅将临时列的值应用到二月的数据上
-            self.df_indicators.loc[self.df_indicators['month'] == 2, indicator_name] = self.df_indicators.loc[
-                self.df_indicators['month'] == 2, 'temp_mean']
+            df_indicators.loc[df_indicators['month'] == 2, indicator_name] = df_indicators.loc[
+                df_indicators['month'] == 2, 'temp_mean']
             # 删除临时列
-            self.df_indicators.drop(columns=['temp_mean'], inplace=True)
+            df_indicators.drop(columns=['temp_mean'], inplace=True)
             # 删除一月的数据
-            self.df_indicators = self.df_indicators[self.df_indicators['month'] != 1]
-            # self.df_indicators = self.df_indicators[~self.df_indicators['month'].isin([1, 2])]
+            df_indicators = df_indicators[df_indicators['month'] != 1]
+            # df_indicators = df_indicators[~df_indicators['month'].isin([1, 2])]
             # 删除辅助列和空行
-            self.df_indicators.drop(columns=['month'], inplace=True)
-            self.df_indicators = self.df_indicators.dropna(how='all', axis=0)
+            df_indicators.drop(columns=['month'], inplace=True)
+
+        self.df_indicators = df_indicators.dropna(how='all', axis=0)
 
     def align_to_month(self):
         """
@@ -471,7 +487,7 @@ class DataPreprocessor(PgDbUpdaterBase):
         else:
             raise Exception('donno stationarity')
 
-    def cap_outliers(self, threshold: float = 3.0):
+    def cap_outliers(self, threshold: float = 2.0):
         """
         将异常值设定为三个标准差位置
         :param threshold: 异常值判断阈值,默认为3.0(即超过3个标准差)
