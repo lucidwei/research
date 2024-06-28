@@ -422,6 +422,9 @@ class DynamicFactorModeler:
         fig, ax1 = plt.subplots(figsize=(12, 6))
         ax1.plot(extracted_factor_filtered_without_predicted, label='景气综合指标')
 
+        # 添加一条纵坐标为0的虚线
+        ax1.axhline(y=0, color='gray', linestyle='--')
+
         # 在图中标注预测期的日期范围
         start_date = predicted_dates[0].strftime('%Y-%m-%d') if len(predicted_dates) == 1 else predicted_dates[
             1].strftime('%Y-%m-%d')
