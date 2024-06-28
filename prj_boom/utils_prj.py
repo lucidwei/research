@@ -38,6 +38,8 @@ def cap_outliers(data, threshold: float = 3.0):
     将异常值设定为三个标准差位置
     :param threshold: 异常值判断阈值,默认为3.0(即超过3个标准差)
     """
+    outliers = pd.DataFrame()
+
     for col in data.columns:
         series = data[col]
         mean = series.mean()
@@ -45,9 +47,31 @@ def cap_outliers(data, threshold: float = 3.0):
         upper_bound = mean + threshold * std
         lower_bound = mean - threshold * std
 
+        # 找出异常值
+        col_outliers = data[(series > upper_bound) | (series < lower_bound)].copy()
+
+        if not col_outliers.empty:
+            # 只保留异常值所在的列
+            col_outliers[col + '_original'] = col_outliers[col]
+
+            # 添加一列表示是上界还是下界异常
+            col_outliers['bound'] = np.where(col_outliers[col] > upper_bound, 'upper', 'lower')
+
+            # 将异常值添加到outliers DataFrame
+            outliers = pd.concat([outliers, col_outliers[[col + '_original', 'bound']]], axis=1)
+
         # 将异常值设定为三个标准差位置
         data.loc[series > upper_bound, col] = upper_bound
         data.loc[series < lower_bound, col] = lower_bound
+
+    # 按日期排序outliers并打印
+    if not outliers.empty:
+        outliers = outliers.sort_index()
+        print("有异常值被删除:")
+        # print(outliers)
+    else:
+        print("没有发现异常值。")
+
     return data
 
 
@@ -77,7 +101,7 @@ def split_dataframe(whole_df):
                     sub_df = sub_df.replace(0, np.nan)
                 elif df_name == '财务':
                     # 对每列数据求MA4
-                    sub_df = sub_df.sort_index(ascending=True).rolling(window=4).mean().sort_index(ascending=False)
+                    sub_df = sub_df.sort_index(ascending=True).rolling(window=4, min_periods=1).mean().sort_index(ascending=False)
                     # 删除列名中的"单季度."字符串
                     sub_df.columns = sub_df.columns.str.replace('单季度.', '', regex=True)
                 elif df_name == '行情':
