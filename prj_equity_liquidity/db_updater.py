@@ -1035,7 +1035,8 @@ class MajorHolderUpdater:
             df_upload_summed = df_upload.groupby(['date', 'product_name', 'field'], as_index=False).sum().dropna()
             # 遇见item_note_2b_added这种报错需要手动在Pgadmin更改数据，e.g.：
             # Key (code, product_name, date, field)=(temp_value, 通策医疗, 2023-09-16, item_note_2b_added) already exists.
-            df_upload_summed.to_sql('markets_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
+            # df_upload_summed.to_sql('markets_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
+            self.db_updater.upsert_dataframe_to_postgresql(df_upload_summed, 'markets_daily_long', ['date', 'product_name', 'field', 'code'])
 
 
 class NorthInflowUpdater:
@@ -1217,8 +1218,15 @@ class BonusUpdater:
         else:
             df_upload = filtered_df.melt(id_vars=['date', 'product_name', 'code'], var_name='field',
                                          value_name='value').dropna()
-            print(f'uploading new bonus records...length={len(df_upload)}')
-            df_upload.to_sql('markets_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
+            # 把['date', 'product_name', 'field', 'code']重复的行的value加总，形成一个新行，并把原来重复的删掉
+            df_grouped = df_upload.groupby(['date', 'product_name', 'field', 'code']).agg({
+                'value': 'sum'
+            }).reset_index()
+
+            print(f'uploading new bonus records...length={len(df_grouped)}')
+            # df_upload.to_sql('markets_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
+            self.db_updater.upsert_dataframe_to_postgresql(df_grouped, 'markets_daily_long',
+                                                           ['date', 'product_name', 'field', 'code'])
 
     def upload_bonus_history(self):
         historic_bonus = pd.read_excel(self.db_updater.base_config.excels_path + '历史分红.xlsx', header=6,
