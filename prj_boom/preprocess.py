@@ -168,6 +168,8 @@ class DataPreprocessor(PgDbUpdaterBase):
                                    '房价': '宏观数据',
                                    '工业增加值': '宏观数据',
                                    '制造业投资': '宏观数据',
+                                   '房地产投资': '宏观数据',
+                                   '基建投资': '宏观数据',
                                    }
         self.additional_indicator_mapping = {
                                         '社零综指': '中国:社会消费品零售总额:当月同比',
@@ -178,6 +180,8 @@ class DataPreprocessor(PgDbUpdaterBase):
                                         '房价': '中国:房屋销售价格指数:二手住宅:70个大中城市:当月同比',
                                         '工业增加值': '中国:规模以上工业增加值:当月同比',
                                         '制造业投资': '中国:固定资产投资完成额:制造业:累计同比',
+                                        '房地产投资': '中国:房地产开发投资完成额:累计同比',
+                                        '基建投资': '中国:固定资产投资完成额:基础设施建设投资:累计同比',
                                         }
 
     def preprocess(self):
@@ -253,16 +257,19 @@ class DataPreprocessor(PgDbUpdaterBase):
         # 对于info表中标记为累计值的列,将其转换为月度值
         # 累积值转换
         for name in df_indicators.columns:
-            if name == self.additional_indicator_mapping[self.industry]:
-                continue
+            if self.industry in self.additional_indicator_mapping:
+                if name == self.additional_indicator_mapping[self.industry]:
+                    continue
+            # print(self.info.loc[name, '是否累计值'])
             if not pd.isna(self.info.loc[name, '是否累计值']):
                 new_name = '(月度化)' + name
                 # 转换指标名
                 self.info.loc[new_name] = self.info.loc[name]
                 # 累积值转为月度，并保留累计值
                 df_indicators.loc[:, new_name] = transform_cumulative_data(df_indicators.loc[:, name], self.info.loc[new_name, '是否累计值'])
-                if '(月度化)' in self.compare_to:
-                    keep_original = False
+                if self.compare_to:
+                    if '(月度化)' in self.compare_to:
+                        keep_original = False
                 if not keep_original:
                     self.info = self.info.drop(name)
                     df_indicators.drop(name, axis=1, inplace=True)
@@ -272,10 +279,11 @@ class DataPreprocessor(PgDbUpdaterBase):
         if self.industry in self.additional_indicator_mapping:
             self.data = self.data.drop(columns=[self.additional_indicator_mapping[self.industry]])
 
-        if '(月度化)' in self.compare_to:
-            indicator_name = self.compare_to.replace("(月度化)", "")
-            df_indicators.loc[:, self.compare_to] = transform_cumulative_data(df_indicators.loc[:, indicator_name],
-                                                                       '累计同比')
+        if self.compare_to:
+            if '(月度化)' in self.compare_to:
+                indicator_name = self.compare_to.replace("(月度化)", "")
+                df_indicators.loc[:, self.compare_to] = transform_cumulative_data(df_indicators.loc[:, indicator_name],
+                                                                           '累计同比')
 
         # 一二月受春节影响波动太大，合并成2月
         if self.industry == '工业增加值':

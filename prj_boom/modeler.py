@@ -22,7 +22,7 @@ mpl.rcParams['axes.unicode_minus'] = False  # ½â¾ö±£´æÍ¼ÏñÊÇ¸ººÅ'-'ÏÔÊ¾Îª·½¿éµÄÎ
 
 class DynamicFactorModeler:
     def __init__(self, preprocessor: DataPreprocessor, k_factors: int, factor_orders: int, compare_to: str,
-                 leading_prediction=False, single_line=False):
+                 leading_prediction=False, single_line=False, plot_y0=False):
         """
         DynamicFactorMQ ½¨Ä£ºÍÆÀ¹ÀÀàµÄ³õÊ¼»¯·½·¨
         :param data: Ô¤´¦ÀíºóµÄÊı¾İ,DataFrame ¸ñÊ½
@@ -35,6 +35,7 @@ class DynamicFactorModeler:
         self.factor_orders = factor_orders
         self.leading_prediction = leading_prediction
         self.single_line = single_line
+        self.plot_y0 = plot_y0
 
         # ÔÚ df_finalcials ºÍ df_indicators ÖĞÑ°ÕÒ compare_to ×Ö·û´®
         if compare_to in preprocessor.df_finalcials:
@@ -53,7 +54,11 @@ class DynamicFactorModeler:
                 'PPI': {
                     'ÖĞ¹ú:M1:Í¬±È': 9,
                     'ÖĞ¹ú:ÊµÌå¾­¼Ã²¿ÃÅ¸Ü¸ËÂÊ:Í¬±ÈÔö¼Ó': 9,
-                }
+                },
+                '³ö¿Ú': {'ÉÏº£³ö¿Ú¼¯×°ÏäÔË¼ÛÖ¸Êı:×ÛºÏÖ¸Êı:Í¬±È': 4,
+                         'ÃÀ¹ú:ÏúÊÛ×Ü¶î:¼¾µ÷:Í¬±È-ÃÀ¹ú:¿â´æ×Ü¶î:¼¾µ÷:Í¬±È': 2,
+                         'ÃÀ¹ú:¿â´æÏúÊÛ±È:¼¾µ÷': 15,
+                         'ÆÚ»õÊÕÅÌ¼Û(Á¬Ğø):COMEXÍ­:Í¬±È:ÔÂ:Æ½¾ùÖµ': 3}
             }
             # ÏÈ¼ÆËãÍ¬²½£¬ÔÙ¼ÆËãleading£¬ÔÙ½â¾ö»­Í¼ÎÊÌâ
             results_concurrent = self.apply_dynamic_factor_model()
@@ -101,6 +106,7 @@ class DynamicFactorModeler:
             if combined_data.shape[0] <= max_lag:
                 print(f"Skipping {column} due to insufficient data length.")
                 discarded_indicators.append(column)
+                self.preprocessor.data.drop(columns=[column], inplace=True)
                 continue
 
             try:
@@ -135,6 +141,7 @@ class DynamicFactorModeler:
                     leading_indicators[column] = best_lag
                 elif best_lag == 0 and pear_p_value >= alpha:
                     discarded_indicators.append(column)
+                    self.preprocessor.data.drop(columns=[column], inplace=True)
                 else:
                     raise ValueError('Unexpected condition encountered')
 
@@ -277,7 +284,8 @@ class DynamicFactorModeler:
         financial_monthly = self.series_compared_to.resample('M').last()
 
         # ¶ÔÆëÁ½¸öÊ±¼äĞòÁĞµÄË÷Òı
-        extracted_factor_filtered, factor_filtered = self.align_index_scale_corr(extracted_factor, financial_monthly, 'inner')
+        extracted_factor_filtered, factor_filtered = self.align_index_scale_corr(extracted_factor, financial_monthly,
+                                                                                 'inner')
 
         corr = np.corrcoef(extracted_factor_filtered[15:], factor_filtered[15:])[0, 1]
         print(f"ºóÆÚCorrelation: {corr:.4f}")
@@ -423,7 +431,8 @@ class DynamicFactorModeler:
         ax1.plot(extracted_factor_filtered_without_predicted, label='¾°Æø×ÛºÏÖ¸±ê')
 
         # Ìí¼ÓÒ»Ìõ×İ×ø±êÎª0µÄĞéÏß
-        ax1.axhline(y=0, color='gray', linestyle='--')
+        if self.plot_y0:
+            ax1.axhline(y=0, color='gray', linestyle='--')
 
         # ÔÚÍ¼ÖĞ±ê×¢Ô¤²âÆÚµÄÈÕÆÚ·¶Î§
         start_date = predicted_dates[0].strftime('%Y-%m-%d') if len(predicted_dates) == 1 else predicted_dates[
@@ -486,7 +495,7 @@ class DynamicFactorModeler:
         extracted_factor_aligned_concurrent, factor_aligned_concurrent = self.align_index_scale_corr(
             extracted_factor_concurrent, factor, 'outer')
         extracted_factor_aligned_leading, factor_aligned_leading = self.align_index_scale_corr(extracted_factor_leading,
-                                                                                          factor, 'outer')
+                                                                                               factor, 'outer')
 
         # »ñÈ¡ factor_filtered Êµ¼Ê´æÔÚµÄÕæÊµÊı¾İÖĞµÄ×îĞÂÈÕÆÚ
         latest_date_existing = factor.dropna().index.max()
@@ -517,7 +526,8 @@ class DynamicFactorModeler:
         end_date = predicted_dates[-1].strftime('%Y-%m-%d')
         latest_period_label = f"µ±ÆÚÔ¤²â: {start_date} to {end_date}" if start_date != end_date else f"µ±ÆÚÔ¤²â: {start_date}"
         # µ÷ÕûÊıÖµ±£Ö¤Á¬¹á
-        extracted_factor_aligned_concurrent -= extracted_factor_aligned_concurrent.loc[predicted_dates[0]] - factor.loc[predicted_dates[0]]
+        extracted_factor_aligned_concurrent -= extracted_factor_aligned_concurrent.loc[predicted_dates[0]] - factor.loc[
+            predicted_dates[0]]
         # »æÖÆ×îĞÂÒ»ÆÚÊı¾İ±ä»¯µÄºìÏß
         ax1.plot(predicted_dates, extracted_factor_aligned_concurrent[predicted_dates], color='purple', linewidth=2,
                  linestyle='-', label=latest_period_label)
@@ -526,7 +536,8 @@ class DynamicFactorModeler:
         end_date = predicted_dates_leading[-1].strftime('%Y-%m-%d')
         latest_period_label = f"Ô¶ÆÚÔ¤ÆÚ: {start_date} to {end_date}" if start_date != end_date else f"Ô¶ÆÚÔ¤ÆÚ: {start_date}"
         # µ÷ÕûÊıÖµ±£Ö¤Á¬¹á
-        extracted_factor_aligned_leading -= extracted_factor_aligned_leading.loc[predicted_dates_leading[0]] - extracted_factor_aligned_concurrent.loc[predicted_dates_leading[0]]
+        extracted_factor_aligned_leading -= extracted_factor_aligned_leading.loc[predicted_dates_leading[0]] - \
+                                            extracted_factor_aligned_concurrent.loc[predicted_dates_leading[0]]
         # »æÖÆ×îĞÂÒ»ÆÚÊı¾İ±ä»¯µÄºìÏß
         ax1.plot(predicted_dates_leading, extracted_factor_aligned_leading[predicted_dates_leading], color='purple',
                  linewidth=3,
