@@ -104,6 +104,24 @@ def transform_cumulative_data(series: pd.Series, data_type: str, period: int = 1
         raise ValueError(f"不支持的数据类型: {data_type}")
 
 
+def remove_duplicate_columns(df):
+    # 保存原始索引的数据类型
+    original_index_dtype = df.index.dtype
+
+    # 转置 DataFrame，这样列变成行，便于比较
+    df_T = df.T.reset_index()
+
+    # 删除重复的行（原 DataFrame 的列），保留第一次出现的
+    df_T_unique = df_T.drop_duplicates(keep='first')
+
+    # 将 DataFrame 转置回原来的形状
+    df_result = df_T_unique.set_index('index').T
+
+    # 恢复原始索引的数据类型
+    df_result.index = df_result.index.astype(original_index_dtype)
+
+    return df_result
+
 # def decompose_series(series, stationary_type):
 #     if stationary_type == 'diff-stationary':
 #         diff_series = series.diff().dropna()
@@ -230,6 +248,7 @@ class DataPreprocessor(PgDbUpdaterBase):
         # 定义一个列表, 存储要剔除的列名, 挑选只在info中出现的指标进行处理
         financials_cols = ['净资产收益率ROE', '归属母公司股东的净利润同比增长率', '营业收入同比增长率']
         indicators_cols = self.info.index.tolist()
+        self.indicators_cols_in_excel = self.info.index.tolist()
         if self.industry in self.additional_indicator_mapping:
             indicators_cols.append(self.additional_indicator_mapping[self.industry])
         combined_data = pd.merge(df_dict['基本面'][indicators_cols], df_dict['财务'], left_index=True, right_index=True,
@@ -250,16 +269,10 @@ class DataPreprocessor(PgDbUpdaterBase):
         df_indicators = self.df_indicators.copy(deep=True)
         # 删除所有列全部为 NaN 的行
         df_indicators = df_indicators.dropna(how='all', axis=0)
-        # # 如果存在'M5528820'列,则将其与'M0329545'列合并
-        # if 'M5528820' in df_indicators.columns:
-        #     df_indicators.loc[:, 'M0329545'] = df_indicators.M5528820.add(df_indicators.M0329545, fill_value=0).copy()
-        #     df_indicators.drop('M5528820', axis=1, inplace=True)
+        df_indicators = remove_duplicate_columns(df_indicators)
+
         # 对于info表中标记为累计值的列,将其转换为月度值
-        # 累积值转换
-        for name in df_indicators.columns:
-            if self.industry in self.additional_indicator_mapping:
-                if name == self.additional_indicator_mapping[self.industry]:
-                    continue
+        for name in self.info.index:
             # print(self.info.loc[name, '是否累计值'])
             if not pd.isna(self.info.loc[name, '是否累计值']):
                 new_name = '(月度化)' + name
@@ -267,23 +280,25 @@ class DataPreprocessor(PgDbUpdaterBase):
                 self.info.loc[new_name] = self.info.loc[name]
                 # 累积值转为月度，并保留累计值
                 df_indicators.loc[:, new_name] = transform_cumulative_data(df_indicators.loc[:, name], self.info.loc[new_name, '是否累计值'])
-                if self.compare_to:
-                    if '(月度化)' in self.compare_to:
-                        keep_original = False
-                if not keep_original:
+                if self.info.loc[name, '备注'] == 'delete_original':
                     self.info = self.info.drop(name)
                     df_indicators.drop(name, axis=1, inplace=True)
 
         # 二者用途区别：self.data放入DFM模型，而self.df_indicators不放入。因此self.data需要剔除additional_indicator
         self.data = df_indicators.copy(deep=True)
         if self.industry in self.additional_indicator_mapping:
-            self.data = self.data.drop(columns=[self.additional_indicator_mapping[self.industry]])
+            added_indicator = self.additional_indicator_mapping[self.industry]
+            # 如果indicators_info.xlsx里指定了目标指标，说明需要将目标指标也放入data，则不需要drop
+            if added_indicator not in self.indicators_cols_in_excel:
+                self.data = self.data.drop(columns=[added_indicator])
 
+        # 在df_indicators中补充一下self.indicators_cols_in_excel中没有的，但是self.compare_to要求月度化的数据
         if self.compare_to:
             if '(月度化)' in self.compare_to:
                 indicator_name = self.compare_to.replace("(月度化)", "")
-                df_indicators.loc[:, self.compare_to] = transform_cumulative_data(df_indicators.loc[:, indicator_name],
-                                                                           '累计同比')
+                if indicator_name not in self.indicators_cols_in_excel:
+                    df_indicators.loc[:, self.compare_to] = transform_cumulative_data(df_indicators.loc[:, indicator_name],
+                                                                               '累计同比')
 
         # 一二月受春节影响波动太大，合并成2月
         if self.industry == '工业增加值':
@@ -501,3 +516,4 @@ class DataPreprocessor(PgDbUpdaterBase):
         :param threshold: 异常值判断阈值,默认为3.0(即超过3个标准差)
         """
         self.data = cap_outliers(data=self.data, threshold=threshold)
+        self.df_indicators = cap_outliers(data=self.df_indicators, threshold=threshold)

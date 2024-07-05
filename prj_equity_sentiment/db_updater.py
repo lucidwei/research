@@ -208,9 +208,9 @@ class IndustryDataUpdater:
             ('product_type', 'index')
         )
 
-        if missing_dates[0] == self.db_updater.tradedays[-1]:
-            print('Only today is missing, skipping update _upload_missing_data_industry_large_order')
-            return
+        # if missing_dates[0] == self.db_updater.tradedays[-1]:
+        #     print('Only today is missing, skipping update _upload_missing_data_industry_large_order')
+        #     return
 
         for code in industry_codes:
             print(

@@ -57,13 +57,17 @@ if SINGLE_BATCH_MODE == 'single':
         # {'industry': '就业状况', 'compare_to': '中国:城镇调查失业率', 'stationary': False, 'date_start': '2018-01-01'},
         # {'industry': '社零综指', 'compare_to': '中国:社会消费品零售总额:当月同比', 'stationary': False, 'date_start': '2020-01-01'},
         # {'industry': '出口', 'compare_to': '中国:出口金额:当月同比', 'stationary': False, 'date_start': '2010-01-01'},
-        # {'industry': 'PPI', 'compare_to': '中国:PPI:全部工业品:当月同比', 'stationary': False, 'date_start': '2010-01-01'},
+        # {'industry': '出口', 'compare_to': '中国:出口金额:当月同比', 'stationary': False, 'date_start': '2010-01-01', 'single_line': True},
+        # {'industry': 'PPI', 'compare_to': '中国:PPI:全部工业品:当月同比', 'stationary': False, 'date_start': '2010-01-01', 'single_line': True},
         # {'industry': '房价', 'compare_to': '中国:房屋销售价格指数:二手住宅:70个大中城市:当月同比', 'stationary': False, 'date_start': '2010-01-01'},
         # {'industry': '工业增加值', 'compare_to': '中国:规模以上工业增加值:当月同比', 'stationary': False, 'date_start': '2010-01-01'},
-        {'industry': '制造业投资', 'compare_to': '(月度化)中国:固定资产投资完成额:制造业:累计同比', 'stationary': False,
-         'date_start': '2014-01-01', 'leading_prediction': False},
-        # {'industry': '制造业投资', 'compare_to': '中国:固定资产投资完成额:制造业:累计同比', 'stationary': False,
-        #  'date_start': '2014-01-01', 'leading_prediction': False},
+        # {'industry': '制造业投资', 'compare_to': '(月度化)中国:固定资产投资完成额:制造业:累计同比', 'stationary': False, 'date_start': '2014-01-01', 'leading_prediction': False},
+        # {'industry': '制造业投资', 'compare_to': '中国:固定资产投资完成额:制造业:累计同比', 'stationary': False, 'date_start': '2014-01-01', 'leading_prediction': False},
+        # {'industry': '房地产投资', 'compare_to': '中国:房地产开发投资完成额:累计同比', 'stationary': False, 'date_start': '2012-01-01', 'leading_prediction': False},
+        # {'industry': '房地产投资', 'compare_to': '(月度化)中国:房地产开发投资完成额:累计同比', 'stationary': False, 'date_start': '2012-01-01', 'leading_prediction': False, 'plot_y0': True},
+        {'industry': '基建投资', 'compare_to': '(月度化)中国:固定资产投资完成额:基础设施建设投资:累计同比', 'stationary': False, 'date_start': '2012-01-01', 'leading_prediction': False, 'plot_y0': True},
+        # {'industry': '基建投资', 'compare_to': '(月度化)中国:固定资产投资本年新开工项目计划总投资额:累计同比', 'stationary': False, 'date_start': '2012-01-01', 'leading_prediction': False, 'plot_y0': True},
+        # {'industry': '基建投资', 'compare_to': '(月度化)中国:固定资产投资本年施工项目计划总投资额:累计同比', 'stationary': False, 'date_start': '2012-01-01', 'leading_prediction': False, 'plot_y0': True},
     ]
 
     for config in configs:
@@ -81,7 +85,9 @@ if SINGLE_BATCH_MODE == 'single':
             k_factors=1,
             factor_orders=2,
             compare_to=config['compare_to'],
-            leading_prediction=config['leading_prediction'],
+            leading_prediction=config.get('leading_prediction', False),
+            single_line=config.get('single_line', False),
+            plot_y0=config.get('plot_y0', False),
         )
         modeler.run()
 
