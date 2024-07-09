@@ -465,7 +465,7 @@ class DynamicFactorModeler:
         # ax1.plot(predicted_dates, extracted_factor_filtered[predicted_dates], color='purple', linewidth=3,
         #          linestyle=':' if self.leading_prediction else '-', label=latest_period_label)
 
-        # 绘制最新一期数据变化的红线，透明度根据时间递增
+        # 绘制最新一期数据变化的红线，透明度根据时间递增，表示“越新的时间，实际用到的数据点越少，因此可靠度越低”
         # 将日期转换为数值形式以便于颜色映射
         from matplotlib.dates import date2num
         date_nums = date2num(predicted_dates)
