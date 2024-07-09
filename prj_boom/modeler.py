@@ -284,7 +284,7 @@ class DynamicFactorModeler:
         financial_monthly = self.series_compared_to.resample('M').last()
 
         # 对齐两个时间序列的索引
-        extracted_factor_filtered, factor_filtered = self.align_index_scale_corr(extracted_factor, financial_monthly,
+        extracted_factor_filtered, factor_filtered, self.corr = self.align_index_scale_corr(extracted_factor, financial_monthly,
                                                                                  'inner')
 
         corr = np.corrcoef(extracted_factor_filtered[15:], factor_filtered[15:])[0, 1]
@@ -292,7 +292,7 @@ class DynamicFactorModeler:
         corr = np.corrcoef(extracted_factor_filtered[:15], factor_filtered[:15])[0, 1]
         print(f"早期Correlation: {corr:.4f}")
         corr = np.corrcoef(extracted_factor_filtered, factor_filtered)[0, 1]
-        print(f"Correlation between extracted factor and original factor: {corr:.4f}")
+        print(f"Correlation between extracted factor and original factor: {corr:.4f}\n")
 
     def analyze_factor_contribution(self, start_date=None, end_date=None):
         """
@@ -322,6 +322,8 @@ class DynamicFactorModeler:
 
         # 提取给定时间段内的贡献
         factor_contributions = data_contributions.loc[start_date:end_date].T
+        if self.corr < 0:
+            factor_contributions *= -1
 
         # 新增：存储各个变量的权重
         output = f"各指标权重：{self.factor_loadings}\n"  # 存储所有的输出信息
@@ -348,6 +350,17 @@ class DynamicFactorModeler:
             for index, value in tail_values.items():
                 print(f"'{index[0]}' at '{index[1].strftime('%Y-%m-%d')}', impact {value:.3f}")
                 output += f"'{index[0]}' at '{index[1].strftime('%Y-%m-%d')}', impact {value:.3f}\n"
+
+            # 计算所有正贡献的总和
+            positive_sum = sorted_column[sorted_column > 0].sum()
+            print(f"正贡献总和: {positive_sum:.3f}")
+            output += f"正贡献总和: {positive_sum:.3f}\n"
+
+            # 计算所有负贡献的总和
+            negative_sum = sorted_column[sorted_column < 0].sum()
+            print(f"负贡献总和: {negative_sum:.3f}")
+            print(f"总和: {positive_sum+negative_sum:.2f}")
+            output += f"负贡献总和: {negative_sum:.3f}\n"
 
             print("\n")
             output += "\n"
@@ -411,7 +424,7 @@ class DynamicFactorModeler:
         extracted_factor = self.results.factors.filtered['0']
         factor = self.series_compared_to.dropna().astype(float)
 
-        extracted_factor_filtered, factor_filtered = self.align_index_scale_corr(extracted_factor, factor, 'outer')
+        extracted_factor_filtered, factor_filtered, _ = self.align_index_scale_corr(extracted_factor, factor, 'outer')
 
         # 获取 factor_filtered 实际存在的真实数据中的最新日期
         latest_date_existing = factor_filtered.dropna().index.max()
@@ -492,9 +505,9 @@ class DynamicFactorModeler:
         extracted_factor_concurrent = results_concurrent.factors.filtered['0']
         extracted_factor_leading = results_leading.factors.filtered['0']
 
-        extracted_factor_aligned_concurrent, factor_aligned_concurrent = self.align_index_scale_corr(
+        extracted_factor_aligned_concurrent, factor_aligned_concurrent, _ = self.align_index_scale_corr(
             extracted_factor_concurrent, factor, 'outer')
-        extracted_factor_aligned_leading, factor_aligned_leading = self.align_index_scale_corr(extracted_factor_leading,
+        extracted_factor_aligned_leading, factor_aligned_leading, _ = self.align_index_scale_corr(extracted_factor_leading,
                                                                                                factor, 'outer')
 
         # 获取 factor_filtered 实际存在的真实数据中的最新日期
@@ -595,4 +608,4 @@ class DynamicFactorModeler:
         extracted_factor_scaled = pd.Series(extracted_factor_scaled.flatten(),
                                             index=extracted_factor_filtered.index)
 
-        return extracted_factor_scaled, factor_filtered
+        return extracted_factor_scaled, factor_filtered, corr
