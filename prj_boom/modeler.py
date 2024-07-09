@@ -315,9 +315,9 @@ class DynamicFactorModeler:
         # 自动计算默认的起止日期为最后三个月
         if start_date is None or end_date is None:
             end_date = data_contributions.index[-1]
-            start_date = data_contributions.index[-3]
+            start_date = data_contributions.index[-4]
         # start_date = '2024-03-31'
-        # end_date = '2024-04-30'
+        # end_date = '2024-07-31'
         print(f"Variable contributions to factor change from {start_date} to {end_date}:")
 
         # 提取给定时间段内的贡献
@@ -328,7 +328,9 @@ class DynamicFactorModeler:
         # 新增：存储各个变量的权重
         output = f"各指标权重：{self.factor_loadings}\n"  # 存储所有的输出信息
         print(output)
-        for column in factor_contributions.columns:
+
+        # 打印近2个月的正负贡献
+        for column in factor_contributions.columns[-2:]:
             print(f"对于{column.strftime('%Y-%m-%d')} {self.preprocessor.industry} 景气度指数:")
             output += f"对于{column.strftime('%Y-%m-%d')} {self.preprocessor.industry} 景气度指数:\n"
 
@@ -366,51 +368,58 @@ class DynamicFactorModeler:
             output += "\n"
 
         # 增量分析：计算最后一次(或adjust后的月份)数据变化的贡献
-        adjust = 0
-        if len(factor_contributions.columns) >= 2:
-            prev_month = factor_contributions.columns[-2 - adjust]
-            curr_month = factor_contributions.columns[-1 - adjust]
+        exclude_future_data = True
+        for adjust in range(3):
+            if len(factor_contributions.columns) >= 2 + adjust:
+                prev_month = factor_contributions.columns[-2 - adjust]
+                curr_month = factor_contributions.columns[-1 - adjust]
 
-            print(
-                f"Comparing contributions from {prev_month.strftime('%Y-%m-%d')} to {curr_month.strftime('%Y-%m-%d')}")
-            output += f"Comparing contributions from {prev_month.strftime('%Y-%m-%d')} to {curr_month.strftime('%Y-%m-%d')}\n"
+                print(
+                    f"Comparing contributions from {prev_month.strftime('%Y-%m-%d')} to {curr_month.strftime('%Y-%m-%d')}")
+                output += f"Comparing contributions from {prev_month.strftime('%Y-%m-%d')} to {curr_month.strftime('%Y-%m-%d')}\n"
 
-            # 计算每个变量的贡献变化
-            contrib_change = factor_contributions[curr_month] - factor_contributions[prev_month]
+                # 计算每个变量的贡献变化
+                contrib_change = factor_contributions[curr_month] - factor_contributions[prev_month]
 
-            # 对贡献变化进行排序
-            sorted_contrib_change = contrib_change.sort_values(ascending=False).dropna()
+                # 对贡献变化进行排序
+                sorted_contrib_change = contrib_change.sort_values(ascending=False).dropna()
 
-            print(f"对于{curr_month.strftime('%Y-%m-%d')} {self.preprocessor.industry} 景气度指数变化:")
-            output += f"对于{curr_month.strftime('%Y-%m-%d')} {self.preprocessor.industry} 景气度指数变化:\n"
+                # 如果 exclude_future_data 为 True，筛选掉未来数据
+                if exclude_future_data:
+                    sorted_contrib_change = sorted_contrib_change[
+                        sorted_contrib_change.index.get_level_values(1) < curr_month]
 
-            # 获取前三个正贡献变化值及其Index
-            top_positive_changes = sorted_contrib_change.head(3)
-            print("Top 3 正贡献变化:")
-            output += "Top 3 正贡献变化:\n"
-            for index, value in top_positive_changes.items():
-                print(f"'{index[0]}' at '{index[1].strftime('%Y-%m-%d')}', impact change {value:.3f}")
-                output += f"'{index[0]}' at '{index[1].strftime('%Y-%m-%d')}', impact change {value:.3f}\n"
-            # 获取后三个负贡献变化值及其Index
-            bottom_negative_changes = sorted_contrib_change.tail(3)
-            print("Bottom 3 负贡献变化:")
-            output += "Bottom 3 负贡献变化:\n"
-            for index, value in bottom_negative_changes.items():
-                print(f"'{index[0]}' at '{index[1].strftime('%Y-%m-%d')}', impact change {value:.3f}")
-                output += f"'{index[0]}' at '{index[1].strftime('%Y-%m-%d')}', impact change {value:.3f}\n"
+                print(f"对于{curr_month.strftime('%Y-%m-%d')} {self.preprocessor.industry} 景气度指数变化:")
+                output += f"对于{curr_month.strftime('%Y-%m-%d')} {self.preprocessor.industry} 景气度指数变化:\n"
 
-            # 计算所有正贡献变化的总和
-            positive_sum = sorted_contrib_change[sorted_contrib_change > 0].sum()
-            print(f"正贡献变化总和: {positive_sum:.3f}")
-            output += f"正贡献变化总和: {positive_sum:.3f}\n"
+                # 获取前三个正贡献变化值及其Index
+                top_positive_changes = sorted_contrib_change.head(3)
+                print("Top 3 正贡献变化:")
+                output += "Top 3 正贡献变化:\n"
+                for index, value in top_positive_changes.items():
+                    print(f"'{index[0]}' at '{index[1].strftime('%Y-%m-%d')}', impact change {value:.3f}")
+                    output += f"'{index[0]}' at '{index[1].strftime('%Y-%m-%d')}', impact change {value:.3f}\n"
 
-            # 计算所有负贡献变化的总和
-            negative_sum = sorted_contrib_change[sorted_contrib_change < 0].sum()
-            print(f"负贡献变化总和: {negative_sum:.3f}")
-            output += f"负贡献变化总和: {negative_sum:.3f}\n"
+                # 获取后三个负贡献变化值及其Index
+                bottom_negative_changes = sorted_contrib_change.tail(3)
+                print("Bottom 3 负贡献变化:")
+                output += "Bottom 3 负贡献变化:\n"
+                for index, value in bottom_negative_changes.items():
+                    print(f"'{index[0]}' at '{index[1].strftime('%Y-%m-%d')}', impact change {value:.3f}")
+                    output += f"'{index[0]}' at '{index[1].strftime('%Y-%m-%d')}', impact change {value:.3f}\n"
 
-            print("\n")
-            output += "\n"
+                # 计算所有正贡献变化的总和
+                positive_sum = sorted_contrib_change[sorted_contrib_change > 0].sum()
+                print(f"正贡献变化总和: {positive_sum:.3f}")
+                output += f"正贡献变化总和: {positive_sum:.3f}\n"
+
+                # 计算所有负贡献变化的总和
+                negative_sum = sorted_contrib_change[sorted_contrib_change < 0].sum()
+                print(f"负贡献变化总和: {negative_sum:.3f}")
+                output += f"负贡献变化总和: {negative_sum:.3f}\n"
+
+                print("\n")
+                output += "\n"
 
         return output
 
@@ -453,8 +462,19 @@ class DynamicFactorModeler:
         end_date = predicted_dates[-1].strftime('%Y-%m-%d')
         latest_period_label = f"预测期: {start_date} to {end_date}" if start_date != end_date else f"预测期: {start_date}"
         # 绘制最新一期数据变化的红线
-        ax1.plot(predicted_dates, extracted_factor_filtered[predicted_dates], color='purple', linewidth=3,
-                 linestyle=':' if self.leading_prediction else '-', label=latest_period_label)
+        # ax1.plot(predicted_dates, extracted_factor_filtered[predicted_dates], color='purple', linewidth=3,
+        #          linestyle=':' if self.leading_prediction else '-', label=latest_period_label)
+
+        # 绘制最新一期数据变化的红线，透明度根据时间递增
+        # 将日期转换为数值形式以便于颜色映射
+        from matplotlib.dates import date2num
+        date_nums = date2num(predicted_dates)
+        # 绘制渐变透明度的线条
+        for i in range(len(predicted_dates) - 1):
+            alpha = 1.0 - 0.7 * (i / (len(predicted_dates) - 1))  # 越新的点透明度越高
+            ax1.plot(date_nums[i:i + 2], extracted_factor_filtered[predicted_dates[i:i + 2]], color='purple',
+                     alpha=alpha, linewidth=3,
+                     linestyle=':' if self.leading_prediction else '-', label=latest_period_label if i == 0 else "")
 
         # 创建第二个 y 轴
         ax2 = ax1.twinx()
