@@ -101,6 +101,7 @@ def split_dataframe(whole_df):
                     sub_df = sub_df.replace(0, np.nan)
                 elif df_name == '财务':
                     # 对每列数据求MA4
+                    sub_df = sub_df.dropna(axis=0, how='all')
                     sub_df = sub_df.sort_index(ascending=True).rolling(window=4, min_periods=1).mean().sort_index(ascending=False)
                     # 删除列名中的"单季度."字符串
                     sub_df.columns = sub_df.columns.str.replace('单季度.', '', regex=True)
