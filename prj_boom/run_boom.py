@@ -20,8 +20,8 @@ warnings.filterwarnings("ignore", category=FutureWarning,
 base_config = BaseConfig('boom')
 
 # SINGLE_BATCH_MODE = 'single'
-# SINGLE_BATCH_MODE = 'batch'
-SINGLE_BATCH_MODE = 'batch_macro'
+SINGLE_BATCH_MODE = 'batch'
+# SINGLE_BATCH_MODE = 'batch_macro'
 
 if SINGLE_BATCH_MODE == 'single':
     # 字典存储不同的配置，每个配置包含industry和compare_to等信息
@@ -103,7 +103,6 @@ if SINGLE_BATCH_MODE == 'batch':
                   '房地产', '非银金融']
     financial_list = ['净资产收益率ROE']  # , '归属母公司股东的净利润同比增长率', '营业收入同比增长率']
 
-
     def process_industry(industry, stationary, base_config, financial_list):
         preprocessor = DataPreprocessor(base_config, industry=industry, stationary=stationary)
         preprocessor.preprocess()
@@ -127,6 +126,8 @@ if SINGLE_BATCH_MODE == 'batch':
                 'stationary': stationary,
                 'financial': financial,
                 'figure': modeler.plot_factors(save_or_show='save'),
+                'extracted_factor_filtered': modeler.results.factors.filtered['0'],
+                'factor_filtered': modeler.series_compared_to.dropna().astype(float),
                 'contribution_text': contribution_text
             })
 
@@ -141,14 +142,38 @@ if SINGLE_BATCH_MODE == 'batch':
             all_results.extend(results)
 
     document = Document()
-    for result in all_results:
-        stationary_str = '景气趋势慢线(中观数据平滑后)' if result['stationary'] else '景气变化快线(中观数据未平滑)'
-        document.add_heading(f"{result['industry']} ({stationary_str}, financial={result['financial']})", level=1)
-        document.add_picture(result['figure'], width=Inches(6))
-        document.add_paragraph(result['contribution_text'])
-        document.add_page_break()
-
     current_time = datetime.now().strftime("%Y%m%d_%H%M")
+    file_path = rf'{base_config.excels_path}/景气/output_docs/各行业景气综合指数数据_{current_time}.xlsx'
+
+    with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
+        for result in all_results:
+            stationary_str = '景气趋势慢线(中观数据平滑后)' if result['stationary'] else '景气变化快线(中观数据未平滑)'
+            document.add_heading(f"{result['industry']} ({stationary_str}, financial={result['financial']})", level=1)
+            document.add_picture(result['figure'], width=Inches(6))
+            document.add_paragraph(result['contribution_text'])
+            document.add_page_break()
+
+            # 保存绘图数据到 Excel
+            sheet_name = f"{result['industry']}"
+
+            # 获取数据
+            extracted_factor_filtered = result['extracted_factor_filtered']
+            factor_filtered = result['factor_filtered']
+
+            # 合并数据
+            combined_df = pd.concat([extracted_factor_filtered, factor_filtered], axis=1)
+
+            # 保存合并后的 DataFrame 到 Excel
+            combined_df.to_excel(writer, sheet_name=sheet_name)
+
+            # 获取工作簿和工作表
+            workbook = writer.book
+            worksheet = workbook.create_sheet(f"{sheet_name}_plot")
+
+            # 将图片添加到工作表
+            img = openpyxl.drawing.image.Image(result['figure'])
+            worksheet.add_image(img, 'A1')
+
     document.save(rf'{base_config.excels_path}/景气/output_docs/各行业景气综合指数_{current_time}.docx')
 
 if SINGLE_BATCH_MODE == 'batch_macro':
@@ -190,13 +215,10 @@ if SINGLE_BATCH_MODE == 'batch_macro':
         contribution_text = f"{config['industry']}行业 中观数据对综合景气指数的影响拆解({start_date} to {end_date}):\n"
         contribution_text += modeler.analyze_factor_contribution(start_date, end_date)
 
-        figure_buf = modeler.get_figure_data()
-
         result = {
             'industry': config['industry'],
             'stationary': config['stationary'],
             'financial': config['compare_to'],
-            'figure_buf': figure_buf,
             'extracted_factor_filtered': modeler.results.factors.filtered['0'],
             'factor_filtered': modeler.series_compared_to.dropna().astype(float),
             'figure': modeler.plot_factors(save_or_show='save'),
@@ -220,6 +242,7 @@ if SINGLE_BATCH_MODE == 'batch_macro':
         for result in all_results:
             stationary_str = '景气趋势慢线(中观数据平滑后)' if result['stationary'] else '景气变化快线(中观数据未平滑)'
             document.add_heading(f"{result['industry']} ({stationary_str}, financial={result['financial']})", level=1)
+            document.add_picture(result['figure'], width=Inches(6))
             document.add_paragraph(result['contribution_text'])
             document.add_page_break()
 
@@ -232,7 +255,6 @@ if SINGLE_BATCH_MODE == 'batch_macro':
 
             # 合并数据
             combined_df = pd.concat([extracted_factor_filtered, factor_filtered], axis=1)
-            # combined_df.columns = ['extracted_factor_filtered', 'factor_filtered']
 
             # 保存合并后的 DataFrame 到 Excel
             combined_df.to_excel(writer, sheet_name=sheet_name)
@@ -242,7 +264,7 @@ if SINGLE_BATCH_MODE == 'batch_macro':
             worksheet = workbook.create_sheet(f"{sheet_name}_plot")
 
             # 将图片添加到工作表
-            img = openpyxl.drawing.image.Image(result['figure_buf'])
+            img = openpyxl.drawing.image.Image(result['figure'])
             worksheet.add_image(img, 'A1')
 
     document.save(rf'{base_config.excels_path}/景气/output_docs/宏观经济景气综合指数_{current_time}.docx')

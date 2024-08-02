@@ -523,74 +523,74 @@ class DynamicFactorModeler:
 
             return image_path
 
-    def get_figure_data(self):
-        from io import BytesIO
-        if self.results is None:
-            raise ValueError("Please run apply_dynamic_factor_model() first.")
-
-        extracted_factor = self.results.factors.filtered['0']
-        factor = self.series_compared_to.dropna().astype(float)
-
-        extracted_factor_filtered, factor_filtered, _ = self.align_index_scale_corr(extracted_factor, factor, 'outer')
-
-        latest_date_existing = factor_filtered.dropna().index.max()
-        predicted_dates = extracted_factor_filtered.index[extracted_factor_filtered.index > latest_date_existing]
-        if len(predicted_dates) == 0:
-            extracted_factor_filtered_without_predicted = extracted_factor_filtered
-        else:
-            extracted_factor_filtered_without_predicted = extracted_factor_filtered[
-                extracted_factor_filtered.index < predicted_dates[0]]
-
-        prev_date = extracted_factor_filtered_without_predicted.index.max()
-        predicted_dates = extracted_factor_filtered.index[extracted_factor_filtered.index >= prev_date]
-
-        fig, ax1 = plt.subplots(figsize=(12, 6))
-        ax1.plot(extracted_factor_filtered_without_predicted, label='景气综合指标')
-
-        if self.plot_y0:
-            ax1.axhline(y=0, color='gray', linestyle='--')
-
-        start_date = predicted_dates[0].strftime('%Y-%m-%d') if len(predicted_dates) == 1 else predicted_dates[
-            1].strftime('%Y-%m-%d')
-        end_date = predicted_dates[-1].strftime('%Y-%m-%d')
-        latest_period_label = f"预测期: {start_date} to {end_date}" if start_date != end_date else f"预测期: {start_date}"
-
-        from matplotlib.dates import date2num
-        date_nums = date2num(predicted_dates)
-        for i in range(len(predicted_dates) - 1):
-            alpha = 1.0 - 0.7 * (i / (len(predicted_dates) - 1))
-            ax1.plot(date_nums[i:i + 2], extracted_factor_filtered[predicted_dates[i:i + 2]], color='purple',
-                     alpha=alpha, linewidth=3,
-                     linestyle=':' if self.leading_prediction else '-', label=latest_period_label if i == 0 else "")
-
-        ax2 = ax1.twinx()
-        nan_count = factor_filtered.isna().sum()
-        total_count = len(factor_filtered)
-
-        if nan_count > total_count / 2 or self.preprocessor.industry == '社零综指':
-            ax2.scatter(factor_filtered.index, factor_filtered.values, label=factor_filtered.name, color='red')
-        else:
-            ax2.plot(factor_filtered.index, factor_filtered.values, label=factor_filtered.name, color='red', alpha=0.6)
-
-        years = sorted(set(dt.year for dt in extracted_factor_filtered.index))
-        for year in years:
-            ax1.axvline(pd.to_datetime(f'{year}-01-01'), color='gray', linestyle='--', linewidth=0.8)
-
-        ax1.set_ylabel('景气综合指标')
-        ax2.set_ylabel(factor.name)
-
-        lines1, labels1 = ax1.get_legend_handles_labels()
-        lines2, labels2 = ax2.get_legend_handles_labels()
-        ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
-
-        plt.title(rf'{self.preprocessor.industry}')
-
-        buf = BytesIO()
-        plt.savefig(buf, format='png')
-        buf.seek(0)
-        plt.close(fig)
-
-        return buf
+    # def get_figure_data(self):
+    #     from io import BytesIO
+    #     if self.results is None:
+    #         raise ValueError("Please run apply_dynamic_factor_model() first.")
+    #
+    #     extracted_factor = self.results.factors.filtered['0']
+    #     factor = self.series_compared_to.dropna().astype(float)
+    #
+    #     extracted_factor_filtered, factor_filtered, _ = self.align_index_scale_corr(extracted_factor, factor, 'outer')
+    #
+    #     latest_date_existing = factor_filtered.dropna().index.max()
+    #     predicted_dates = extracted_factor_filtered.index[extracted_factor_filtered.index > latest_date_existing]
+    #     if len(predicted_dates) == 0:
+    #         extracted_factor_filtered_without_predicted = extracted_factor_filtered
+    #     else:
+    #         extracted_factor_filtered_without_predicted = extracted_factor_filtered[
+    #             extracted_factor_filtered.index < predicted_dates[0]]
+    #
+    #     prev_date = extracted_factor_filtered_without_predicted.index.max()
+    #     predicted_dates = extracted_factor_filtered.index[extracted_factor_filtered.index >= prev_date]
+    #
+    #     fig, ax1 = plt.subplots(figsize=(12, 6))
+    #     ax1.plot(extracted_factor_filtered_without_predicted, label='景气综合指标')
+    #
+    #     if self.plot_y0:
+    #         ax1.axhline(y=0, color='gray', linestyle='--')
+    #
+    #     start_date = predicted_dates[0].strftime('%Y-%m-%d') if len(predicted_dates) == 1 else predicted_dates[
+    #         1].strftime('%Y-%m-%d')
+    #     end_date = predicted_dates[-1].strftime('%Y-%m-%d')
+    #     latest_period_label = f"预测期: {start_date} to {end_date}" if start_date != end_date else f"预测期: {start_date}"
+    #
+    #     from matplotlib.dates import date2num
+    #     date_nums = date2num(predicted_dates)
+    #     for i in range(len(predicted_dates) - 1):
+    #         alpha = 1.0 - 0.7 * (i / (len(predicted_dates) - 1))
+    #         ax1.plot(date_nums[i:i + 2], extracted_factor_filtered[predicted_dates[i:i + 2]], color='purple',
+    #                  alpha=alpha, linewidth=3,
+    #                  linestyle=':' if self.leading_prediction else '-', label=latest_period_label if i == 0 else "")
+    #
+    #     ax2 = ax1.twinx()
+    #     nan_count = factor_filtered.isna().sum()
+    #     total_count = len(factor_filtered)
+    #
+    #     if nan_count > total_count / 2 or self.preprocessor.industry == '社零综指':
+    #         ax2.scatter(factor_filtered.index, factor_filtered.values, label=factor_filtered.name, color='red')
+    #     else:
+    #         ax2.plot(factor_filtered.index, factor_filtered.values, label=factor_filtered.name, color='red', alpha=0.6)
+    #
+    #     years = sorted(set(dt.year for dt in extracted_factor_filtered.index))
+    #     for year in years:
+    #         ax1.axvline(pd.to_datetime(f'{year}-01-01'), color='gray', linestyle='--', linewidth=0.8)
+    #
+    #     ax1.set_ylabel('景气综合指标')
+    #     ax2.set_ylabel(factor.name)
+    #
+    #     lines1, labels1 = ax1.get_legend_handles_labels()
+    #     lines2, labels2 = ax2.get_legend_handles_labels()
+    #     ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
+    #
+    #     plt.title(rf'{self.preprocessor.industry}')
+    #
+    #     buf = BytesIO()
+    #     plt.savefig(buf, format='png')
+    #     buf.seek(0)
+    #     plt.close(fig)
+    #
+    #     return buf
 
     def plot_factors_single_line(self, results_concurrent, results_leading, save_or_show='show'):
         """
