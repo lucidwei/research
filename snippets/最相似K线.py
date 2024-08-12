@@ -7,9 +7,10 @@ import pandas as pd
 import numpy as np
 
 # 读取Excel文件
-file_path = 'D:\\Downloads\\000852.SH.xlsx'
-data = pd.read_excel(file_path, engine='openpyxl')
-WINDOW_SIZE = 7
+# file_path = 'D:\\Downloads\\000852.SH.xlsx'
+file_path = 'D:\\Downloads\\000001.SH.xlsx'
+data = pd.read_excel(file_path, engine='openpyxl') ##要删除‘数据来源：Wind’
+WINDOW_SIZE = 8
 
 # 提取相关列和重命名列名
 data = data[['日期', '开盘价(元)', '最高价(元)', '最低价(元)', '收盘价(元)', '成交额(百万)']]
