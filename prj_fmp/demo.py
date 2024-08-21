@@ -6,6 +6,8 @@
 import pandas as pd
 import numpy as np
 from sklearn.linear_model import LassoCV, Lasso
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 from pylab import mpl
 mpl.rcParams['font.sans-serif'] = ['STZhongsong']    # 指定默认字体：解决plot不能显示中文问题
@@ -155,31 +157,9 @@ class FMPModel:
 
         self.asset_data_yoy = asset_data_yoy  # 保存资产数据，用于后续分析
 
-    def explain_prediction(self):
-        # 获取上个月和当前月的资产数据
-        last_month_data = self.asset_data_yoy[self.selected_features].iloc[-2].values
-        current_month_data = self.asset_data_yoy[self.selected_features].iloc[-1].values
-
-        # 计算每个资产的贡献
-        contributions = (current_month_data - last_month_data) * self.selected_weights
-
-        # 创建一个DataFrame来存储结果
-        explanation_df = pd.DataFrame({
-            'Asset': self.selected_features,
-            'Weight': self.selected_weights,
-            'Last Month Value': last_month_data,
-            'Current Month Value': current_month_data,
-            'Change': current_month_data - last_month_data,
-            'Contribution': contributions
-        })
-
-        # 按贡献绝对值排序
-        explanation_df = explanation_df.sort_values('Contribution', key=abs, ascending=False)
-
-        # 计算总变化
-        total_change = explanation_df['Contribution'].sum()
-
-        return explanation_df, total_change
+        # 存储特定方面的FMP系列和选定的权重
+        setattr(self, f'fmp_series_{macro_aspect}', self.fmp_series)
+        setattr(self, f'selected_weights_{macro_aspect}', dict(zip(self.selected_features, self.selected_weights)))
 
     def plot_timeseries(self):
         # 合并FMP和原始宏观数据，只保留两者均有数据的日期部分
@@ -204,8 +184,38 @@ class FMPModel:
         plt.grid(True)
         plt.show()
 
+    def explain_prediction(self):
+        # 获取上个月和当前月的资产数据
+        last_month_data = self.asset_data_yoy[self.selected_features].iloc[-2]
+        current_month_data = self.asset_data_yoy[self.selected_features].iloc[-1]
+
+        # 获取日期信息
+        start_date = last_month_data.name.strftime('%Y-%m-%d')
+        end_date = current_month_data.name.strftime('%Y-%m-%d')
+
+        # 计算每个资产的贡献
+        contributions = (current_month_data.values - last_month_data.values) * self.selected_weights
+
+        # 创建一个DataFrame来存储结果
+        explanation_df = pd.DataFrame({
+            'Asset': self.selected_features,
+            'Weight': self.selected_weights,
+            'Last Month Value': last_month_data.values,
+            'Current Month Value': current_month_data.values,
+            'Change': current_month_data.values - last_month_data.values,
+            'Contribution': contributions
+        })
+
+        # 按贡献绝对值排序
+        explanation_df = explanation_df.sort_values('Contribution', key=abs, ascending=False)
+
+        # 计算总变化
+        total_change = explanation_df['Contribution'].sum()
+
+        return explanation_df, total_change, start_date, end_date
+
     def plot_explanation(self):
-        explanation_df, total_change = self.explain_prediction()
+        explanation_df, total_change, start_date, end_date = self.explain_prediction()
 
         # 按贡献绝对值排序
         sorted_df = explanation_df.sort_values('Contribution', ascending=False)
@@ -248,13 +258,15 @@ class FMPModel:
             plt.xticks(range(len(all_labels)), all_labels, rotation=45, ha='right')
 
             # 调整y轴范围
-            plt.ylim(min(cumulative.min(), values.min(), 0) - 0.1, max(cumulative.max(), values.max(), net) + 0.1)
+            min_value = min(cumulative.min(), 0)
+            max_value = max(cumulative.max(), values.max(), net)
+            plt.ylim(min_value, max_value + (max_value - min_value) * 0.1)  # 添加10%的顶部空间
 
             # 添加水平线
             plt.axhline(0, color='black', linewidth=0.5)
 
             # 添加标题和调整布局
-            plt.title(f'{self.macro_aspect}指标变化归因', fontsize=16)
+            plt.title(f'{self.macro_aspect}指标{start_date}至{end_date}变化归因', fontsize=16)
             plt.tight_layout()
 
             plt.show()
@@ -266,6 +278,140 @@ class FMPModel:
         self.plot_timeseries()
         self.plot_explanation()
 
+    def predict_asset_direction(self, top_weights_percent=0.3, min_top_weights=10):
+        aspects = ['增长', '通胀', '流动性', '信用']
+        fmp_diff = {}
+        latest_macro = {}
+        latest_fmp = {}
+
+        for aspect in aspects:
+            if not hasattr(self, f'fmp_series_{aspect}'):
+                raise ValueError(f"请先为 {aspect} 运行 fit_model")
+
+            latest_macro[aspect] = self.macro_data[aspect].iloc[-1]
+            latest_date = self.macro_data[aspect].index[-1]
+
+            fmp_series = getattr(self, f'fmp_series_{aspect}')
+            if latest_date in fmp_series.index:
+                latest_fmp[aspect] = fmp_series.loc[latest_date]
+            else:
+                latest_fmp[aspect] = fmp_series.iloc[-1]
+
+            fmp_diff[aspect] = latest_macro[aspect] - latest_fmp[aspect]
+
+        results = pd.DataFrame({
+            'Latest Macro': latest_macro,
+            'Latest FMP': latest_fmp,
+            'Difference': fmp_diff
+        })
+
+        print("宏观方面预测结果：")
+        print(results)
+
+        direction = {}
+        detailed_direction = {}
+        for asset in self.asset_data_yoy.columns:
+            asset_direction = 0
+            total_weight = 0
+            aspect_contributions = {}
+            for aspect in aspects:
+                weights = getattr(self, f'selected_weights_{aspect}')
+
+                sorted_weights = sorted(weights.items(), key=lambda x: abs(x[1]), reverse=True)
+                top_n = max(min_top_weights, int(len(sorted_weights) * top_weights_percent))
+                top_weights = dict(sorted_weights[:top_n])
+
+                if asset in top_weights:
+                    weight = top_weights[asset]
+                    aspect_weight = abs(fmp_diff[aspect])
+                    contribution = fmp_diff[aspect] * weight * aspect_weight
+                    asset_direction += contribution
+                    total_weight += aspect_weight
+                    aspect_contributions[aspect] = contribution
+
+            if total_weight > 0:
+                direction[asset] = asset_direction / total_weight
+                detailed_direction[asset] = {aspect: (contrib / total_weight) for aspect, contrib in
+                                             aspect_contributions.items()}
+            else:
+                pass
+                # direction[asset] = 0
+                # detailed_direction[asset] = {aspect: 0 for aspect in aspects}
+
+        sorted_direction = sorted(direction.items(), key=lambda x: abs(x[1]), reverse=True)
+
+        print(f"\n宏观预期修正下资产价格应该变动的方向(以{latest_date.strftime('%Y-%m-%d')}收盘价为基准)：")
+        for asset, dir in sorted_direction:
+            percentage = round(dir * 100, 1)
+            print(f"{asset}: {percentage}% =", end=" ")
+            contributions = [f"({aspect}){round(contrib * 100, 1)}%" for aspect, contrib in
+                             detailed_direction[asset].items() if contrib != 0]
+            print(" + ".join(contributions))
+
+        return results, direction, detailed_direction
+
+    def pca_analysis(self, asset_data_yoy):
+        # 标准化数据
+        scaler = StandardScaler()
+        scaled_data = scaler.fit_transform(asset_data_yoy)
+
+        # 执行PCA
+        pca = PCA()
+        pca_result = pca.fit_transform(scaled_data)
+
+        # 计算解释方差比
+        explained_variance_ratio = pca.explained_variance_ratio_
+
+        # 创建一个包含前三个主成分的DataFrame
+        pca_df = pd.DataFrame(data=pca_result[:, :3],
+                              columns=['PC1', 'PC2', 'PC3'],
+                              index=asset_data_yoy.index)
+
+        # 打印前三个主成分的解释方差比
+        print("Explained variance ratio of first 3 PCs:")
+        for i, ratio in enumerate(explained_variance_ratio[:3], 1):
+            print(f"PC{i}: {ratio:.4f}")
+
+        # 分析每个主成分的构成
+        component_df = pd.DataFrame(data=pca.components_.T[:, :3],
+                                    columns=['PC1', 'PC2', 'PC3'],
+                                    index=asset_data_yoy.columns)
+
+        print("\nTop contributors to each principal component:")
+        for pc in ['PC1', 'PC2', 'PC3']:
+            print(f"\n{pc}:")
+            print(component_df[pc].abs().sort_values(ascending=False).head())
+
+        # 绘制前三个主成分的时间序列
+        plt.figure(figsize=(13, 19))
+
+        # PC1
+        plt.subplot(3, 1, 1)
+        plt.plot(pca_df.index, pca_df['PC1'])
+        plt.title('First Principal Component (PC1)')
+        plt.ylabel('Value')
+        plt.grid(True)
+
+        # PC2
+        plt.subplot(3, 1, 2)
+        plt.plot(pca_df.index, pca_df['PC2'])
+        plt.title('Second Principal Component (PC2)')
+        plt.ylabel('Value')
+        plt.grid(True)
+
+        # PC3
+        plt.subplot(3, 1, 3)
+        plt.plot(pca_df.index, pca_df['PC3'])
+        plt.title('Third Principal Component (PC3)')
+        plt.xlabel('Date')
+        plt.ylabel('Value')
+        plt.grid(True)
+
+        plt.tight_layout()
+        plt.show()
+
+        return pca, pca_result, pca_df, component_df
+
 
 
 
@@ -274,14 +420,20 @@ file_path = rf"D:\WPS云盘\WPS云盘\工作-麦高\专题研究\FMP\资产行情与宏观数据.xlsx
 fmp_model = FMPModel(file_path)
 fmp_model.load_data()
 asset_data_yoy = fmp_model.preprocess_data()
+# 执行PCA分析
+# fmp_model.pca_analysis(asset_data_yoy)
+
 fmp_model.fit_model(asset_data_yoy, '增长')
-fmp_model.plot_results()
+# fmp_model.plot_results()
 fmp_model.fit_model(asset_data_yoy, '通胀')
-fmp_model.plot_results()
+# fmp_model.plot_results()
 fmp_model.fit_model(asset_data_yoy, '流动性')
-fmp_model.plot_results()
+# fmp_model.plot_results()
 fmp_model.fit_model(asset_data_yoy, '信用')
 fmp_model.plot_results()
+
+# 预测资产价格变动方向
+results = fmp_model.predict_asset_direction()
 
 # def fit_model(self, asset_data_yoy, macro_aspect: str):
 #     self.macro_aspect = macro_aspect
