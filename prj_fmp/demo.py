@@ -6,6 +6,7 @@
 import pandas as pd
 import numpy as np
 from sklearn.linear_model import LassoCV, Lasso
+from sklearn.linear_model import ElasticNetCV
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
@@ -111,12 +112,22 @@ class FMPModel:
         X = data.iloc[:, :-1]  # 资产行情数据
         y = data.iloc[:, -1]  # 宏观数据
 
+        # 计算样本权重：越近的月份数据权重越大
+        date_index = pd.to_datetime(X.index)
+        latest_date = date_index.max()
+        months_diff = ((latest_date - date_index) / pd.Timedelta(days=30)).astype(int)
+        sample_weights = np.exp(-months_diff / 24)  # 使用指数衰减，一年的半衰期
+
         # LassoCV进行交叉验证选择最佳惩罚系数
-        lasso_cv = LassoCV(cv=10, max_iter=10000).fit(X, y)
+        lasso_cv = LassoCV(cv=10, max_iter=10000)
+        lasso_cv.fit(X, y, sample_weight=sample_weights)
+
+        # 获取最佳的 alpha 值
         alpha = lasso_cv.alpha_
 
-        # 使用最佳惩罚系数进行Lasso回归
-        self.lasso = Lasso(alpha=alpha, max_iter=10000).fit(X, y)
+        # 使用最佳alpha和样本权重进行最终拟合
+        self.lasso = Lasso(alpha=alpha, max_iter=10000)
+        self.lasso.fit(X, y, sample_weight=sample_weights)
         self.selected_features = X.columns[(self.lasso.coef_ != 0)]
         self.selected_weights = self.lasso.coef_[self.lasso.coef_ != 0]
         self.intercept = self.lasso.intercept_
@@ -341,12 +352,24 @@ class FMPModel:
         sorted_direction = sorted(direction.items(), key=lambda x: abs(x[1]), reverse=True)
 
         print(f"\n宏观预期修正下资产价格应该变动的方向(以{latest_date.strftime('%Y-%m-%d')}收盘价为基准)：")
-        for asset, dir in sorted_direction:
+
+        def print_asset_info(asset, dir):
             percentage = round(dir * 100, 1)
-            print(f"{asset}: {percentage}% =", end=" ")
             contributions = [f"({aspect}){round(contrib * 100, 1)}%" for aspect, contrib in
                              detailed_direction[asset].items() if contrib != 0]
-            print(" + ".join(contributions))
+            print(f"{asset}: {percentage}% = " + " + ".join(contributions))
+
+        # 将资产分为两组并打印
+        non_zhongxin = [(a, d) for a, d in sorted_direction if "中信" not in a]
+        zhongxin = [(a, d) for a, d in sorted_direction if "中信" in a]
+
+        for asset, dir in non_zhongxin:
+            print_asset_info(asset, dir)
+
+        if zhongxin:
+            print("\n行业资产：")
+            for asset, dir in zhongxin:
+                print_asset_info(asset, dir)
 
         return results, direction, detailed_direction
 
