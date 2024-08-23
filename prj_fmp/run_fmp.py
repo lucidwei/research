@@ -116,7 +116,7 @@ class FMPModel:
         date_index = pd.to_datetime(X.index)
         latest_date = date_index.max()
         months_diff = ((latest_date - date_index) / pd.Timedelta(days=30)).astype(int)
-        sample_weights = np.exp(-months_diff / 24)  # 使用指数衰减，一年的半衰期
+        sample_weights = np.exp(-months_diff / 30)  # 使用指数衰减，一年的半衰期
 
         # LassoCV进行交叉验证选择最佳惩罚系数
         lasso_cv = LassoCV(cv=10, max_iter=10000)
@@ -373,6 +373,102 @@ class FMPModel:
 
         return results, direction, detailed_direction
 
+    def plot_asset_changes(self):
+        # 获取宏观数据的最新日期
+        latest_macro_date = self.macro_data.index[-1]
+
+        # 找到资产数据中最接近但不超过宏观数据最新日期的日期
+        asset_date = self.asset_data.index[-1]
+        previous_asset_date = self.asset_data.index[self.asset_data.index < asset_date][-1]
+
+        # 计算环比变化
+        latest_data = (self.asset_data.loc[asset_date] / self.asset_data.loc[previous_asset_date] - 1) * 100
+
+        # 准备宏观预期数据
+        macro_aspects = ['增长', '通胀', '信用', '流动性']
+        expected_changes = pd.DataFrame(index=latest_data.index, columns=macro_aspects)
+
+        # 使用 predict_asset_direction 方法的逻辑来填充 expected_changes
+        aspects = macro_aspects
+        fmp_diff = {}
+        latest_macro = {}
+        latest_fmp = {}
+
+        for aspect in aspects:
+            if not hasattr(self, f'fmp_series_{aspect}'):
+                raise ValueError(f"请先为 {aspect} 运行 fit_model")
+
+            latest_macro[aspect] = self.macro_data[aspect].loc[latest_macro_date]
+
+            fmp_series = getattr(self, f'fmp_series_{aspect}')
+            if latest_macro_date in fmp_series.index:
+                latest_fmp[aspect] = fmp_series.loc[latest_macro_date]
+            else:
+                latest_fmp[aspect] = fmp_series.iloc[-1]
+
+            fmp_diff[aspect] = latest_macro[aspect] - latest_fmp[aspect]
+
+        for asset in latest_data.index:
+            for aspect in aspects:
+                weights = getattr(self, f'selected_weights_{aspect}', {})
+                if asset in weights:
+                    expected_changes.loc[asset, aspect] = fmp_diff[aspect] * weights[asset] * abs(fmp_diff[aspect])
+
+        # 分离宏观资产和行业资产
+        industry_assets = [col for col in latest_data.index if '中信' in col]
+        macro_assets = [col for col in latest_data.index if col not in industry_assets]
+
+        # 创建图表
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(20, 16))
+
+        def plot_assets(ax, assets, title):
+            x = np.arange(len(assets))
+            width = 0.35
+
+            # 绘制实际涨跌幅
+            ax.bar(x - width / 2, latest_data[assets], width, label='实际涨跌幅', color='skyblue')
+
+            # 处理 NaN 值并放大预测值
+            expected_changes_filled = expected_changes.fillna(0) * 100
+
+            # 绘制宏观预期修正的应变动方向
+            bottom = np.zeros(len(assets))
+            colors = ['#FF9999', '#66B2FF', '#99FF99', '#FFCC99']
+            for aspect, color in zip(macro_aspects, colors):
+                values = expected_changes_filled.loc[assets, aspect]
+                ax.bar(x + width / 2, values, width,
+                       bottom=bottom, label=f'{aspect}贡献', color=color)
+                bottom += values
+
+            ax.set_xlabel('资产名称')
+            ax.set_ylabel('百分比变化')
+            ax.set_title(title)
+            ax.set_xticks(x)
+            ax.set_xticklabels(assets, rotation=45, ha='right')
+            ax.legend()
+
+            # 添加数值标签
+            for i, v in enumerate(latest_data[assets]):
+                ax.text(i - width / 2, v, f'{v:.2f}%', ha='center', va='bottom')
+            for i, v in enumerate(bottom):
+                ax.text(i + width / 2, v, f'{v:.2f}%', ha='center', va='bottom')
+
+            # 调整 y 轴范围以更好地显示小的变化
+            y_min, y_max = ax.get_ylim()
+            ax.set_ylim(min(y_min, -1), max(y_max, 1))  # 确保至少显示 -1% 到 1% 的范围
+
+        print(f"资产价格变动基准日期: {asset_date.strftime('%Y-%m-%d')}")
+        print(f"相对于上一期日期: {previous_asset_date.strftime('%Y-%m-%d')}")
+        print(f"宏观数据最新日期: {latest_macro_date.strftime('%Y-%m-%d')}")
+
+        plot_assets(ax1, macro_assets, '宏观资产变化')
+        plot_assets(ax2, industry_assets, '行业资产变化')
+
+        plt.tight_layout()
+        plt.show()
+
+
+
     def pca_analysis(self, asset_data_yoy):
         # 标准化数据
         scaler = StandardScaler()
@@ -453,10 +549,11 @@ fmp_model.fit_model(asset_data_yoy, '通胀')
 fmp_model.fit_model(asset_data_yoy, '流动性')
 # fmp_model.plot_results()
 fmp_model.fit_model(asset_data_yoy, '信用')
-fmp_model.plot_results()
+# fmp_model.plot_results()
 
 # 预测资产价格变动方向
 results = fmp_model.predict_asset_direction()
+fmp_model.plot_asset_changes()
 
 # def fit_model(self, asset_data_yoy, macro_aspect: str):
 #     self.macro_aspect = macro_aspect
