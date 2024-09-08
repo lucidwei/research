@@ -34,6 +34,7 @@ if SINGLE_BATCH_MODE == 'single':
         # {'industry': '钢铁', 'compare_to': '净资产收益率ROE', 'stationary': False},
         # {'industry': '基础化工', 'compare_to': '净资产收益率ROE', 'stationary': False},
         # {'industry': '建材', 'compare_to': '净资产收益率ROE', 'stationary': False},
+        {'industry': '建筑', 'compare_to': '净资产收益率ROE', 'stationary': False},
         # {'industry': '电子', 'compare_to': '净资产收益率ROE', 'stationary': False},
         # {'industry': '传媒', 'compare_to': '净资产收益率ROE'},
         # {'industry': '计算机', 'compare_to': '净资产收益率ROE'},
@@ -59,12 +60,12 @@ if SINGLE_BATCH_MODE == 'single':
         # {'industry': '非银金融', 'compare_to': '净资产收益率ROE', 'stationary': False},
         # {'industry': '就业状况', 'compare_to': '中国:城镇调查失业率', 'stationary': False, 'date_start': '2018-01-01'},
         # {'industry': '社零综指', 'compare_to': '中国:社会消费品零售总额:当月同比', 'stationary': False, 'date_start': '2020-01-01'},
-        # {'industry': '出口', 'compare_to': '中国:出口金额:当月同比', 'stationary': False, 'date_start': '2010-01-01'},
+        {'industry': '出口', 'compare_to': '中国:出口金额:当月同比', 'stationary': False, 'date_start': '2010-01-01'},
         # {'industry': '出口', 'compare_to': '中国:出口金额:当月同比', 'stationary': False, 'date_start': '2010-01-01', 'single_line': True},
         # {'industry': 'PPI', 'compare_to': '中国:PPI:全部工业品:当月同比', 'stationary': False, 'date_start': '2010-01-01', 'single_line': True},
         # {'industry': '房价', 'compare_to': '中国:房屋销售价格指数:二手住宅:70个大中城市:当月同比', 'stationary': False, 'date_start': '2010-01-01'},
         # {'industry': '工业增加值', 'compare_to': '中国:规模以上工业增加值:当月同比', 'stationary': False, 'date_start': '2010-01-01'},
-        {'industry': '制造业投资', 'compare_to': '(月度化)中国:固定资产投资完成额:制造业:累计同比', 'stationary': False, 'date_start': '2014-01-01', 'leading_prediction': False},
+        # {'industry': '制造业投资', 'compare_to': '(月度化)中国:固定资产投资完成额:制造业:累计同比', 'stationary': False, 'date_start': '2014-01-01', 'leading_prediction': False},
         # {'industry': '制造业投资', 'compare_to': '中国:固定资产投资完成额:制造业:累计同比', 'stationary': False, 'date_start': '2014-01-01', 'leading_prediction': False},
         # {'industry': '房地产投资', 'compare_to': '中国:房地产开发投资完成额:累计同比', 'stationary': False, 'date_start': '2012-01-01', 'leading_prediction': False},
         # {'industry': '房地产投资', 'compare_to': '(月度化)中国:房地产开发投资完成额:累计同比', 'stationary': False, 'date_start': '2012-01-01', 'leading_prediction': False, 'plot_y0': True},
@@ -95,7 +96,7 @@ if SINGLE_BATCH_MODE == 'single':
         modeler.run()
 
 if SINGLE_BATCH_MODE == 'batch':
-    industries = ['石油石化', '煤炭', '有色金属', '钢铁', '基础化工', '建材', '农林牧渔',
+    industries = ['石油石化', '煤炭', '有色金属', '钢铁', '基础化工', '建材', '农林牧渔', '建筑',
                   '电子', '传媒', '计算机',
                   '机械', '电新', '电力', '国防军工',
                   '汽车', '家电', '医药', '食品饮料', '白酒', '食品', '饮料', '消费服务', '纺服', '商贸零售',
