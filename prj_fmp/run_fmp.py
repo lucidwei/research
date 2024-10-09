@@ -543,13 +543,13 @@ asset_data_yoy = fmp_model.preprocess_data()
 # fmp_model.pca_analysis(asset_data_yoy)
 
 fmp_model.fit_model(asset_data_yoy, '增长')
-# fmp_model.plot_results()
+fmp_model.plot_results()
 fmp_model.fit_model(asset_data_yoy, '通胀')
-# fmp_model.plot_results()
+fmp_model.plot_results()
 fmp_model.fit_model(asset_data_yoy, '流动性')
-# fmp_model.plot_results()
+fmp_model.plot_results()
 fmp_model.fit_model(asset_data_yoy, '信用')
-# fmp_model.plot_results()
+fmp_model.plot_results()
 
 # 预测资产价格变动方向
 results = fmp_model.predict_asset_direction()

@@ -50,18 +50,20 @@ def static_analysis(dfs, date=None):
     df = dfs[date]
 
     # 计算行业拥挤度和行业趋势强度的90%分位数
-    crowdedness_90 = df['行业拥挤度'].quantile(0.5)
-    trend_strength_90 = df['行业趋势强度'].quantile(0.7)
+    crowdedness_90 = df['行业拥挤度'].quantile(0.8)
+    trend_strength_top = df['行业趋势强度'].quantile(0.8)
+    trend_strength_bottom = df['行业趋势强度'].quantile(0.2)
 
     # 根据筛选条件创建布尔掩码
     mask_high_prosperity = df['最新行业景气度'] > 0
     mask_low_valuation_PE = df['当前PE历史百分位'] < 0.5
     mask_low_valuation_PB = df['当前PB历史百分位'] < 0.5
     mask_low_crowdedness = df['行业拥挤度'] <= crowdedness_90
-    mask_low_trend_strength = df['行业趋势强度'] <= trend_strength_90
+    mask_low_trend_strength = df['行业趋势强度'] <= trend_strength_bottom
+    mask_high_trend_strength = df['行业趋势强度'] >= trend_strength_top
 
     # 将布尔掩码组合起来,选择满足所有条件的行
-    selected_rows = df[mask_high_prosperity & mask_low_valuation_PE & mask_low_valuation_PB & mask_low_crowdedness & mask_low_trend_strength]
+    selected_rows = df[mask_high_prosperity & mask_low_valuation_PE & mask_low_valuation_PB & mask_low_crowdedness & (mask_low_trend_strength|mask_high_trend_strength)]
 
     # 按照'最新行业景气度'从大到小排序
     selected_rows_sorted = selected_rows.sort_values(by='当前景气度历史百分位', ascending=False)
@@ -158,7 +160,7 @@ print("高景气、低估值、低拥挤的行业:")
 print(selected_industries)
 
 # 进行动态分析
-change_df, start_date, end_date = dynamic_analysis(dfs, history_data, start_date='20240615', end_date='20240622')
+change_df, start_date, end_date = dynamic_analysis(dfs, history_data, start_date='20240911', end_date='20240921')
 print("指标变化:")
 print(change_df)
 
@@ -167,7 +169,7 @@ output_file = save_to_excel(selected_industries, change_df, directory, start_dat
 print(f"结果已保存到 {output_file}")
 
 # 进行动态分析
-change_df, start_date, end_date = dynamic_analysis(dfs, history_data, start_date='20240522', end_date='20240622')
+change_df, start_date, end_date = dynamic_analysis(dfs, history_data, start_date='20240821', end_date='20240921')
 print("指标变化:")
 print(change_df)
 
