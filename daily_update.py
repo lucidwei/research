@@ -23,11 +23,11 @@ data_updater = LiquidityDatabaseUpdater(base_config_liquidity)
 # 比较当前时间是否晚于或等于上午9点，9点之后更新两融
 # 每天更新三次数据，早间，9点后，收盘后
 if current_time < rongzi_time:
-    print('更新ETF和北向')
+    print('更新ETF和减持')
     data_updater.all_funds_info_updater.update_all_funds_info()
     data_updater.etf_lof_updater.logic_etf_lof_funds()
     # 北向晚上8点还没出，估计也得第二天出
-    data_updater.north_inflow_updater.logic_north_inflow_by_industry()
+    data_updater.major_holder_updater.logic_major_holder()
 elif rongzi_time < current_time < close_time:
     print('更新两融')
     data_updater.margin_trade_by_industry_updater.logic_margin_trade_by_industry()
