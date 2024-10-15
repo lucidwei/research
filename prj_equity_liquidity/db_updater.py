@@ -254,6 +254,16 @@ class DatabaseUpdater(PgDbUpdaterBase):
 
 
 class AllFundsInfoUpdater:
+    """
+    ETF的行业和结构分类，每半年在数据库中用下述代码筛选后手动标注
+    select *
+	FROM public.product_static_info
+	where product_type='fund' AND buystartdate is not null AND fundfounddate is not null
+	AND fund_fullname NOT LIKE '%债%'
+    AND fund_fullname NOT LIKE '%联接%'
+	AND fund_fullname  LIKE '%交易型%'
+    ORDER BY buystartdate desc
+    """
     def __init__(self, db_updater):
         self.db_updater = db_updater
 
