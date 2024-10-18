@@ -1,14 +1,14 @@
 @echo off
 setlocal
 
-:: 使用PowerShell获取当前日期的星期数，1 表示周一，7 表示周日
+:: 使用PowerShell获取当前日期的星期数，0 表示周日，6 表示周六
 for /F "tokens=*" %%a in ('powershell -Command "(Get-Date).DayOfWeek.value__"') do set dayOfWeek=%%a
 
 echo Day of the week: %dayOfWeek%
 
-:: 检查当前是否为周六(7)或周日(0)
+:: 检查当前是否为周六(6)或周日(0)
 if "%dayOfWeek%"=="0" goto end
-if "%dayOfWeek%"=="7" goto end
+if "%dayOfWeek%"=="6" goto end
 
 :: 设置日志文件路径和名称
 set logPath=E:\BaiduNetdiskWorkspace\FICC_research\bat_scripts\logs
@@ -31,6 +31,7 @@ echo Log file will be: %logFile%
 echo Running the Python script...
 :: 使用 PowerShell 运行 Python 脚本，并使用 Tee-Object 同时输出到文件和控制台
 powershell -Command "D:\ProgramData\anaconda3\envs\touyan\python.exe E:\BaiduNetdiskWorkspace\FICC_research\daily_update.py | Tee-Object -FilePath '%logFile%'"
+powershell -Command "D:\ProgramData\anaconda3\envs\touyan\python.exe E:\BaiduNetdiskWorkspace\FICC_research\daily_update.py *>&1 | Tee-Object -FilePath '%logFile%'; exit $LastExitCode"
 
 if errorlevel 1 (
     echo Error running Python script. Error level: %errorlevel%
