@@ -30,7 +30,6 @@ echo Log file will be: %logFile%
 :: 运行Python脚本并记录输出到日志文件
 echo Running the Python script...
 :: 使用 PowerShell 运行 Python 脚本，并使用 Tee-Object 同时输出到文件和控制台
-powershell -Command "D:\ProgramData\anaconda3\envs\touyan\python.exe E:\BaiduNetdiskWorkspace\FICC_research\daily_update.py | Tee-Object -FilePath '%logFile%'"
 powershell -Command "D:\ProgramData\anaconda3\envs\touyan\python.exe E:\BaiduNetdiskWorkspace\FICC_research\daily_update.py *>&1 | Tee-Object -FilePath '%logFile%'; exit $LastExitCode"
 
 if errorlevel 1 (
