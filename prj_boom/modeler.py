@@ -515,7 +515,7 @@ class DynamicFactorModeler:
             plt.show()
         elif save_or_show == 'save':
             # 保存图像到文件
-            current_time = datetime.now().strftime("%Y%m%d_%H%M")
+            current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
             stationary_flag = 'stationary' if self.preprocessor.stationary else 'fast'
             image_path = rf'{self.preprocessor.base_config.excels_path}/景气/pics/{self.preprocessor.industry}_{stationary_flag}_factor_plot_{current_time}.png'
             plt.savefig(image_path)

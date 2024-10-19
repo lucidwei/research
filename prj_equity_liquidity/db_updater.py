@@ -36,7 +36,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
         self.all_funds_info_updater.update_all_funds_info()
         self.etf_lof_updater.logic_etf_lof_funds()
         self.margin_trade_by_industry_updater.logic_margin_trade_by_industry()
-        self.north_inflow_updater.logic_north_inflow_by_industry()
+        # self.north_inflow_updater.logic_north_inflow_by_industry()
         self.major_holder_updater.logic_major_holder()
         self.price_valuation_updater.logic_price_valuation()
         self.repo_updater.logic_repo()
