@@ -273,7 +273,7 @@ class PgDbManager:
         return df
 
     def select_column_from_joined_table(self, target_table_name: str, target_join_column: str, join_table_name: str,
-                                        join_column: str, selected_column: str, filter_condition: str = ""):
+                                        join_column: str, selected_column: str, filter_condition: str = "", return_df=False):
         """
         获取连接表中的日期列表
 
@@ -294,7 +294,10 @@ class PgDbManager:
             raise ValueError("The selected column does not exist in either join_table or target_table.")
 
         # Return the selected column values
-        return sorted(df[selected_column].dropna().drop_duplicates().tolist())
+        if not return_df:
+            return sorted(df[selected_column].dropna().drop_duplicates().tolist())
+        else:
+            return df[selected_column].dropna().drop_duplicates()
 
     def read_from_high_freq_view(self, code_list: List[str]) -> pd.DataFrame:
         """
