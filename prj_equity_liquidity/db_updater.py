@@ -5,12 +5,13 @@
 # Software: PyCharm
 import datetime
 import os
-import re
+import time
 import numpy as np
 import pandas as pd
 from datetime import timedelta
 from sqlalchemy import text
 from WindPy import w
+from sqlalchemy.exc import SQLAlchemyError
 
 from base_config import BaseConfig
 from pgdb_updater_base import PgDbUpdaterBase
@@ -36,12 +37,14 @@ class DatabaseUpdater(PgDbUpdaterBase):
         self.all_funds_info_updater.update_all_funds_info()
         self.etf_lof_updater.logic_etf_lof_funds()
         self.margin_trade_by_industry_updater.logic_margin_trade_by_industry()
-        # self.north_inflow_updater.logic_north_inflow_by_industry()
         self.major_holder_updater.logic_major_holder()
         self.price_valuation_updater.logic_price_valuation()
         self.repo_updater.logic_repo()
         self.bonus_updater.update_bonus()
         self.ipo_updater.update_ipo()
+        # self.north_inflow_updater.logic_north_inflow_by_industry()
+        # self.mannual_update_all_stks_name()
+        # self.mannual_update_markets_daily_long_absent_values()
 
     def _check_data_table(self, table_name, type_identifier, **kwargs):
         # Retrieve the optional filter condition
@@ -127,19 +130,6 @@ class DatabaseUpdater(PgDbUpdaterBase):
                     required_value = []
                 else:
                     required_value = downloaded_df['windcode'].drop_duplicates().tolist()
-                all_stks_in_major_holder = self.select_column_from_joined_table(
-                    target_table_name='product_static_info',
-                    target_join_column='internal_id',
-                    join_table_name='markets_daily_long',
-                    join_column='product_static_info_id',
-                    selected_column='code',
-                    filter_condition="markets_daily_long.field = '拟减持金额'"
-                                     "OR markets_daily_long.field = 'item_note_2b_added' "
-                                     "OR markets_daily_long.field = '拟增持金额'",
-                    return_df=True
-                )
-                all_stks_in_major_holder_list = all_stks_in_major_holder.iloc[:, 0].to_list()
-                self.process_stk_meta_data(all_stks_in_major_holder_list)
 
             case 'price_valuation':
                 # 获取中信一级行业的指数代码和名称
@@ -161,54 +151,103 @@ class DatabaseUpdater(PgDbUpdaterBase):
         else:
             return False
 
-    def process_stk_meta_data(self, stk_info_to_add):
+    def mannual_update_all_stks_name(self):
+        # get all stocks list
+        all_stks = \
+            w.wset("sectorconstituent", f"date={self.tradedays_str[-1]};sectorid=a001010100000000",
+                   usedf=True)[1]
+        all_stks_info = all_stks[['wind_code', 'sec_name']].rename(
+            columns={'wind_code': '证券代码', 'sec_name': '证券简称'})
+        self.process_stk_meta_data(all_stks_info)
+
+    def mannual_update_markets_daily_long_absent_values(self):
+        sql_file_path = os.path.join(self.base_config.prj_dir, 'sql片段', '填充markets_daily_long缺失值.sql')
+
+        # 读取 SQL 文件内容
+        with open(sql_file_path, 'r', encoding='utf-8') as file:
+            sql_query = file.read()
+
+        start_time = time.time()
+
+        try:
+            # 执行 UPDATE 操作
+            with self.alch_engine.connect() as conn:
+                query = text(sql_query)
+                result = conn.execute(query)
+                affected_rows = result.rowcount
+                conn.commit()
+
+            end_time = time.time()
+            execution_time = end_time - start_time
+
+            print(f"Updated {affected_rows} rows in markets_daily_long table.")
+            print(f"Execution time: {execution_time:.2f} seconds")
+
+        except SQLAlchemyError as e:
+            end_time = time.time()
+            execution_time = end_time - start_time
+
+            print("An error occurred while executing the SQL query:")
+            print(str(e))
+            print(f"Execution time before error: {execution_time:.2f} seconds")
+
+        except Exception as e:
+            end_time = time.time()
+            execution_time = end_time - start_time
+
+            print("An unexpected error occurred:")
+            print(str(e))
+            print(f"Execution time before error: {execution_time:.2f} seconds")
+
+    def process_stk_meta_data(self, stk_info_to_add: pd.DataFrame):
         # check all historic_stocks in meta table (and have industry label，检查过了基本都有)
         existing_stks_df = self.select_existing_values_in_target_column('product_static_info',
                                                                         ['code', 'stk_industry_cs', 'chinese_name'],
                                                                         ('product_type', 'stock'))
 
         # 行业为None的需要更新
-        rows_need_update = existing_stks_df[(existing_stks_df['stk_industry_cs'].isna())]
+        rows_need_update_industry = existing_stks_df[(existing_stks_df['stk_industry_cs'].isna())]
+
+        # 选取名称对不上的行
+        # 第一步：重命名 B 的列，使其与 A 一致
+        stk_info_to_add_renamed = stk_info_to_add.rename(columns={'证券代码': 'code', '证券简称': 'chinese_name'})
+        # 第二步：合并两个 DataFrame
+        merged_df = pd.merge(existing_stks_df, stk_info_to_add_renamed, on='code', how='inner', suffixes=('_A', '_B'))
+        # 第三步：找出 chinese_name 不同的行
+        diff_rows = merged_df[merged_df['chinese_name_A'] != merged_df['chinese_name_B']]
+        # 从 existing_stks_df 中选取需要更新名称的行
+        rows_need_update_name = existing_stks_df[existing_stks_df['code'].isin(diff_rows['code'])]
+
+        # 计算需要更新的个股
         existing_value = existing_stks_df['code'].tolist()
+        missing_value = (set(stk_info_to_add['证券代码'].tolist()) - set(existing_value)).union(set(
+            rows_need_update_name['code'].tolist())).union(set(
+            rows_need_update_industry['code'].tolist()))
 
-        if isinstance(stk_info_to_add, list):
-            missing_value = (set(stk_info_to_add) - set(existing_value)).union(set(
-                rows_need_update['code'].tolist()))
-            df_meta = pd.DataFrame(missing_value, columns=['证券代码'])
-        elif isinstance(stk_info_to_add, pd.DataFrame):
-            # 计算需要更新的个股
-            missing_value = (set(stk_info_to_add['证券代码'].tolist()) - set(existing_value)).union(set(
-                rows_need_update['code'].tolist()))
-            stk_info_to_add = pd.DataFrame(stk_info_to_add)
-            df_meta = stk_info_to_add[~stk_info_to_add['证券代码'].isin(existing_value)]
-        else:
-            raise Exception
 
-        if df_meta.empty:
-            pass
-        else:
-            df_meta = df_meta.set_index('证券代码').rename(columns={'A': 'B'})
-            for code in missing_value:
-                date = self.tradedays_str[-1]
-                print(f'Wind downloading industry_citic,sec_name for {code} on {date}')
-                info_df = w.wsd(code, "industry_citic,sec_name", f'{date}', f'{date}', "unit=1;industryType=1",
-                                usedf=True)[1]
-                if info_df.empty or 'INDUSTRY_CITIC' not in info_df:
-                    print(f"Missing data for {code} on {date}, no data downloaded for industry_citic")
-                    continue
-                industry = info_df.iloc[0]['INDUSTRY_CITIC']
-                name = info_df.iloc[0]['SEC_NAME']
-                df_meta.loc[code, 'stk_industry_cs'] = industry
-                df_meta.loc[code, 'chinese_name'] = name
-                df_meta.loc[code, 'update_date'] = date
-            # 上传metadata
-            df_meta['source'] = 'wind'
-            df_meta['product_type'] = 'stock'
-            df_meta.reset_index(names='code', inplace=True)
+        df_meta = stk_info_to_add[~stk_info_to_add['证券代码'].isin(existing_value)]
+        df_meta = df_meta.set_index('证券代码').rename(columns={'A': 'B'})
+        for code in missing_value:
+            date = self.tradedays_str[-1]
+            print(f'Wind downloading industry_citic,sec_name for {code} on {date}')
+            info_df = w.wsd(code, "industry_citic,sec_name", f'{date}', f'{date}', "unit=1;industryType=1",
+                            usedf=True)[1]
+            if info_df.empty or 'INDUSTRY_CITIC' not in info_df:
+                print(f"Missing data for {code} on {date}, no data downloaded for industry_citic")
+                continue
+            industry = info_df.iloc[0]['INDUSTRY_CITIC']
+            name = info_df.iloc[0]['SEC_NAME']
+            df_meta.loc[code, 'stk_industry_cs'] = industry
+            df_meta.loc[code, 'chinese_name'] = name
+            df_meta.loc[code, 'update_date'] = date
+        # 上传metadata
+        df_meta['source'] = 'wind'
+        df_meta['product_type'] = 'stock'
+        df_meta.reset_index(names='code', inplace=True)
 
-            self.adjust_seq_val(seq_name='product_static_info_internal_id_seq')
-            for _, row in df_meta.iterrows():
-                self.insert_product_static_info(row)
+        self.adjust_seq_val(seq_name='product_static_info_internal_id_seq')
+        for _, row in df_meta.iterrows():
+            self.insert_product_static_info(row)
 
     # def logic_reopened_dk_funds(self):
     #     """

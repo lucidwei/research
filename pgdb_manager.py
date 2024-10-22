@@ -404,7 +404,7 @@ class PgDbManager:
             pandas.DataFrame: Joined table data.
         """
         # Build query
-        query = f"SELECT * FROM {target_table_name} INNER JOIN {join_table_name} ON {target_table_name}.{target_join_column} = {join_table_name}.{join_column}"
+        query = f"SELECT * FROM {target_table_name} LEFT JOIN {join_table_name} ON {target_table_name}.{target_join_column} = {join_table_name}.{join_column}"
 
         # Add filter condition
         if filter_condition:
