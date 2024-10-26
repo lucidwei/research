@@ -42,7 +42,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
         self.repo_updater.logic_repo()
         self.bonus_updater.update_bonus()
         self.ipo_updater.update_ipo()
-        # self.north_inflow_updater.logic_north_inflow_by_industry()
+        self.north_inflow_updater.logic_north_inflow_by_industry()
         # self.mannual_update_all_stks_name()
         # self.mannual_update_markets_daily_long_absent_values()
 
@@ -1260,6 +1260,8 @@ class NorthInflowUpdater:
                          'dailynetinflow': '净买入',
                          'dailyproportionchange': '占行业总市值比的变化',
                          })
+            # TODO: 由于北向数据缺失，这里手动打个补丁，将净流入数值设为0，防止dashboard模板不能正确显示其他数据
+            df_upload['净买入'] = 0
             df_upload['date'] = date
             df_upload['product_name'] = '北向资金_' + downloaded_df['industry']
             df_upload.drop("industry", axis=1, inplace=True)
