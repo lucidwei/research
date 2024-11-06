@@ -34,6 +34,7 @@ class BaseConfig:
                            'equity_sentiment': datetime.date(2018, 1, 2),
                            'quarterly': datetime.date(2000, 1, 2),
                            'boom': datetime.date(2010, 1, 2),
+                           'multi-asset': datetime.date(2010, 1, 1),
                            }
         date_start = start_date_dict[self.project]
         date_end = datetime.date.today() # - datetime.timedelta(weeks=100) # - datetime.timedelta(days=1) #开发调试时wind quota受限、节省quota时用
@@ -64,6 +65,7 @@ class BaseConfig:
                         'equity_sentiment': 'wgz_db',
                         'quarterly': 'wgz_db',
                         'boom': 'wgz_db',
+                        'multi-asset': 'wgz_db',
                         }
 
         self.db_config = {
