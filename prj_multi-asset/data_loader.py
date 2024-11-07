@@ -8,6 +8,7 @@ import numpy as np
 from pgdb_updater_base import PgDbUpdaterBase
 import datetime
 
+
 class ExcelDataLoader:
     def __init__(self, file_path):
         self.file_path = file_path
@@ -154,7 +155,7 @@ class ResultsUploader(PgDbUpdaterBase):
 
     def collect_asset_weights(self):
         """
-        Collect asset weights at each rebalancing date.
+        Collect asset weights at each rebalancing date, including the asset class in the metric name.
         """
         # Assuming weights are only changed on rebalancing dates
         weights_history = self.evaluator.weights_history
@@ -162,10 +163,17 @@ class ResultsUploader(PgDbUpdaterBase):
         for date in weights_history.index:
             weights = weights_history.loc[date]
             for asset, weight in weights.iteritems():
+                # 尝试获取资产类别，如果找不到则抛出错误
+                if asset in self.strategy.asset_class_mapping:
+                    asset_class = self.strategy.asset_class_mapping[asset]
+                else:
+                    raise ValueError(f"Asset class for '{asset}' not found.")
+                # 构建包含类别的metric_name
+                metric_name = f'weight_{asset_class}_{asset}'
                 self.results.append({
                     'date': date.date().isoformat(),
                     'strategy_name': self.strategy_name,
-                    'metric_name': f'weight_{asset}',
+                    'metric_name': metric_name,
                     'value': weight
                 })
 

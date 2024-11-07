@@ -4,120 +4,221 @@
 # FileName: strategy_momentum.py
 # Software: PyCharm
 # strategy_momentum.py
+
+from strategy_pure_passive import BaseStrategy
 from evaluator import Evaluator
 import pandas as pd
 import numpy as np
+import os
+import pickle
 
-class MomentumStrategy:
+
+class MomentumStrategy(BaseStrategy):
     def __init__(self):
-        pass
+        super().__init__()
 
     def run_strategy(self, price_data, start_date, end_date, parameters):
-        asset_class_mapping = parameters['asset_class_mapping']
-        risk_prefs = parameters.get('risk_prefs')
-        macro_adj = parameters.get('macro_adj')
-        subjective_adj = parameters.get('subjective_adj')
+        # 策略特定参数
+        asset_class_mapping = parameters.get('asset_class_mapping', {})
+        self.asset_class_mapping = asset_class_mapping
+        rebalance_frequency = parameters.get('rebalance_frequency', 'M')
+        lookback_periods = parameters.get('lookback_periods', [252, 126, 63])  # 1 年、6 个月、3 个月
+        top_n_assets = parameters.get('top_n_assets', 10)
+        risk_budget = parameters.get('risk_budget')
 
-        weights_history = self.backtest(price_data, start_date, end_date, asset_class_mapping, risk_prefs, macro_adj, subjective_adj)
-        evaluator = Evaluator('Momentum', price_data, weights_history)
+        # 确定预算类型
+        if risk_budget:
+            budget_type = self.check_budget_type(risk_budget, asset_class_mapping)
+        else:
+            budget_type = None  # 使用风险平价
+
+        all_assets = price_data.columns.tolist()
+
+        date_index = price_data.loc[start_date:end_date].index
+        rebalance_dates = date_index.to_series().resample(rebalance_frequency).last().dropna()
+
+        weights_history = pd.DataFrame(index=date_index, columns=all_assets)
+
+        previous_weights = None
+
+        os.makedirs(self.cache_dir, exist_ok=True)
+
+        print(f"\nStarting rebalancing calculations from {start_date} to {end_date}")
+        for i, date in enumerate(rebalance_dates):
+            print(f"Processing rebalance date {date.strftime('%Y-%m-%d')} ({i + 1}/{len(rebalance_dates)})")
+            # 生成缓存文件名
+            cache_key_elements = {
+                'date': date.strftime('%Y%m%d'),
+                'top_n_assets': top_n_assets,
+                'lookbacks': '_'.join(map(str, lookback_periods)),
+                'risk_budget': str(sorted(risk_budget.items())) if risk_budget else 'None',
+                'budget_type': budget_type if budget_type else 'risk_parity'
+            }
+            cache_filename = self.generate_cache_filename(cache_key_elements)
+
+            if os.path.exists(cache_filename):
+                with open(cache_filename, 'rb') as f:
+                    weights = pickle.load(f)
+            else:
+                selected_assets = self.select_assets(price_data, date, lookback_periods, top_n_assets)
+
+                if not selected_assets:
+                    print(f"  No assets selected for date {date.strftime('%Y-%m-%d')}. Using previous weights.")
+                    if previous_weights is not None:
+                        weights = previous_weights
+                    else:
+                        weights = pd.Series(1.0 / len(all_assets), index=all_assets)
+                else:
+                    weights_list = []
+                    for lookback_period in lookback_periods:
+                        print(f"  Calculating weights using lookback period: {lookback_period} trading days")
+                        available_dates = price_data.index
+                        if date in available_dates:
+                            cov_end_date = date
+                        else:
+                            cov_end_date = available_dates[available_dates.get_loc(date, method='ffill')]
+                        cov_end_idx = available_dates.get_loc(cov_end_date)
+                        cov_start_idx = cov_end_idx - (lookback_period - 1)
+                        if cov_start_idx < 0:
+                            print(f"  Not enough data for lookback period of {lookback_period} trading days.")
+                            continue
+                        cov_start_date = available_dates[cov_start_idx]
+                        cov_data = price_data.loc[cov_start_date:cov_end_date, selected_assets]
+
+                        if cov_data.shape[0] < lookback_period * 0.9:
+                            print(f"  Not enough data for lookback period of {lookback_period} trading days.")
+                            continue
+
+                        daily_returns = cov_data.pct_change().dropna()
+                        cov_matrix = daily_returns.cov()
+
+                        if risk_budget and budget_type:
+                            if budget_type == 'class_budget':
+                                print(f"  Performing class-level risk budget allocation")
+                                cov_matrix_class = self.aggregate_covariance_by_class(cov_matrix, asset_class_mapping)
+                                class_weights = self.risk_budget_allocation(cov_matrix_class, risk_budget)
+                                weights_period = self.distribute_class_weights_to_assets(
+                                    class_weights, selected_assets, asset_class_mapping
+                                )
+                            elif budget_type == 'asset_budget':
+                                print(f"  Performing asset-level risk budget allocation")
+                                weights_period = self.risk_budget_allocation(cov_matrix, risk_budget)
+                            else:
+                                raise ValueError("Invalid budget type detected.")
+                        else:
+                            # 使用风险平价
+                            print(f"  Performing risk parity allocation")
+                            weights_period = self.risk_parity_weights(cov_matrix)
+
+                        weights_list.append(weights_period)
+
+                    if len(weights_list) == 0:
+                        if previous_weights is not None:
+                            weights = previous_weights
+                        else:
+                            weights = pd.Series(1.0 / len(all_assets), index=all_assets)
+                    else:
+                        # 平均权重
+                        avg_weights = pd.concat(weights_list, axis=1).mean(axis=1)
+                        avg_weights /= avg_weights.sum()
+                        weights = pd.Series(0, index=all_assets)
+                        weights[selected_assets] = avg_weights
+
+                    with open(cache_filename, 'wb') as f:
+                        pickle.dump(weights, f)
+
+            previous_weights = weights
+
+            if i + 1 < len(rebalance_dates):
+                next_rebalance_date = rebalance_dates.iloc[i + 1]
+            else:
+                next_rebalance_date = date_index[-1] + pd.Timedelta(days=1)
+
+            weight_dates = date_index[(date_index >= date) & (date_index < next_rebalance_date)]
+            weights_history.loc[weight_dates] = weights.values
+
+        # 处理第一个调仓日前的时期
+        first_rebalance_date = rebalance_dates.iloc[0]
+        initial_dates = date_index[date_index < first_rebalance_date]
+        if not initial_dates.empty:
+            if previous_weights is not None:
+                weights_history.loc[initial_dates] = previous_weights.values
+            else:
+                equal_weights = pd.Series(1.0 / len(all_assets), index=all_assets)
+                weights_history.loc[initial_dates] = equal_weights.values
+
+        weights_history.ffill(inplace=True)
+
+        # 初始化评估器
+        evaluator = Evaluator('MomentumStrategy', price_data.loc[start_date:end_date], weights_history)
         return evaluator
 
-    def backtest(self, price_data, start_date, end_date, asset_class_mapping, risk_prefs, macro_adj, subjective_adj):
-        weights_history = pd.DataFrame(index=price_data.loc[start_date:end_date].index, columns=price_data.columns)
-        current_weights = pd.Series(0, index=price_data.columns)
-        rebalance_dates = price_data.loc[start_date:end_date].resample('M').last().index
-        for date in weights_history.index:
-            if date in rebalance_dates:
-                returns_dict, sharpe_dict = self.calculate_indicators(price_data, date)
-                selected_assets = self.select_assets(price_data, date, returns_dict)
-                if not selected_assets:
-                    print(f"{date.strftime('%Y-%m-%d')} 无符合条件的资产，维持空仓。")
-                    current_weights = pd.Series(0, index=price_data.columns)
-                else:
-                    initial_weights = self.calculate_weights(price_data, date, selected_assets)
-                    # 调整权重
-                    adjusted_weights = self.adjust_weights(initial_weights, asset_class_mapping, risk_prefs, macro_adj, subjective_adj)
-                    current_weights = adjusted_weights
-            weights_history.loc[date] = current_weights
-        return weights_history
-
-    def calculate_indicators(self, price_data, current_date):
-        periods = {'1M': 21, '3M': 63, '6M': 126}
+    def select_assets(self, price_data, current_date, lookback_periods, top_n_assets):
+        """
+        根据动量指标选择资产。
+        """
         assets = price_data.columns.tolist()
-        returns_dict = {}
-        sharpe_dict = {}
-        for period_name, period_days in periods.items():
-            if price_data.index.get_loc(current_date) >= period_days:
-                # 收益率
-                past_price = price_data.loc[:current_date].iloc[-(period_days+1)]
-                current_price = price_data.loc[current_date]
-                returns = (current_price / past_price - 1)
-                returns_dict[period_name] = returns
-                # 夏普比率
-                daily_returns = price_data.loc[:current_date].iloc[-(period_days+1):].pct_change().dropna()
-                sharpe_ratio = daily_returns.mean() / daily_returns.std() * np.sqrt(252)
-                sharpe_dict[period_name] = sharpe_ratio
-            else:
-                returns_dict[period_name] = pd.Series(np.nan, index=assets)
-                sharpe_dict[period_name] = pd.Series(np.nan, index=assets)
-        return returns_dict, sharpe_dict
+        ranking_df = pd.DataFrame(index=assets)
 
-    def select_assets(self, price_data, current_date, returns_dict):
-        assets = price_data.columns.tolist()
-        # 筛选最近3个月收益为正的资产
-        returns_3m = returns_dict['3M']
+        period_days = {'1Y': 252, '6M': 126, '3M': 63}
+
+        # 步骤 1：筛选最近3个月收益为正的资产
+        returns_3m = self.calculate_return(price_data, current_date, 63)
         trending_assets = returns_3m[returns_3m > 0].dropna().index.tolist()
         if not trending_assets:
+            print(f"  No assets have positive 3M returns on {current_date.strftime('%Y-%m-%d')}")
             return []
-        # 对收益率和夏普比率进行排名
-        rank_df = pd.DataFrame(index=trending_assets)
-        for period in ['1M', '3M', '6M']:
-            rank_df[f'Return_Rank_{period}'] = returns_dict[period][trending_assets].rank(ascending=False)
-            rank_df[f'Sharpe_Rank_{period}'] = returns_dict[period][trending_assets].rank(ascending=False)
-        rank_df['Average_Rank'] = rank_df.mean(axis=1)
-        # 选取平均排名靠前的前10个资产
-        rank_df = rank_df.sort_values('Average_Rank')
-        selected_assets = rank_df.index.tolist()[:10]
+
+        # 步骤 2：计算排名
+        for period_name, days in period_days.items():
+            returns = self.calculate_return(price_data, current_date, days)
+            sharpe_ratios = self.calculate_sharpe_ratio(price_data, current_date, days)
+
+            returns = returns.loc[trending_assets]
+            sharpe_ratios = sharpe_ratios.loc[trending_assets]
+
+            ranking_df[f'Return_Rank_{period_name}'] = returns.rank(ascending=False)
+            ranking_df[f'Sharpe_Rank_{period_name}'] = sharpe_ratios.rank(ascending=False)
+
+        ranking_df['Average_Rank'] = ranking_df.mean(axis=1)
+
+        ranking_df = ranking_df.sort_values('Average_Rank')
+        selected_assets = ranking_df.index.tolist()[:top_n_assets]
+
+        print(f"  Selected assets on {current_date.strftime('%Y-%m-%d')}: {selected_assets}")
+
         return selected_assets
 
-    def calculate_weights(self, price_data, current_date, selected_assets):
-        periods = {'1M': 21, '3M': 63, '6M': 126}
-        weight_list = []
-        for period_name, period_days in periods.items():
-            if price_data.index.get_loc(current_date) >= period_days:
-                # 协方差矩阵
-                daily_returns = price_data.loc[:current_date].iloc[-(period_days+1):][selected_assets].pct_change().dropna()
-                cov_matrix = daily_returns.cov()
-                # 风险平价权重
-                weights = risk_parity_weights(cov_matrix)
-                weight_list.append(weights)
-        # 平均三组权重
-        avg_weights = pd.concat(weight_list, axis=1).mean(axis=1)
-        # 归一化
-        final_weights = avg_weights / avg_weights.sum()
-        return final_weights
+    def calculate_return(self, price_data, current_date, lookback_period):
+        available_dates = price_data.index
 
-    def adjust_weights(self, weights, asset_class_mapping, risk_prefs=None, macro_adj=None, subjective_adj=None):
-        weights = weights.copy()
-        # 根据资产类别汇总权重
-        weights_by_class = weights.groupby(asset_class_mapping).sum()
-        # 应用风险偏好调整
-        if risk_prefs:
-            for asset_class, target_weight in risk_prefs.items():
-                if asset_class in weights_by_class.index:
-                    scaling_factor = target_weight / weights_by_class[asset_class]
-                    asset_indices = [asset for asset in weights.index if asset_class_mapping[asset] == asset_class]
-                    weights[asset_indices] *= scaling_factor
-        # 应用宏观调整
-        if macro_adj:
-            for asset_class, adj in macro_adj.items():
-                asset_indices = [asset for asset in weights.index if asset_class_mapping[asset] == asset_class]
-                weights[asset_indices] *= (1 + adj)
-        # 应用主观调整
-        if subjective_adj:
-            for asset_class, adj in subjective_adj.items():
-                asset_indices = [asset for asset in weights.index if asset_class_mapping[asset] == asset_class]
-                weights[asset_indices] *= (1 + adj)
-        # 归一化
-        adjusted_weights = weights / weights.sum()
-        return adjusted_weights
+        if current_date not in available_dates:
+            current_date = available_dates[available_dates.get_loc(current_date, method='ffill')]
+
+        current_idx = available_dates.get_loc(current_date)
+        start_idx = current_idx - (lookback_period - 1)
+        if start_idx < 0:
+            return pd.Series(dtype=float)
+
+        past_date = available_dates[start_idx]
+        current_price = price_data.loc[current_date]
+        past_price = price_data.loc[past_date]
+        returns = (current_price / past_price) - 1
+        return returns
+
+    def calculate_sharpe_ratio(self, price_data, current_date, lookback_period):
+        available_dates = price_data.index
+
+        if current_date not in available_dates:
+            current_date = available_dates[available_dates.get_loc(current_date, method='ffill')]
+
+        current_idx = available_dates.get_loc(current_date)
+        start_idx = current_idx - (lookback_period - 1)
+        if start_idx < 0:
+            return pd.Series(dtype=float)
+
+        returns = price_data.iloc[start_idx:current_idx + 1].pct_change().dropna()
+        mean_returns = returns.mean()
+        std_returns = returns.std()
+        sharpe_ratio = mean_returns / std_returns * np.sqrt(252)
+        return sharpe_ratio
