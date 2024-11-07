@@ -18,7 +18,8 @@ class FixedWeightStrategy:
     def __init__(self):
         pass
 
-    def run_strategy(self, price_data, start_date, end_date, parameters):
+    def run_strategy(self, data_dict, start_date, end_date, parameters):
+        price_data = data_dict['close_prices']
         weights = parameters['weights']  # 字典形式 {'Asset1': 0.3, ...}
 
         # 仅处理必要的资产列和日期范围
@@ -217,7 +218,8 @@ class RiskParityStrategy(BaseStrategy):
     def __init__(self):
         super().__init__()
 
-    def run_strategy(self, price_data, start_date, end_date, parameters):
+    def run_strategy(self, data_dict, start_date, end_date, parameters):
+        price_data = data_dict['close_prices']
         selected_assets = parameters['selected_assets']
         asset_class_mapping = parameters['asset_class_mapping']
         rebalance_frequency = parameters.get('rebalance_frequency', 'M')

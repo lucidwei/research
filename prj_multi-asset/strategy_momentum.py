@@ -17,7 +17,8 @@ class MomentumStrategy(BaseStrategy):
     def __init__(self):
         super().__init__()
 
-    def run_strategy(self, price_data, start_date, end_date, parameters):
+    def run_strategy(self, data_dict, start_date, end_date, parameters):
+        price_data = data_dict['close_prices']
         # 策略特定参数
         asset_class_mapping = parameters.get('asset_class_mapping', {})
         self.asset_class_mapping = asset_class_mapping
