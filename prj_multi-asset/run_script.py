@@ -34,14 +34,10 @@ strategies_config = [
         'class': 'RiskParityStrategy',
         'parameters': {
             'selected_assets': ['中证800', 'SHFE黄金', '中债-总财富(总值)指数',],
-            'asset_class_mapping': {
-                '中证800': 'Equity',
-                'SHFE黄金': 'Commodity',
-                '中债-总财富(总值)指数': 'Bond',
-            },
-            'risk_budget': {'Equity': 0.5, 'Bond': 0.3, 'Commodity': 0.2},
+            'asset_class_mapping': asset_class_mapping,
+            'risk_budget': {'中证800': 0.8, '中债-总财富(总值)指数': 0.18, 'SHFE黄金': 0.02},
             'rebalance_frequency': 'M',
-            'lookback_periods': [21, 63, 126],
+            'lookback_periods': [63, 126, 252],
         }
     },
     # {

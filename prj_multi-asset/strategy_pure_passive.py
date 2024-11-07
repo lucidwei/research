@@ -67,6 +67,7 @@ class RiskParityStrategy:
             raise ValueError(f"The following selected assets are missing from price_data: {missing_assets}")
 
         # Proceed with only the selected assets
+        price_data_full = price_data.loc[:, selected_assets].copy(deep=True)
         price_data = price_data.loc[start_date:end_date, selected_assets]
 
         # Generate rebalancing dates (e.g., monthly)
@@ -97,11 +98,32 @@ class RiskParityStrategy:
                 weights_list = []
                 for lookback_period in lookback_periods:
                     print(f"  Calculating for lookback period: {lookback_period} days")
-                    cov_end_date = date - pd.Timedelta(days=1)
-                    cov_start_date = cov_end_date - pd.Timedelta(days=lookback_period - 1)
-                    cov_data = price_data.loc[cov_start_date:cov_end_date]
-                    if cov_data.shape[0] < lookback_period:
+                    # Handle Non-Trading Days
+                    # We need to select the last 'lookback_period' trading days before cov_end_date
+                    # Use price_data_full to ensure we have data before start_date
+                    available_dates = price_data_full.index
+                    # Ensure cov_end_date is before 'date' and is a trading day
+                    if date in available_dates:
+                        cov_end_date = date
+                    else:
+                        # If 'date' is not in available_dates, find the previous trading day
+                        cov_end_date = available_dates[available_dates.get_loc(date, method='ffill')]
+                    cov_end_idx = available_dates.get_loc(cov_end_date)
+                    # Calculate cov_start_idx
+                    cov_start_idx = cov_end_idx - (lookback_period - 1)
+                    if cov_start_idx < 0:
+                        print(f"  Not enough data for lookback period of {lookback_period} trading days.")
+                        continue  # Skip this lookback_period if we don't have enough data
+                    cov_start_date = available_dates[cov_start_idx]
+
+                    # Extract cov_data from price_data_full
+                    cov_data = price_data_full.loc[cov_start_date:cov_end_date]
+
+                    # 如果实际的数据天数小于预期的回溯天数，则说明数据不足以进行有效的历史数据分析和协方差计算
+                    if cov_data.shape[0] < lookback_period * 0.9:
+                        print(f"  Not enough data for lookback period of {lookback_period} trading days.")
                         continue
+
                     daily_returns = cov_data.pct_change().dropna()
                     cov_matrix = daily_returns.cov()
 

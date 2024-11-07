@@ -33,6 +33,7 @@ class ExcelDataLoader:
             '中债-总财富(总值)指数': 'Bond',
             'SHFE黄金': 'Commodity',
             '南华能化指数': 'Commodity',
+            '中证800': 'Equity',
         }
         self.load_data()
 
