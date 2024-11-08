@@ -126,10 +126,13 @@ class SignalBasedStrategy(BaseStrategy):
         :return: Evaluator instance with performance metrics
         """
         price_data = data_dict['close_prices']
+        self.price_data_full = price_data
         edb_data = data_dict['edb_data']
         composite_data = data_dict['composite_data']
         asset_class_mapping = parameters['asset_class_mapping']
         risk_budget = parameters['risk_budget']
+        selected_assets = list(risk_budget.keys())
+        self.all_assets = price_data.columns.tolist()
         rebalance_frequency = parameters.get('rebalance_frequency', 'M')
 
         # Determine budget type
@@ -139,7 +142,7 @@ class SignalBasedStrategy(BaseStrategy):
         date_index = price_data.loc[start_date:end_date].index
         rebalance_dates = date_index.to_series().resample(rebalance_frequency).last().dropna()
 
-        weights_history = pd.DataFrame(index=date_index, columns=price_data.columns)
+        weights_history = pd.DataFrame(index=date_index, columns=selected_assets)
         previous_weights = None
 
         # Generate signals
@@ -151,7 +154,7 @@ class SignalBasedStrategy(BaseStrategy):
 
             # Adjust weights based on signals
             weights = self.adjust_weights_based_on_signals(
-                date, price_data.columns, asset_class_mapping, risk_budget, budget_type, previous_weights
+                date, selected_assets, asset_class_mapping, risk_budget, budget_type, previous_weights
             )
 
             previous_weights = weights
@@ -172,7 +175,7 @@ class SignalBasedStrategy(BaseStrategy):
             if previous_weights is not None:
                 weights_history.loc[initial_dates] = previous_weights.values
             else:
-                equal_weights = pd.Series(1.0 / len(price_data.columns), index=price_data.columns)
+                equal_weights = pd.Series(1.0 / len(selected_assets), index=price_data.columns)
                 weights_history.loc[initial_dates] = equal_weights.values
 
         # Forward-fill any remaining NaN weights
@@ -199,7 +202,7 @@ class SignalBasedStrategy(BaseStrategy):
         )
         self.gold_signal_generator = GoldSignalGenerator(
             tips_10y=edb_data['美国:国债实际收益率:10年'],
-            vix=edb_data['CBOE波动率指数'],
+            vix=price_data['CBOE波动率'],
             gold_prices=price_data['SHFE黄金']
         )
 
@@ -233,19 +236,33 @@ class SignalBasedStrategy(BaseStrategy):
         :param previous_weights: Previous weights (Series)
         :return: Adjusted weights (Series)
         """
-        # Baseline allocation using risk budgeting
-        price_data_for_date = {}  # Empty since we're adjusting based on signals
-        cov_matrix = pd.DataFrame(np.eye(len(selected_assets)), index=selected_assets, columns=selected_assets)
-        if budget_type == 'class_budget':
-            cov_matrix_class = self.aggregate_covariance_by_class(cov_matrix, asset_class_mapping)
-            class_weights = self.risk_budget_allocation(cov_matrix_class, risk_budget)
-            weights = self.distribute_class_weights_to_assets(
-                class_weights, selected_assets, asset_class_mapping
-            )
-        elif budget_type == 'asset_budget':
-            weights = self.risk_budget_allocation(cov_matrix, risk_budget)
-        else:
-            raise ValueError("Invalid budget type detected.")
+        # Baseline allocation using risk budgeting with actual covariance matrix
+        lookback_period = 252  # One year of trading days
+
+        available_dates = self.price_data_full.index
+        if current_date not in available_dates:
+            current_date = available_dates[available_dates.get_loc(current_date, method='ffill')]
+
+        current_idx = available_dates.get_loc(current_date)
+        start_idx = current_idx - lookback_period
+        if start_idx < 0:
+            print(f"  Not enough data for covariance calculation at {current_date}.")
+            # Use previous weights or equal weights
+            if previous_weights is not None:
+                weights = previous_weights
+            else:
+                weights = pd.Series(1.0 / len(self.all_assets), index=self.all_assets)
+            return weights
+
+        # Get historical price data
+        price_data_window = self.price_data_full.iloc[start_idx:current_idx][selected_assets]
+        daily_returns = price_data_window.pct_change().dropna()
+
+        # Compute covariance matrix
+        cov_matrix = daily_returns.cov()
+
+        # Risk budgeting allocation
+        weights = self.risk_budget_allocation(cov_matrix, risk_budget)
 
         # Adjust weights based on signals
         adjustment_factor = 0.3  # Adjust by +/-30%
