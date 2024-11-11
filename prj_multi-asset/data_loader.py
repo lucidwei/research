@@ -118,21 +118,21 @@ class ExcelDataLoader:
 
 
 class ResultsUploader(PgDbUpdaterBase):
-    def __init__(self, strategy_name, strategy, evaluator, base_config):
+    def __init__(self, strategy_name, strategy, evaluator, base_config=None):
         # Initialize database connection
         super().__init__(base_config)
         self.strategy_name = strategy_name
         self.strategy = strategy
         self.evaluator = evaluator
-        # Collect data to be uploaded
         self.results = []
+        # Store rebalancing dates from the evaluator if available
+        self.rebalance_dates = getattr(self.strategy, 'rebalance_dates', None)
 
     def upload_results(self):
         self.collect_net_value()
         self.collect_asset_weights()
         self.collect_performance_metrics()
-        # If there are any strategy-specific data (e.g., signals), you can add methods to collect them
-        # self.collect_strategy_specific_data()
+        self.collect_signals()  # Collect signals if available
 
         # Convert results to DataFrame
         results_df = pd.DataFrame(self.results)
@@ -155,21 +155,18 @@ class ResultsUploader(PgDbUpdaterBase):
 
     def collect_asset_weights(self):
         """
-        Collect asset weights at each rebalancing date, including the asset class in the metric name.
+        Collect asset weights for each date.
         """
-        # Assuming weights are only changed on rebalancing dates
         weights_history = self.evaluator.weights_history
-        # 遍历每一天的权重
         for date in weights_history.index:
             weights = weights_history.loc[date]
             for asset, weight in weights.iteritems():
-                # 尝试获取资产类别，如果找不到则抛出错误
-                if asset in self.strategy.asset_class_mapping:
+                # Include asset class in metric_name if available
+                if hasattr(self.strategy, 'asset_class_mapping') and asset in self.strategy.asset_class_mapping:
                     asset_class = self.strategy.asset_class_mapping[asset]
+                    metric_name = f'weight_{asset_class}_{asset}'
                 else:
-                    raise ValueError(f"Asset class for '{asset}' not found.")
-                # 构建包含类别的metric_name
-                metric_name = f'weight_{asset_class}_{asset}'
+                    metric_name = f'weight_{asset}'
                 self.results.append({
                     'date': date.date().isoformat(),
                     'strategy_name': self.strategy_name,
@@ -191,6 +188,102 @@ class ResultsUploader(PgDbUpdaterBase):
                 'value': metric_value
             })
 
+    def collect_signals(self):
+        """
+        Collect signals from the strategy and add to results.
+        This method handles both daily signals and monthly rebalancing signals.
+        """
+        # Check if the strategy has signal attributes
+        if self.strategy_name == 'SignalBasedStrategy':
+            # Collect and upload signals
+            self.collect_daily_signals()
+            self.collect_monthly_signals()
+        else:
+            # Do nothing if the strategy does not have signals
+            pass
+
+    def collect_daily_signals(self):
+        """
+        Collect daily signals from the strategy.
+        """
+        # Ensure that the strategy has the necessary signal attributes
+        signal_names = []
+        signals = {}
+
+        if hasattr(self.strategy, 'combined_stock_signal'):
+            signals['signal_stock'] = self.strategy.combined_stock_signal
+            signal_names.append('signal_stock')
+        if hasattr(self.strategy, 'combined_gold_signal'):
+            signals['signal_gold'] = self.strategy.combined_gold_signal
+            signal_names.append('signal_gold')
+
+        # Collect daily signals
+        for signal_name in signal_names:
+            signal_series = signals[signal_name]
+            for date, value in signal_series.iteritems():
+                self.results.append({
+                    'date': date.date().isoformat(),
+                    'strategy_name': self.strategy_name,
+                    'metric_name': signal_name,
+                    'value': value
+                })
+
+    def collect_monthly_signals(self):
+        """
+        Calculate and collect monthly signals used for rebalancing.
+        """
+        if self.rebalance_dates is None:
+            print(
+                f"Rebalancing dates not available for strategy '{self.strategy_name}'. Cannot collect monthly signals.")
+            return
+
+        # Collect daily signals first
+        signals = {}
+        if hasattr(self.strategy, 'combined_stock_signal'):
+            signals['signal_stock'] = self.strategy.combined_stock_signal
+        if hasattr(self.strategy, 'combined_gold_signal'):
+            signals['signal_gold'] = self.strategy.combined_gold_signal
+
+        if not signals:
+            print(f"No signals available to collect for strategy '{self.strategy_name}'.")
+            return
+
+        # For each rebalancing period, calculate the mean signal and round
+        rebalance_dates = self.rebalance_dates
+        rebalance_dates = pd.Series(rebalance_dates, index=rebalance_dates)
+        rebalance_dates = rebalance_dates.sort_values()
+
+        date_index = self.evaluator.weights_history.index
+
+        for i, date in enumerate(rebalance_dates):
+            if i + 1 < len(rebalance_dates):
+                next_date = rebalance_dates.iloc[i + 1]
+            else:
+                next_date = date_index[-1] + pd.Timedelta(days=1)
+
+            # Get date range for the period before the rebalancing date
+            signal_dates = date_index[(date_index >= date) & (date_index < next_date)]
+            if signal_dates.empty:
+                continue  # No signal data for this period
+
+            for signal_name, daily_signal in signals.items():
+                # Extract signals for the period
+                period_signals = daily_signal.loc[signal_dates]
+                if period_signals.empty:
+                    continue
+                # Calculate mean signal
+                mean_signal = period_signals.mean()
+                # Round to get the actual signal used for rebalancing
+                monthly_signal = int(mean_signal.round())
+                # Record the monthly signal
+                self.results.append({
+                    'date': date.date().isoformat(),
+                    'strategy_name': self.strategy_name,
+                    'metric_name': f'monthly_{signal_name}',
+                    'value': monthly_signal
+                })
+        print(f"Collected monthly signals for strategy '{self.strategy_name}'.")
+
     def upsert_results_to_database(self, results_df):
         """
         Upload the results DataFrame to the database in a long format table.
@@ -206,11 +299,3 @@ class ResultsUploader(PgDbUpdaterBase):
 
         # Use the upsert_dataframe_to_postgresql method from PgDbUpdaterBase
         self.upsert_dataframe_to_postgresql(results_df, table_name, unique_keys)
-
-    # Placeholder for collecting strategy-specific data
-    def collect_strategy_specific_data(self):
-        """
-        Collect any strategy-specific data, such as signals.
-        This method can be overridden or extended in subclasses for specific strategies.
-        """
-        pass

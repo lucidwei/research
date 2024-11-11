@@ -13,8 +13,7 @@ mpl.rcParams['axes.unicode_minus'] = False           # 解决保存图像是负号'-'显示
 # 从 Excel 文件读取数据
 data_path = rf"D:\WPS云盘\WPS云盘\工作-麦高\专题研究\专题-风险预算的资产配置策略\资产价格.xlsx"
 data_loader = ExcelDataLoader(data_path)
-data = data_loader.get_data()
-price_data = data['close_prices']
+data_dict = data_loader.get_data()
 asset_class_mapping = data_loader.asset_class_mapping
 
 # 定义策略配置列表
@@ -40,34 +39,33 @@ strategies_config = [
             'lookback_periods': [63, 126, 252],
         }
     },
-    # {
-    #     'name': 'Momentum',
-    #     'module': 'strategy_momentum',
-    #     'class': 'MomentumStrategy',
-    #     'parameters': {
-    #         'asset_class_mapping': asset_class_mapping,
-    #         'risk_prefs': {'Equity': 0.5, 'Bond': 0.3, 'Commodity': 0.2},
-    #         'macro_adj': {'Commodity': 0.3},
-    #         'subjective_adj': {'Equity': 0.4},
-    #     }
-    # },
-    # {
-    #     'name': 'SignalBased',
-    #     'module': 'strategy_signal_based',
-    #     'class': 'SignalBasedStrategy',
-    #     'parameters': {
-    #         'asset_class_mapping': asset_class_mapping,
-    #         'signal_parameters': {
-    #             # Signal-specific parameters, if any
-    #         },
-    #         'risk_budget': [0.4, 0.4, 0.2],
-    #         # Other strategy-specific parameters
-    #     }
-    # }
+    {
+        'name': 'MomentumStrategy',
+        'module': 'strategy_momentum',
+        'class': 'MomentumStrategy',
+        'parameters': {
+            'asset_class_mapping': asset_class_mapping,  # 如果需要
+            'rebalance_frequency': 'M',
+            'lookback_periods': [252, 126, 63],
+            'top_n_assets': 8,
+            'risk_budget': {'Equity': 0.8, 'Bond': 0.18, 'Commodity': 0.02},  # 或者资产类别的风险预算
+            # 如果不提供 risk_budget，则使用风险平价
+        }
+    },
+    {
+        'name': 'SignalBasedStrategy',
+        'module': 'strategy_signal_based',
+        'class': 'SignalBasedStrategy',
+        'parameters': {
+            'asset_class_mapping': asset_class_mapping,
+            'risk_budget': {'中证800': 0.8, '中债-总财富(总值)指数': 0.18, 'SHFE黄金': 0.02},
+            'rebalance_frequency': 'M',
+        }
+    },
 ]
 
 # 设置通用参数
-start_date = '2021-12-31'
+start_date = '2010-12-31'
 end_date = '2024-10-31'
 
 # 存储所有策略的评估结果
@@ -89,7 +87,7 @@ for config in strategies_config:
     strategy = strategy_class()
 
     # Run strategy
-    evaluator = strategy.run_strategy(price_data, start_date, end_date, parameters)
+    evaluator = strategy.run_strategy(data_dict, start_date, end_date, parameters)
 
     # Store evaluation and strategy instance
     all_evaluations[strategy_name] = evaluator

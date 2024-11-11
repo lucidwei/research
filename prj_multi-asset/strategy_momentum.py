@@ -33,7 +33,8 @@ class MomentumStrategy(BaseStrategy):
         else:
             budget_type = None  # 使用风险平价
 
-        all_assets = price_data.columns.tolist()
+        all_assets = list(asset_class_mapping.keys())
+        price_data = price_data.loc[:, all_assets]
 
         date_index = price_data.loc[start_date:end_date].index
         rebalance_dates = date_index.to_series().resample(rebalance_frequency).last().dropna()

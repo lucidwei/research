@@ -141,6 +141,7 @@ class SignalBasedStrategy(BaseStrategy):
         # Generate rebalancing dates
         date_index = price_data.loc[start_date:end_date].index
         rebalance_dates = date_index.to_series().resample(rebalance_frequency).last().dropna()
+        self.rebalance_dates = rebalance_dates  # Store rebalance_dates for use in ResultsUploader
 
         weights_history = pd.DataFrame(index=date_index, columns=selected_assets)
         previous_weights = None
