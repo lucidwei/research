@@ -84,6 +84,7 @@ class KLineSimilarityFinder:
             print(f"相似度：{similarity:.3f}")
             # print(window)
             # print()
+        print(f"window size: {self.window_size}")
 
 # 使用示例
 finder = KLineSimilarityFinder('D:\\Downloads\\000001.SH.xlsx', window_size=5,  algorithm='pearson')
