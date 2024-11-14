@@ -77,13 +77,8 @@ def plot_heatmap(data, title, highlight_rows, highlight_cols, asset, month_type,
     - output_dir: 保存热力图的目录
     """
     # 设置支持中文的字体
-    # plt.rcParams['font.sans-serif'] = ['Microsoft YaHei']  # 用于显示中文标签
-    # plt.rcParams['axes.unicode_minus'] = False  # 用于正常显示负号
-    # sns.set(font='Microsoft YaHei')  # 指定Seaborn使用的字体
-
     font_path = 'C:/Windows/Fonts/msyh.ttc'  # 根据实际路径调整
     prop = fm.FontProperties(fname=font_path)
-
     plt.rcParams['axes.unicode_minus'] = False  # 正常显示负号
 
 
@@ -129,11 +124,13 @@ def plot_heatmap(data, title, highlight_rows, highlight_cols, asset, month_type,
         else:
             text.set_text("N/A")
 
-    plt.title(f'{asset} - {month_type} Month Asset Performance\n{title}', fontsize=24)
-    plt.xlabel('Column Macro Conditions', fontsize=18)
-    plt.ylabel('Row Macro Conditions', fontsize=18)
-    plt.xticks(rotation=45, ha='right', fontsize=14)
-    plt.yticks(rotation=0, fontsize=14)
+    # 使用显式字体属性
+    plt.title(f'{asset} - {month_type} Month Asset Performance\n{title}', fontsize=24, fontproperties=prop)
+    plt.xlabel('Column Macro Conditions', fontsize=18, fontproperties=prop)
+    plt.ylabel('Row Macro Conditions', fontsize=18, fontproperties=prop)
+    plt.xticks(rotation=45, ha='right', fontsize=14, fontproperties=prop)
+    plt.yticks(rotation=0, fontsize=14, fontproperties=prop)
+
     plt.tight_layout()
 
     # 显示图表
