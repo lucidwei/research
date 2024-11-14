@@ -3,6 +3,7 @@
 # Author  : Lucid
 # FileName: macro.py
 # Software: PyCharm
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -13,15 +14,11 @@ from datetime import datetime
 import os
 from utils import process_wind_excel
 
-# # 设置中文字体和负号正常显示（可选）
-# from pylab import mpl
-# mpl.rcParams['font.sans-serif'] = ['Microsoft YaHei']    # 指定默认字体：解决plot不能显示中文问题
-# mpl.rcParams['axes.unicode_minus'] = False           # 解决保存图像是负号'-'显示为方块的问题
-# # 设置支持中文的字体
-# plt.rcParams['font.sans-serif'] = ['Microsoft YaHei']  # 用于显示中文标签
-# plt.rcParams['axes.unicode_minus'] = False  # 用于正常显示负号
-
-
+# TODO:
+# 加入可选参数：仅画需要的资产价格
+# 在python 终端中打印出来当前作图的这组数据中，被框出来的所有单元格的平均值。
+# 打印出最新的宏观状态和具体的月数（GDP季频的怎么处理的）
+# 上下左侧更多留白，title没显示全被遮挡了
 
 def calculate_states(df, indicators):
     """
@@ -36,7 +33,6 @@ def calculate_states(df, indicators):
     df = df.dropna().reset_index(drop=True)
     return df
 
-
 def calculate_monthly_returns(asset_df, assets):
     """
     计算每个资产的月度涨跌幅（百分比）。
@@ -44,24 +40,23 @@ def calculate_monthly_returns(asset_df, assets):
     asset_df['日期'] = pd.to_datetime(asset_df['日期'])
     asset_df = asset_df.sort_values('日期')
     asset_monthly = asset_df.resample('M', on='日期').last()
-    returns_df = asset_monthly.pct_change().dropna() * 100  # 百分比表示
+    returns_df = asset_monthly[assets].pct_change().dropna() * 100  # 百分比表示
     returns_df.index = returns_df.index.to_period('M').to_timestamp('M')
     return returns_df
 
-
 def get_combinations(indicators):
     """
-    生成行和列的状态组合标签。
+    生成状态组合标签的行和列。
 
     返回：
     - row_labels: 行标签列表 (如 'M2 Up', 'GDP Down', ...)
     - col_labels: 列标签列表 (同上)
     """
     states = ['Up', 'Down']
+    # 对每个指标生成状态组合
     combinations = list(product(indicators, states))
     labels = [f"{indicator} {state}" for indicator, state in combinations]
     return labels, labels  # 行和列使用相同的标签
-
 
 def plot_heatmap(data, title, highlight_rows, highlight_cols, asset, month_type, output_dir='heatmaps'):
     """
@@ -81,18 +76,17 @@ def plot_heatmap(data, title, highlight_rows, highlight_cols, asset, month_type,
     prop = fm.FontProperties(fname=font_path)
     plt.rcParams['axes.unicode_minus'] = False  # 正常显示负号
 
-
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    plt.figure(figsize=(20, 16))
-    sns.set(font_scale=1.2)
+    plt.figure(figsize=(12, 12))
+    sns.set(font_scale=1)
 
     # 绘制热力图，fmt='.2f' 仅显示数字，后续添加 '%'
     ax = sns.heatmap(
         data,
         annot=True,
-        fmt=".2f",
+        fmt=".1f",
         cmap="coolwarm",
         linewidths=.5,
         linecolor='gray',
@@ -124,10 +118,13 @@ def plot_heatmap(data, title, highlight_rows, highlight_cols, asset, month_type,
         else:
             text.set_text("N/A")
 
+    # 调整图表边距，防止标题和标签被遮挡
+    plt.subplots_adjust(top=0.99, bottom=0.45, left=0.2, right=0.95)
+
     # 使用显式字体属性
-    plt.title(f'{asset} - {month_type} Month Asset Performance\n{title}', fontsize=24, fontproperties=prop)
-    plt.xlabel('Column Macro Conditions', fontsize=18, fontproperties=prop)
-    plt.ylabel('Row Macro Conditions', fontsize=18, fontproperties=prop)
+    plt.title(f'{asset} - {month_type} Month Asset Performance\n', fontsize=24, fontproperties=prop, y=1.02)
+    # plt.xlabel('列宏观状态', fontsize=18, fontproperties=prop)
+    # plt.ylabel('行宏观状态', fontsize=18, fontproperties=prop)
     plt.xticks(rotation=45, ha='right', fontsize=14, fontproperties=prop)
     plt.yticks(rotation=0, fontsize=14, fontproperties=prop)
 
@@ -139,8 +136,7 @@ def plot_heatmap(data, title, highlight_rows, highlight_cols, asset, month_type,
     # plt.savefig(os.path.join(output_dir, f'{asset}_{month_type}_Performance_Heatmap.png'))
     # plt.close()
 
-
-def main(excel_path):
+def main(excel_path, assets_to_plot=None):
     # 读取宏观指标和资产价格两个 sheet
     macro_meta, macro_df = process_wind_excel(
         excel_file_path=excel_path,
@@ -168,28 +164,39 @@ def main(excel_path):
     macro_df = macro_df.sort_values('日期').reset_index(drop=True)
     asset_df = asset_df.sort_values('日期').reset_index(drop=True)
 
-    # 提取年月并按月汇总（取每月最后一个值）
+    # 处理GDP等季频指标，重新采样为月频并前向填充
+    macro_df = macro_df.set_index('日期')
+    macro_df = macro_df.resample('M').last()
+    macro_df = macro_df.ffill().reset_index()
     macro_df['年月'] = macro_df['日期'].dt.to_period('M')
-    macro_monthly = macro_df.groupby('年月').last().reset_index()
 
     # 确定宏观指标列，假设除了 '日期' 和 '年月' 之外的列都是宏观指标
-    macro_indicators = [col for col in macro_monthly.columns if col not in ['日期', '年月']]
+    macro_indicators = [col for col in macro_df.columns if col not in ['日期', '年月']]
+
     print(f"宏观指标列表: {macro_indicators}")
 
     # 处理宏观指标数据，计算每个指标的状态（上行/下行）
-    macro_monthly = calculate_states(macro_monthly, macro_indicators)
+    macro_df = calculate_states(macro_df, macro_indicators)
 
     # 处理资产价格数据，计算月度涨跌幅（百分比）
     assets = [col for col in asset_df.columns if col != '日期']
+
+    # 如果提供了 assets_to_plot，则只处理指定的资产
+    if assets_to_plot:
+        assets = [asset for asset in assets if asset in assets_to_plot]
+        if not assets:
+            print(f"未找到匹配的资产: {assets_to_plot}")
+            return
+    print(f"处理的资产列表: {assets}")
+
     returns_df = calculate_monthly_returns(asset_df, assets)
 
-    # 将宏观数据的 Date 设为 Period（月度）并对齐资产回报数据的日期
-    macro_monthly['年月日期'] = macro_monthly['年月'].dt.to_timestamp('M')
-    macro_monthly.set_index('年月日期', inplace=True)
+    # 将宏观数据的日期设为索引并对齐资产回报数据的日期
+    macro_df.set_index('日期', inplace=True)
     returns_df.index = returns_df.index.to_period('M').to_timestamp('M')
 
     # 删除宏观数据中不在资产回报数据中的日期
-    macro_monthly = macro_monthly[macro_monthly.index.isin(returns_df.index)]
+    macro_df = macro_df[macro_df.index.isin(returns_df.index)]
 
     # 生成行和列的标签
     row_labels, col_labels = get_combinations(macro_indicators)
@@ -207,16 +214,15 @@ def main(excel_path):
                 col_indicator, col_state = col.split(' ')
                 # 定义条件：row_indicator 在 row_state AND col_indicator 在 col_state
                 condition = (
-                        (macro_monthly[f'{row_indicator}_State'] == row_state) &
-                        (macro_monthly[f'{col_indicator}_State'] == col_state)
+                    (macro_df[f'{row_indicator}_State'] == row_state) &
+                    (macro_df[f'{col_indicator}_State'] == col_state)
                 )
                 # 筛选符合条件的月份
-                subset = macro_monthly[condition]
+                subset = macro_df[condition]
                 # 计算平均涨跌幅
                 average_return = returns_df.loc[subset.index, asset].mean()
                 # 填充结果
-                current_results[asset].at[row, col] = round(average_return, 2) if not np.isnan(
-                    average_return) else np.nan
+                current_results[asset].at[row, col] = round(average_return, 2) if not np.isnan(average_return) else np.nan
 
         print(f"正在处理资产: {asset} (次月)")
         for row in row_labels:
@@ -225,11 +231,11 @@ def main(excel_path):
                 col_indicator, col_state = col.split(' ')
                 # 定义条件
                 condition = (
-                        (macro_monthly[f'{row_indicator}_State'] == row_state) &
-                        (macro_monthly[f'{col_indicator}_State'] == col_state)
+                    (macro_df[f'{row_indicator}_State'] == row_state) &
+                    (macro_df[f'{col_indicator}_State'] == col_state)
                 )
                 # 获取对应的次月
-                current_month_indices = macro_monthly[condition].index
+                current_month_indices = macro_df[condition].index
                 next_month_indices = current_month_indices + pd.DateOffset(months=1)
                 next_month_indices = next_month_indices[next_month_indices.isin(returns_df.index)]
 
@@ -242,21 +248,42 @@ def main(excel_path):
                 next_results[asset].at[row, col] = round(average_return, 2) if not np.isnan(average_return) else np.nan
 
     # 确定最新的宏观条件
-    latest_macro = macro_monthly.iloc[-1]
+    latest_macro = macro_df.iloc[-1]
     latest_conditions = {indicator: latest_macro[f'{indicator}_State'] for indicator in macro_indicators}
-    print(f"最新的宏观条件: {latest_conditions}")
+    latest_date = latest_macro.name
+    print(f"最新的宏观条件 (截至 {latest_date.strftime('%Y-%m')}):")
+    for indicator in macro_indicators:
+        state = latest_conditions[indicator]
+        value = latest_macro[indicator]
+        print(f"  - {indicator}: {state} (值: {value})")
 
     # 自动生成需要高亮的行和列标签
-    highlight_rows = [f"{indicator} {state}" for indicator, state in latest_conditions.items()]
-    highlight_cols = [f"{indicator} {state}" for indicator, state in latest_conditions.items()]
+    highlight_rows = [f"{indicator} {latest_conditions[indicator]}" for indicator in macro_indicators]
+    highlight_cols = highlight_rows.copy()  # 假设行和列的宏观指标相同
 
     print(f"高亮行标签: {highlight_rows}")
     print(f"高亮列标签: {highlight_cols}")
 
-    # 为每个资产生成热力图
+    # 为每个资产生成热力图并计算高亮单元格的平均值
     for asset in assets:
         print(f"生成 {asset} 的当月热力图...")
         current_data = current_results[asset]
+        # 计算被高亮单元格的平均值
+        highlighted_values = []
+        for row_label in highlight_rows:
+            if row_label in current_data.index:
+                for col_label in highlight_cols:
+                    if col_label in current_data.columns:
+                        value = current_data.at[row_label, col_label]
+                        if not np.isnan(value):
+                            highlighted_values.append(value)
+
+        if highlighted_values:
+            average_highlighted_value = sum(highlighted_values) / len(highlighted_values)
+            print(f"{asset} (当月) 被高亮单元格的平均值: {average_highlighted_value:.2f}%")
+        else:
+            print(f"{asset} (当月) 没有被高亮且有值的单元格。")
+
         plot_heatmap(
             data=current_data,
             title='Current Month Asset Performance',
@@ -269,6 +296,22 @@ def main(excel_path):
 
         print(f"生成 {asset} 的次月热力图...")
         next_data = next_results[asset]
+        # 计算被高亮单元格的平均值
+        highlighted_values = []
+        for row_label in highlight_rows:
+            if row_label in next_data.index:
+                for col_label in highlight_cols:
+                    if col_label in next_data.columns:
+                        value = next_data.at[row_label, col_label]
+                        if not np.isnan(value):
+                            highlighted_values.append(value)
+
+        if highlighted_values:
+            average_highlighted_value = sum(highlighted_values) / len(highlighted_values)
+            print(f"{asset} (次月) 被高亮单元格的平均值: {average_highlighted_value:.2f}%")
+        else:
+            print(f"{asset} (次月) 没有被高亮且有值的单元格。")
+
         plot_heatmap(
             data=next_data,
             title='Next Month Asset Performance',
@@ -325,7 +368,6 @@ def main(excel_path):
         rename_dict = {}
         for indicator in macro_indicators:
             rename_dict[f'Row_{indicator}'] = f'Row_{indicator}_State'
-        for indicator in macro_indicators:
             rename_dict[f'Column_{indicator}'] = f'Column_{indicator}_State'
         metabase_df.rename(columns=rename_dict, inplace=True)
 
@@ -342,4 +384,6 @@ def main(excel_path):
 if __name__ == "__main__":
     # 请将以下路径替换为您的实际 Excel 文件路径
     excel_path = r"D:\WPS云盘\WPS云盘\工作-麦高\研究trial\宏观影响风格数据源.xlsx"
-    main(excel_path)
+    # 如果需要指定要绘制的资产列表，例如 ['资产1', '资产2']，可以传入参数
+    assets_to_plot = None  # 或者 ['资产1', '资产2']
+    main(excel_path, assets_to_plot)
