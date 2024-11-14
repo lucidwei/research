@@ -13,6 +13,38 @@ import pandas as pd
 import re
 
 
+def process_wind_excel(excel_file_path: str, sheet_name=None, column_name=None):
+    """
+    用wind下载下来的格式化excel整理数据的metadata从而避免手工处理，如指标名称、频率、单位、指标ID、时间区间、来源、更新时间
+    """
+
+    # 读取 Excel 文件，其中包含所需要的数据的metadata
+    file_path = os.path.join(excel_file_path)
+    df = pd.read_excel(file_path, sheet_name=sheet_name, index_col=0, header=None)
+
+    # 定位最后一个 metadata 字段（在第一个日期类型值的位置上一个）
+    last_metadata_row = None
+    for idx, value in df.index.to_series().items():
+        if is_date(value):
+            last_metadata_row = idx
+            break
+
+    last_metadata_row = df.index.get_loc(last_metadata_row) - 1
+
+    # 提取 metadata
+    metadata = df.iloc[:last_metadata_row].copy(deep=True)
+    metadata.dropna(inplace=True, how='all')
+    metadata = metadata.transpose()
+
+    # 提取数据部分
+    data = df.iloc[last_metadata_row + 1:].copy(deep=True)
+
+    # 设置 data 的列索引为 '指标ID' 或column_name
+    indicator_ids = metadata.loc[:, column_name]
+    data.columns = indicator_ids
+
+    return metadata, data
+
 def get_image_url(filename):
     return f"http://localhost:8080/images/{filename.replace(' ', '%20')}"
 
