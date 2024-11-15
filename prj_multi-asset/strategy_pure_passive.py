@@ -54,8 +54,27 @@ class BaseStrategy:
         """
         assets = cov_matrix.columns.tolist()
         num_assets = len(assets)
+
         if initial_weights is None:
-            initial_weights = np.array([1 / num_assets] * num_assets)
+            initial_weights = np.zeros(num_assets)
+            if 'Equity' in assets:
+                equity_index = assets.index('Equity')
+                initial_weights[equity_index] = 0.05
+                remaining_weight = 1.0 - initial_weights[equity_index]
+                if num_assets > 1:
+                    equally_distributed = remaining_weight / (num_assets - 1)
+                    for i in range(num_assets):
+                        if i != equity_index:
+                            initial_weights[i] = equally_distributed
+                else:
+                    # 只有一个资产的情况
+                    initial_weights[equity_index] = 1.0
+            else:
+                # 如果资产列表中不包含Equity，则均等分配
+                initial_weights = np.array([1.0 / num_assets] * num_assets)
+        else:
+            initial_weights = np.array(initial_weights)
+
         if bounds is None:
             bounds = tuple((0.0, 1.0) for _ in range(num_assets))
 
@@ -66,40 +85,50 @@ class BaseStrategy:
         risk_budget = risk_budget / np.sum(risk_budget)
 
         def risk_budget_objective(weights, cov_mat, risk_budget):
-            sigma = np.sqrt(weights.T @ cov_mat @ weights)
-            MRC = cov_mat @ weights / sigma  # 边际风险贡献
-            TRC = weights * MRC  # 总体风险贡献
-            risk_contribution_percent = TRC / np.sum(TRC)
-            delta = risk_contribution_percent - risk_budget
-            return np.sum(delta ** 2)
+            # 计算组合方差和标准差
+            portfolio_variance = np.dot(weights, np.dot(cov_mat, weights))
+            portfolio_std = np.sqrt(portfolio_variance)
+
+            # 避免除以零
+            if portfolio_std == 0:
+                return np.inf
+
+            # 计算边际风险贡献 (Marginal Risk Contribution)
+            mrc = np.dot(cov_mat, weights) / portfolio_std
+
+            # 计算总体风险贡献 (Total Risk Contribution)
+            trc = weights * mrc
+
+            # 计算风险贡献百分比
+            rc_percent = trc / trc.sum()
+
+            # 目标函数：最小化实际风险贡献百分比与目标风险预算之间的平方差
+            objective_value = np.sum((rc_percent - risk_budget) ** 2)
+
+            # 调试信息
+            # print(f"Weights: {weights}, RC Percent: {rc_percent}, Objective: {objective_value}")
+
+            return objective_value
 
         constraints = {
             'type': 'eq',
             'fun': lambda x: np.sum(x) - 1.0
         }
 
-        # result = minimize(
-        #     fun=risk_budget_objective,
-        #     x0=initial_weights,
-        #     args=(cov_matrix.values, risk_budget),
-        #     method='SLSQP',
-        #     bounds=bounds,
-        #     constraints=constraints,
-        #     options={'maxiter': 1000, 'ftol': 1e-10}
-        # )
+        result = minimize(
+            fun=risk_budget_objective,
+            x0=initial_weights,
+            args=(cov_matrix.values, risk_budget),
+            method='SLSQP',
+            bounds=bounds,
+            constraints=constraints,
+            options={'maxiter': 1000, 'ftol': 1e-12, 'disp': False}
+        )
 
-        options = {"maxiter": 1000, "ftol": 1e-10}
-        minimizer_kwargs = {
-            "method": "SLSQP",
-            "args": (cov_matrix.values, risk_budget),
-            "constraints": constraints,
-            "bounds": bounds,  # 添加边界参数
-            "options": options,
-        }
-        # 求解出权重
-        result = basinhopping(risk_budget_objective, x0=initial_weights, minimizer_kwargs=minimizer_kwargs)
+        if not result.success:
+            raise ValueError("优化未能收敛： " + result.message)
+
         weights = pd.Series(result.x, index=assets)
-
         return weights
 
     def generate_cache_filename(self, cache_key_elements):
