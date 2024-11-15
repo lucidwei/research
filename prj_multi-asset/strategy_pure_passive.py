@@ -78,16 +78,28 @@ class BaseStrategy:
             'fun': lambda x: np.sum(x) - 1.0
         }
 
-        result = minimize(
-            fun=risk_budget_objective,
-            x0=initial_weights,
-            args=(cov_matrix.values, risk_budget),
-            method='SLSQP',
-            bounds=bounds,
-            constraints=constraints,
-            options={'maxiter': 1000, 'ftol': 1e-10}
-        )
+        # result = minimize(
+        #     fun=risk_budget_objective,
+        #     x0=initial_weights,
+        #     args=(cov_matrix.values, risk_budget),
+        #     method='SLSQP',
+        #     bounds=bounds,
+        #     constraints=constraints,
+        #     options={'maxiter': 1000, 'ftol': 1e-10}
+        # )
+
+        options = {"maxiter": 1000, "ftol": 1e-10}
+        minimizer_kwargs = {
+            "method": "SLSQP",
+            "args": (cov_matrix.values, risk_budget),
+            "constraints": constraints,
+            "bounds": bounds,  # 添加边界参数
+            "options": options,
+        }
+        # 求解出权重
+        result = basinhopping(risk_budget_objective, x0=initial_weights, minimizer_kwargs=minimizer_kwargs)
         weights = pd.Series(result.x, index=assets)
+
         return weights
 
     def generate_cache_filename(self, cache_key_elements):
