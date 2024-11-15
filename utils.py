@@ -13,9 +13,10 @@ import pandas as pd
 import re
 
 
-def process_wind_excel(excel_file_path: str, sheet_name=None, column_name=None):
+def process_wind_excel(excel_file_path: str, sheet_name=None, column_name=None, delete_zero=True):
     """
     用wind下载下来的格式化excel整理数据的metadata从而避免手工处理，如指标名称、频率、单位、指标ID、时间区间、来源、更新时间
+    delete_zero: 如果为True，则将数据中的0转换为NaN
     """
 
     # 读取 Excel 文件，其中包含所需要的数据的metadata
@@ -39,11 +40,16 @@ def process_wind_excel(excel_file_path: str, sheet_name=None, column_name=None):
     # 提取数据部分
     data = df.iloc[last_metadata_row + 1:].copy(deep=True)
 
-    # 设置 data 的列索引为 '指标ID' 或column_name
+    # 设置 data 的列索引为 '指标ID' 或 column_name
     indicator_ids = metadata.loc[:, column_name]
     data.columns = indicator_ids
 
+    # 如果 delete_zero 为True，则将0值设为NaN
+    if delete_zero:
+        data.replace(0, pd.NA, inplace=True)
+
     return metadata, data
+
 
 def get_image_url(filename):
     return f"http://localhost:8080/images/{filename.replace(' ', '%20')}"

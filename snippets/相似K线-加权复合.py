@@ -203,7 +203,7 @@ if __name__ == "__main__":
         file_path='D:\\Downloads\\000001.SH.xlsx',
         window_sizes=[5, 20, 200],
         weights=[0.4, 0.3, 0.3],
-        top_n=5,
+        top_n=6,
         algorithm='pearson'  # »ò 'euclidean'
         # algorithm='euclidean'
     )

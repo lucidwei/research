@@ -13,12 +13,14 @@ from itertools import product
 from datetime import datetime
 import os
 from utils import process_wind_excel
+import warnings
+
+# 忽略特定的警告
+warnings.filterwarnings("ignore", category=UserWarning, message="Glyph.*missing from current font.")
 
 # TODO:
-# 加入可选参数：仅画需要的资产价格
-# 在python 终端中打印出来当前作图的这组数据中，被框出来的所有单元格的平均值。
-# 打印出最新的宏观状态和具体的月数（GDP季频的怎么处理的）
-# 上下左侧更多留白，title没显示全被遮挡了
+# 打印出最新的宏观状态和具体的月数（GDP季频的怎么处理的，应该线性插值）
+# 把行或者列求和统计
 
 def calculate_states(df, indicators):
     """
@@ -58,6 +60,7 @@ def get_combinations(indicators):
     labels = [f"{indicator} {state}" for indicator, state in combinations]
     return labels, labels  # 行和列使用相同的标签
 
+
 def plot_heatmap(data, title, highlight_rows, highlight_cols, asset, month_type, output_dir='heatmaps'):
     """
     绘制热力图，并高亮显示指定的单元格。
@@ -79,10 +82,15 @@ def plot_heatmap(data, title, highlight_rows, highlight_cols, asset, month_type,
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    plt.figure(figsize=(12, 12))
+    plt.figure(figsize=(15, 11))
     sns.set(font_scale=1)
 
-    # 绘制热力图，fmt='.2f' 仅显示数字，后续添加 '%'
+    # 计算色彩映射的范围，以0为中心
+    max_abs_value = max(data.max().max(), abs(data.min().min()))
+    vmin = -max_abs_value
+    vmax = max_abs_value
+
+    # 绘制热力图，fmt='.1f' 仅显示数字，后续添加 '%'
     ax = sns.heatmap(
         data,
         annot=True,
@@ -90,6 +98,8 @@ def plot_heatmap(data, title, highlight_rows, highlight_cols, asset, month_type,
         cmap="coolwarm",
         linewidths=.5,
         linecolor='gray',
+        vmin=vmin, vmax=vmax,  # 设置色彩映射的范围
+        center=0,  # 确保0值在中间
         cbar_kws={'label': 'Average Return (%)'}
     )
 
@@ -106,7 +116,7 @@ def plot_heatmap(data, title, highlight_rows, highlight_cols, asset, month_type,
                             ax.add_patch(
                                 plt.Rectangle((list(data.columns).index(col_label), list(data.index).index(row_label)),
                                               1, 1,
-                                              fill=False, edgecolor='yellow', lw=4))
+                                              fill=False, edgecolor='yellow', lw=2))
                     except KeyError:
                         print(f"未找到高亮条件: 行='{row_label}', 列='{col_label}'")
 
@@ -164,10 +174,13 @@ def main(excel_path, assets_to_plot=None):
     macro_df = macro_df.sort_values('日期').reset_index(drop=True)
     asset_df = asset_df.sort_values('日期').reset_index(drop=True)
 
-    # 处理GDP等季频指标，重新采样为月频并前向填充
+    # 处理GDP等季频指标，重新采样为月频并前向填充（填充未来）
     macro_df = macro_df.set_index('日期')
     macro_df = macro_df.resample('M').last()
     macro_df = macro_df.ffill().reset_index()
+    # 删除最新月份的数据
+    latest_month = macro_df.index.max()
+    macro_df = macro_df.drop(latest_month)
     macro_df['年月'] = macro_df['日期'].dt.to_period('M')
 
     # 确定宏观指标列，假设除了 '日期' 和 '年月' 之外的列都是宏观指标
@@ -385,5 +398,6 @@ if __name__ == "__main__":
     # 请将以下路径替换为您的实际 Excel 文件路径
     excel_path = r"D:\WPS云盘\WPS云盘\工作-麦高\研究trial\宏观影响风格数据源.xlsx"
     # 如果需要指定要绘制的资产列表，例如 ['资产1', '资产2']，可以传入参数
-    assets_to_plot = None  # 或者 ['资产1', '资产2']
+    # assets_to_plot = None  # 或者 ['资产1', '资产2']
+    assets_to_plot = ['中证1000指数/沪深300指数', '中证1000指数', '沪深300指数']
     main(excel_path, assets_to_plot)
