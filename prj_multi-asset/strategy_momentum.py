@@ -164,12 +164,19 @@ class MomentumStrategy(BaseStrategy):
 
         period_days = {'1Y': 252, '6M': 126, '3M': 63}
 
-        # 步骤 1：筛选最近3个月收益为正的资产
+        # 步骤 1：筛选最近1或3个月收益为正的资产
         returns_3m = self.calculate_return(price_data, current_date, 63)
-        trending_assets = returns_3m[returns_3m > 0].dropna().index.tolist()
+        returns_1m = self.calculate_return(price_data, current_date, 21)
+        # trending_assets = returns_3m[returns_3m > 0].dropna().index.tolist()
+        trending_assets = returns_3m[(returns_3m > 0) | (returns_1m > 0)].dropna().index.tolist()
         if not trending_assets:
             print(f"  No assets have positive 3M returns on {current_date.strftime('%Y-%m-%d')}")
             return []
+
+        # 检查当前日期是否是暂停日期
+        if current_date == pd.Timestamp('2015-12-31 00:00:00'):
+            print("Pausing on", current_date.strftime('%Y-%m-%d'))
+            # 在这里可以进行调试或暂停操作，例如使用断点或打印调试信息
 
         # 步骤 2：计算排名
         for period_name, days in period_days.items():
@@ -185,7 +192,8 @@ class MomentumStrategy(BaseStrategy):
         ranking_df['Average_Rank'] = ranking_df.mean(axis=1)
 
         ranking_df = ranking_df.sort_values('Average_Rank')
-        selected_assets = ranking_df.index.tolist()[:top_n_assets]
+        number_of_selected = min(top_n_assets, len(trending_assets))
+        selected_assets = ranking_df.index.tolist()[:number_of_selected]
 
         print(f"  Selected assets on {current_date.strftime('%Y-%m-%d')}: {selected_assets}")
 
