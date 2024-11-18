@@ -16,7 +16,8 @@ class Evaluator:
 
     def calculate_net_value(self):
         # 计算资产的日收益率
-        returns = self.price_data.pct_change().dropna()
+        # returns = self.price_data.pct_change().dropna()
+        returns = self.price_data.pct_change()
 
         # 权重向前填充，对齐到收益率数据
         aligned_weights = self.weights_history.reindex(returns.index).fillna(method='ffill')
@@ -37,8 +38,17 @@ class Evaluator:
         cumulative_return = net_value.iloc[-1] / net_value.iloc[0] - 1
         annualized_return = (1 + cumulative_return) ** (252 / len(net_value)) - 1
         annualized_volatility = returns.std() * np.sqrt(252)
+
+        # 计算下行波动率
+        target_return = 0
+        downside_returns = returns[returns < target_return]
+        annualized_downside_volatility = downside_returns.std() * np.sqrt(252)
+
         sharpe_ratio = annualized_return / annualized_volatility
+        sortino_ratio = annualized_return / annualized_downside_volatility  # 计算索提诺比率
+
         max_drawdown = ((net_value / net_value.cummax()) - 1).min()
+
         # 持有一年正收益比率和收益中位数
         holding_period = 252
         if len(net_value) > holding_period:
@@ -48,11 +58,13 @@ class Evaluator:
         else:
             positive_return_ratio = np.nan
             median_return = np.nan
+
         performance = {
             '累计收益率': cumulative_return,
             '年化收益率': annualized_return,
             '年化波动率': annualized_volatility,
             '夏普比率': sharpe_ratio,
+            '索提诺比率': sortino_ratio,
             '最大回撤': max_drawdown,
             '持有一年正收益比率': positive_return_ratio,
             '持有一年收益中位数': median_return
