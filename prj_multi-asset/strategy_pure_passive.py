@@ -122,7 +122,8 @@ class BaseStrategy:
             method='SLSQP',
             bounds=bounds,
             constraints=constraints,
-            options={'maxiter': 1000, 'ftol': 1e-12, 'disp': False}
+            # options={'maxiter': 1000, 'ftol': 1e-12, 'disp': False}
+            options={'maxiter': 1000, 'ftol': 1e-12, 'disp': True}
         )
 
         if not result.success:

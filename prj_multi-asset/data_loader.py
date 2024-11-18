@@ -35,6 +35,7 @@ class ExcelDataLoader:
             'SHFE黄金': 'Commodity',
             '南华能化指数': 'Commodity',
             '中证800': 'Equity',
+            '新交所泛东南亚科技指数': 'Equity',
         }
         self.load_data()
 
