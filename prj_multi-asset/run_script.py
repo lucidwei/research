@@ -101,15 +101,6 @@ for strategy_name, evaluator in all_evaluations.items():
         print(f'{key}: {value:.4f}')
     print("\n")
 
-# After running all strategies, upload results to the database
-base_config = BaseConfig('multi-asset')
-for strategy_name in all_evaluations.keys():
-    evaluator = all_evaluations[strategy_name]
-    strategy = all_strategies[strategy_name]
-
-    # Initialize ResultsUploader and upload results
-    results_uploader = ResultsUploader(strategy_name, strategy, evaluator, base_config)
-    results_uploader.upload_results()
 
 # 如需绘制净值曲线
 import matplotlib.pyplot as plt
@@ -122,3 +113,14 @@ plt.xlabel('日期')
 plt.ylabel('净值')
 plt.legend()
 plt.show()
+
+
+# After running all strategies, upload results to the database
+base_config = BaseConfig('multi-asset')
+for strategy_name in all_evaluations.keys():
+    evaluator = all_evaluations[strategy_name]
+    strategy = all_strategies[strategy_name]
+
+    # Initialize ResultsUploader and upload results
+    results_uploader = ResultsUploader(strategy_name, strategy, evaluator, base_config)
+    # results_uploader.upload_results()
