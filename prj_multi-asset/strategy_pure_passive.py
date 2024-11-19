@@ -11,6 +11,7 @@ from scipy.optimize import minimize, basinhopping
 import os
 import hashlib
 import pickle
+from utils import get_tradedays
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -255,6 +256,34 @@ class BaseStrategy:
         weights = pd.Series(result.x, index=assets)
         return weights
 
+    def calc_rebalance_dates(self, start_date, end_date, date_index, rebalance_frequency):
+        # 获取交易日列表
+        all_trading_days_list = get_tradedays(start_date, end_date)
+
+        # 将交易日列表转换为 DateTime Series
+        all_trading_days = pd.to_datetime(all_trading_days_list)
+        all_trading_days = pd.Series(all_trading_days).sort_values()
+        all_trading_days.index = all_trading_days  # 设置日期为索引
+
+        # 用于找到每月的最后一个交易日
+        end_of_month_trading_days = all_trading_days.resample('M').last()
+
+        # 根据给定的调仓频率和日期索引找到调仓日期
+        rebalance_dates = date_index.to_series().resample(rebalance_frequency).last().dropna()
+
+        # 确保调仓日期是有效的交易日
+        # rebalance_dates = rebalance_dates[rebalance_dates.isin(all_trading_days)]
+
+        # 检查最后一个调仓日期是否为其所在月的最后一个交易日
+        if not rebalance_dates.empty:
+            last_rebalance_date = rebalance_dates.iloc[-1]
+            if last_rebalance_date not in end_of_month_trading_days.index:
+                # 如果最后一个调仓日期不是月末交易日，则剔除
+                rebalance_dates = rebalance_dates[rebalance_dates != last_rebalance_date]
+                print(f"最后一个调仓日期 {last_rebalance_date} 不是月末交易日，将被剔除。")
+
+        return rebalance_dates
+
 
 class RiskParityStrategy(BaseStrategy):
     def __init__(self):
@@ -277,11 +306,13 @@ class RiskParityStrategy(BaseStrategy):
 
         # 使用完整的价格数据
         price_data_full = price_data.loc[:, selected_assets].copy(deep=True)
+        if not end_date:
+            end_date = price_data.index.max()
         price_data = price_data.loc[start_date:end_date, selected_assets]
 
         # 生成调仓日期
-        date_index = price_data.index
-        rebalance_dates = date_index.to_series().resample(rebalance_frequency).last().dropna()
+        date_index = price_data.loc[start_date:end_date].index
+        rebalance_dates = self.calc_rebalance_dates(start_date, end_date, date_index, rebalance_frequency)
 
         weights_history = pd.DataFrame(index=date_index, columns=price_data.columns)
 

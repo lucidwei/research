@@ -36,8 +36,12 @@ class MomentumStrategy(BaseStrategy):
         all_assets = list(asset_class_mapping.keys())
         price_data = price_data.loc[:, all_assets]
 
+        if not end_date:
+            end_date = price_data.index.max()
+
         date_index = price_data.loc[start_date:end_date].index
-        rebalance_dates = date_index.to_series().resample(rebalance_frequency).last().dropna()
+
+        rebalance_dates = self.calc_rebalance_dates(start_date, end_date, date_index, rebalance_frequency)
 
         weights_history = pd.DataFrame(index=date_index, columns=all_assets)
 
@@ -174,7 +178,7 @@ class MomentumStrategy(BaseStrategy):
             return []
 
         # 检查当前日期是否是暂停日期
-        if current_date == pd.Timestamp('2015-12-31 00:00:00'):
+        if current_date == pd.Timestamp('2020-03-31 00:00:00'):
             print("Pausing on", current_date.strftime('%Y-%m-%d'))
             # 在这里可以进行调试或暂停操作，例如使用断点或打印调试信息
 

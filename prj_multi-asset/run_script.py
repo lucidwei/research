@@ -7,8 +7,9 @@ from base_config import BaseConfig
 from data_loader import ExcelDataLoader, ResultsUploader
 import importlib
 from pylab import mpl
-mpl.rcParams['font.sans-serif'] = ['STZhongsong']    # 指定默认字体：解决plot不能显示中文问题
-mpl.rcParams['axes.unicode_minus'] = False           # 解决保存图像是负号'-'显示为方块的问题
+
+mpl.rcParams['font.sans-serif'] = ['STZhongsong']  # 指定默认字体：解决plot不能显示中文问题
+mpl.rcParams['axes.unicode_minus'] = False  # 解决保存图像是负号'-'显示为方块的问题
 
 # 从 Excel 文件读取数据
 data_path = rf"D:\WPS云盘\WPS云盘\工作-麦高\专题研究\专题-风险预算的资产配置策略\资产价格.xlsx"
@@ -66,7 +67,7 @@ strategies_config = [
 
 # 设置通用参数
 start_date = '2010-12-31'
-end_date = '2024-10-31'
+end_date = None
 
 # 存储所有策略的评估结果
 all_evaluations = {}
@@ -101,7 +102,6 @@ for strategy_name, evaluator in all_evaluations.items():
         print(f'{key}: {value:.4f}')
     print("\n")
 
-
 # 如需绘制净值曲线
 import matplotlib.pyplot as plt
 
@@ -114,7 +114,6 @@ plt.ylabel('净值')
 plt.legend()
 plt.show()
 
-
 # After running all strategies, upload results to the database
 base_config = BaseConfig('multi-asset')
 for strategy_name in all_evaluations.keys():
@@ -123,4 +122,4 @@ for strategy_name in all_evaluations.keys():
 
     # Initialize ResultsUploader and upload results
     results_uploader = ResultsUploader(strategy_name, strategy, evaluator, base_config)
-    # results_uploader.upload_results()
+    results_uploader.upload_results()
