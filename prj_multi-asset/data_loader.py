@@ -240,49 +240,29 @@ class ResultsUploader(PgDbUpdaterBase):
 
         # Collect daily signals first
         signals = {}
-        if hasattr(self.strategy, 'combined_stock_signal'):
-            signals['signal_stock'] = self.strategy.combined_stock_signal
-        if hasattr(self.strategy, 'combined_gold_signal'):
-            signals['signal_gold'] = self.strategy.combined_gold_signal
+        if hasattr(self.strategy, 'aligned_stock_signal'):
+            signals['monthly_signal_stock'] = self.strategy.aligned_stock_signal
+        if hasattr(self.strategy, 'aligned_gold_signal'):
+            signals['monthly_signal_gold'] = self.strategy.aligned_gold_signal
 
         if not signals:
             print(f"No signals available to collect for strategy '{self.strategy_name}'.")
             return
 
-        # For each rebalancing period, calculate the mean signal and round
-        rebalance_dates = self.rebalance_dates
-        rebalance_dates = pd.Series(rebalance_dates, index=rebalance_dates)
-        rebalance_dates = rebalance_dates.sort_values()
+        # Iterate through each rebalance date and collect the corresponding signal
+        for date in self.rebalance_dates:
+            for signal_name, aligned_signal in signals.items():
+                if date in aligned_signal:
+                    # Retrieve the signal value for the specific rebalance date
+                    signal_value = aligned_signal[date]
+                    # Record the monthly signal
+                    self.results.append({
+                        'date': date.date().isoformat(),
+                        'strategy_name': self.strategy_name,
+                        'metric_name': f'{signal_name}',
+                        'value': signal_value
+                    })
 
-        date_index = self.evaluator.weights_history.index
-
-        for i, date in enumerate(rebalance_dates):
-            if i + 1 < len(rebalance_dates):
-                next_date = rebalance_dates.iloc[i + 1]
-            else:
-                next_date = date_index[-1] + pd.Timedelta(days=1)
-
-            # Get date range for the period before the rebalancing date
-            signal_dates = date_index[(date_index >= date) & (date_index < next_date)]
-            if signal_dates.empty:
-                continue  # No signal data for this period
-
-            for signal_name, daily_signal in signals.items():
-                # Extract signals for the period
-                period_signals = daily_signal.loc[signal_dates]
-                if period_signals.empty:
-                    continue
-                # Calculate mean signal
-                mean_signal = period_signals.mean()
-                # Round to get the actual signal used for rebalancing
-                monthly_signal = int(mean_signal.round())
-                # Record the monthly signal
-                self.results.append({
-                    'date': date.date().isoformat(),
-                    'strategy_name': self.strategy_name,
-                    'metric_name': f'monthly_{signal_name}',
-                    'value': monthly_signal
-                })
         print(f"Collected monthly signals for strategy '{self.strategy_name}'.")
 
     def upsert_results_to_database(self, results_df):

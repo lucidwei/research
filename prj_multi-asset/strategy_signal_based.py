@@ -227,6 +227,39 @@ class SignalBasedStrategy(BaseStrategy):
             gold_momentum_signal=self.gold_momentum_signal
         )
 
+        self.align_signals_to_rebalance_dates()
+
+    def align_signals_to_rebalance_dates(self):
+        """
+        Align daily generated signals to monthly rebalance dates.
+        """
+        # 重采样到每月最后一天
+        monthly_stock_signal = self.combined_stock_signal.resample('M').mean().round()
+        monthly_gold_signal = self.combined_gold_signal.resample('M').mean().round()
+
+        # 创建一个新的DataFrame用于对齐调仓日期
+        aligned_stock_signal = pd.Series(index=self.rebalance_dates, dtype=float)
+        aligned_gold_signal = pd.Series(index=self.rebalance_dates, dtype=float)
+
+        # 遍历调仓日期，找到每个日期最近的有效信号
+        for date in self.rebalance_dates:
+            # 找到最接近的月末日期，由于调仓日期可能在月末之后，我们需要处理这种情况
+            closest_month_end = monthly_stock_signal.index.searchsorted(date, side='right') - 1
+            if closest_month_end < 0:
+                # 如果调仓日期在所有数据之前，则跳过
+                continue
+
+            # 获取最接近的月末日
+            closest_month_end_date = monthly_stock_signal.index[closest_month_end]
+
+            # 分配信号到对应的调仓日期
+            aligned_stock_signal[date] = monthly_stock_signal.loc[closest_month_end_date]
+            aligned_gold_signal[date] = monthly_gold_signal.loc[closest_month_end_date]
+
+        # 更新类属性
+        self.aligned_stock_signal = aligned_stock_signal
+        self.aligned_gold_signal = aligned_gold_signal
+
     def adjust_weights_based_on_signals(self, current_date, selected_assets, asset_class_mapping,
                                         risk_budget, budget_type, previous_weights):
         """
@@ -271,11 +304,9 @@ class SignalBasedStrategy(BaseStrategy):
         # Adjust weights based on signals
         adjustment_factor = 0.3  # Adjust by +/-30%
         # Stock signal
-        stock_signal_value = self.combined_stock_signal.loc[
-            current_date] if current_date in self.combined_stock_signal.index else 0
+        stock_signal_value = self.aligned_stock_signal.loc[current_date]
         # Gold signal
-        gold_signal_value = self.combined_gold_signal.loc[
-            current_date] if current_date in self.combined_gold_signal.index else 0
+        gold_signal_value = self.aligned_gold_signal.loc[current_date]
 
         weights = weights.copy()
 
