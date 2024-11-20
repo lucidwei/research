@@ -244,10 +244,7 @@ class SignalBasedStrategy(BaseStrategy):
         # 遍历调仓日期，找到每个日期最近的有效信号
         for date in self.rebalance_dates:
             # 找到最接近的月末日期，由于调仓日期可能在月末之后，我们需要处理这种情况
-            closest_month_end = monthly_stock_signal.index.searchsorted(date, side='right') - 1
-            if closest_month_end < 0:
-                # 如果调仓日期在所有数据之前，则跳过
-                continue
+            closest_month_end = monthly_stock_signal.index.searchsorted(date, side='right')
 
             # 获取最接近的月末日
             closest_month_end_date = monthly_stock_signal.index[closest_month_end]
