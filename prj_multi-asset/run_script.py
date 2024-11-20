@@ -121,5 +121,6 @@ for strategy_name in all_evaluations.keys():
     strategy = all_strategies[strategy_name]
 
     # Initialize ResultsUploader and upload results
+    print(f"Uploading results for strategy: {strategy_name}")
     results_uploader = ResultsUploader(strategy_name, strategy, evaluator, base_config)
     results_uploader.upload_results()

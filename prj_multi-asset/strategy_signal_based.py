@@ -431,9 +431,9 @@ class GoldSignalGenerator:
         - 1: Buy signal (max VIX over window exceeds threshold)
         - 0: Hold signal (max VIX below threshold)
         """
-        vix_max = self.vix.rolling(window=window).max()
+        vix_max = self.vix.rolling(window=window).max().squeeze() / 7  # 这里的vix转换汇率了，要换回来
         signal = pd.Series(np.where(vix_max > threshold, 1, 0), index=self.vix.index)
-        return signal.dropna()
+        return signal
 
     def gold_momentum_signal(self, window=250):
         """
@@ -443,7 +443,7 @@ class GoldSignalGenerator:
         - 1: Buy signal (positive momentum)
         - 0: Hold signal (negative momentum)
         """
-        momentum = (self.gold_prices / self.gold_prices.shift(window) - 1)
+        momentum = (self.gold_prices / self.gold_prices.shift(window) - 1).squeeze()
         signal = pd.Series(np.where(momentum > 0, 1, 0), index=self.gold_prices.index)
         return signal.dropna()
 
