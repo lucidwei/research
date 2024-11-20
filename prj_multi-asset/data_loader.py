@@ -217,6 +217,21 @@ class ResultsUploader(PgDbUpdaterBase):
         if hasattr(self.strategy, 'combined_gold_signal'):
             signals['signal_gold'] = self.strategy.combined_gold_signal
             signal_names.append('signal_gold')
+        if hasattr(self.strategy, 'erp_signal'):
+            signals['signal_erp_stock'] = self.strategy.erp_signal
+            signal_names.append('signal_erp_stock')
+        if hasattr(self.strategy, 'volume_ma_signal'):
+            signals['signal_volume_ma_stock'] = self.strategy.volume_ma_signal
+            signal_names.append('signal_volume_ma_stock')
+        if hasattr(self.strategy, 'us_tips_signal'):
+            signals['signal_us_tips_gold'] = self.strategy.us_tips_signal
+            signal_names.append('signal_us_tips_gold')
+        if hasattr(self.strategy, 'vix_signal'):
+            signals['signal_vix_gold'] = self.strategy.vix_signal
+            signal_names.append('signal_vix_gold')
+        if hasattr(self.strategy, 'gold_momentum_signal'):
+            signals['signal_momentum_gold'] = self.strategy.gold_momentum_signal
+            signal_names.append('signal_momentum_gold')
 
         # Collect daily signals
         for signal_name in signal_names:
