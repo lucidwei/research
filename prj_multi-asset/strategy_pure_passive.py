@@ -13,7 +13,9 @@ import hashlib
 import pickle
 from utils import get_tradedays
 import warnings
+
 warnings.filterwarnings("ignore")
+
 
 class FixedWeightStrategy:
     def __init__(self):
@@ -25,6 +27,9 @@ class FixedWeightStrategy:
 
         # 仅处理必要的资产列和日期范围
         relevant_assets = list(weights.keys())  # 只取weights中涉及的资产
+
+        if not end_date:
+            end_date = price_data.index.max()
         filtered_data = price_data.loc[start_date:end_date, relevant_assets]
 
         weights_history = pd.DataFrame(index=filtered_data.index, columns=filtered_data.columns)
@@ -34,8 +39,6 @@ class FixedWeightStrategy:
         # 初始化评估器
         evaluator = Evaluator('FixedWeight', filtered_data, weights_history)
         return evaluator
-
-
 
 
 class BaseStrategy:
