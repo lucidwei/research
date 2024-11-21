@@ -51,6 +51,10 @@ class MomentumStrategy(BaseStrategy):
 
         print(f"\nStarting rebalancing calculations from {start_date} to {end_date}")
         for i, date in enumerate(rebalance_dates):
+            # 检查当前日期是否是暂停日期
+            if date == pd.Timestamp('2024-10-31 00:00:00'):
+                print("Pausing on", date.strftime('%Y-%m-%d'))
+                # 在这里可以进行调试或暂停操作，例如使用断点或打印调试信息
             print(f"Processing rebalance date {date.strftime('%Y-%m-%d')} ({i + 1}/{len(rebalance_dates)})")
             # 生成缓存文件名
             cache_key_elements = {
@@ -176,11 +180,6 @@ class MomentumStrategy(BaseStrategy):
         if not trending_assets:
             print(f"  No assets have positive 3M returns on {current_date.strftime('%Y-%m-%d')}")
             return []
-
-        # 检查当前日期是否是暂停日期
-        if current_date == pd.Timestamp('2020-03-31 00:00:00'):
-            print("Pausing on", current_date.strftime('%Y-%m-%d'))
-            # 在这里可以进行调试或暂停操作，例如使用断点或打印调试信息
 
         # 步骤 2：计算排名
         for period_name, days in period_days.items():

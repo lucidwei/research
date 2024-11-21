@@ -46,6 +46,31 @@ class BaseStrategy:
         self.cache_dir = rf"D:\WPS云盘\WPS云盘\工作-麦高\专题研究\专题-风险预算的资产配置策略\cache"
         pass
 
+    def calculate_initial_positions(self, cov_matrix, risk_budget):
+        """
+        计算基于风险平价的资产初始仓位。
+
+        参数:
+        cov_matrix : np.array
+            资产的协方差矩阵。
+        risk_budget : np.array
+            每个资产的风险预算。
+
+        返回:
+        np.array
+            每个资产的优化前初始仓位。
+        """
+        # 计算每个资产的波动率（标准差）
+        volatilities = np.sqrt(np.diag(cov_matrix))
+
+        # 计算风险调整后的权重
+        risk_adjusted_weights = risk_budget / volatilities
+
+        # 计算最终的资产配置比例
+        final_positions = risk_adjusted_weights / np.sum(risk_adjusted_weights)
+
+        return final_positions
+
     def risk_budget_allocation(self, cov_matrix, risk_budget_dict, initial_weights=None, bounds=None):
         """
         计算基于风险预算的权重。
@@ -59,34 +84,55 @@ class BaseStrategy:
         assets = cov_matrix.columns.tolist()
         num_assets = len(assets)
 
-        if initial_weights is None:
-            initial_weights = np.zeros(num_assets)
-            if 'Equity' in assets:
-                equity_index = assets.index('Equity')
-                initial_weights[equity_index] = 0.05
-                remaining_weight = 1.0 - initial_weights[equity_index]
-                if num_assets > 1:
-                    equally_distributed = remaining_weight / (num_assets - 1)
-                    for i in range(num_assets):
-                        if i != equity_index:
-                            initial_weights[i] = equally_distributed
-                else:
-                    # 只有一个资产的情况
-                    initial_weights[equity_index] = 1.0
-            else:
-                # 如果资产列表中不包含Equity，则均等分配
-                initial_weights = np.array([1.0 / num_assets] * num_assets)
-        else:
-            initial_weights = np.array(initial_weights)
-
-        if bounds is None:
-            bounds = tuple((0.0, 1.0) for _ in range(num_assets))
-
         # 按照资产顺序安排风险预算向量
         risk_budget = np.array([risk_budget_dict[asset] for asset in assets])
 
         # 规范化风险预算，使其和为 1
         risk_budget = risk_budget / np.sum(risk_budget)
+
+        if initial_weights is None:
+            initial_weights = self.calculate_initial_positions(cov_matrix, risk_budget)
+
+            # # 处理单一资产的情况
+            # if num_assets == 1:
+            #     initial_weights[0] = 1.0
+            #
+            # # 处理两个资产的情况
+            # elif num_assets == 2:
+            #     if 'Equity' in assets and 'Commodity' in assets:
+            #         equity_index = assets.index('Equity')
+            #         commodity_index = assets.index('Commodity')
+            #         initial_weights[equity_index] = 0.6
+            #         initial_weights[commodity_index] = 0.4
+            #     elif 'Equity' in assets and 'Bond' in assets:
+            #         equity_index = assets.index('Equity')
+            #         bond_index = assets.index('Bond')
+            #         initial_weights[equity_index] = 0.2
+            #         initial_weights[bond_index] = 0.8
+            #     elif 'Commodity' in assets and 'Bond' in assets:
+            #         commodity_index = assets.index('Commodity')
+            #         bond_index = assets.index('Bond')
+            #         initial_weights[commodity_index] = 0.2
+            #         initial_weights[bond_index] = 0.8
+            #
+            # # 处理三个资产的情况
+            # elif num_assets == 3 and set(assets) == {'Equity', 'Commodity', 'Bond'}:
+            #     equity_index = assets.index('Equity')
+            #     commodity_index = assets.index('Commodity')
+            #     bond_index = assets.index('Bond')
+            #     initial_weights[equity_index] = 0.2
+            #     initial_weights[commodity_index] = 0.1
+            #     initial_weights[bond_index] = 0.7
+            # # 处理其他资产数量情况或资产不匹配预设组合的情况
+            # else:
+            #     equally_distributed = 1.0 / num_assets
+            #     initial_weights = np.full(num_assets, equally_distributed)
+
+        else:
+            initial_weights = np.array(initial_weights)
+
+        if bounds is None:
+            bounds = tuple((0.0, 1.0) for _ in range(num_assets))
 
         def risk_budget_objective(weights, cov_mat, risk_budget):
             # 计算组合方差和标准差
