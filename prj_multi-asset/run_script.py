@@ -35,7 +35,8 @@ strategies_config = [
         'parameters': {
             'selected_assets': ['中证800', 'SHFE黄金', '中债-总财富(总值)指数',],
             'asset_class_mapping': asset_class_mapping,
-            'risk_budget': {'中证800': 0.75, '中债-总财富(总值)指数': 0.2, 'SHFE黄金': 0.05},
+            # 'risk_budget': {'中证800': 0.75, '中债-总财富(总值)指数': 0.2, 'SHFE黄金': 0.05},
+            'risk_budget': {'中证800': 0.75, '中债-总财富(总值)指数': 0.18, 'SHFE黄金': 0.07},
             'rebalance_frequency': 'M',
             'lookback_periods': [63, 126, 252],
         }
@@ -59,7 +60,8 @@ strategies_config = [
         'class': 'SignalBasedStrategy',
         'parameters': {
             'asset_class_mapping': asset_class_mapping,
-            'risk_budget': {'中证800': 0.75, '中债-总财富(总值)指数': 0.2, 'SHFE黄金': 0.05},
+            # 'risk_budget': {'中证800': 0.75, '中债-总财富(总值)指数': 0.2, 'SHFE黄金': 0.05},
+            'risk_budget': {'中证800': 0.75, '中债-总财富(总值)指数': 0.18, 'SHFE黄金': 0.07},
             'rebalance_frequency': 'M',
         }
     },
