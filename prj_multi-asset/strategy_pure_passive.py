@@ -46,32 +46,29 @@ class BaseStrategy:
         self.cache_dir = rf"D:\WPS云盘\WPS云盘\工作-麦高\专题研究\专题-风险预算的资产配置策略\cache"
         pass
 
-    def calculate_initial_positions(self, cov_matrix, risk_budget):
+    def calculate_initial_positions(self, cov_matrix, risk_budget=None):
         """
         计算基于风险平价的资产初始仓位。
 
         参数:
         cov_matrix : np.array
             资产的协方差矩阵。
-        risk_budget : np.array
-            每个资产的风险预算。
+        risk_budget : np.array, optional
+            每个资产的风险预算；如果未提供，将平均分配风险。
 
         返回:
         np.array
             每个资产的优化前初始仓位。
         """
-        # 计算每个资产的波动率（标准差）
         volatilities = np.sqrt(np.diag(cov_matrix))
-
-        # 计算风险调整后的权重
+        if risk_budget is None:
+            # 如果没有提供风险预算，平均分配风险
+            risk_budget = np.ones(len(volatilities)) / len(volatilities)
         risk_adjusted_weights = risk_budget / volatilities
-
-        # 计算最终的资产配置比例
         final_positions = risk_adjusted_weights / np.sum(risk_adjusted_weights)
-
         return final_positions
 
-    def risk_budget_allocation(self, cov_matrix, risk_budget_dict, initial_weights=None, bounds=None):
+    def risk_budget_allocation(self, cov_matrix, risk_budget_dict=None, initial_weights=None, bounds=None):
         """
         计算基于风险预算的权重。
 
@@ -84,11 +81,14 @@ class BaseStrategy:
         assets = cov_matrix.columns.tolist()
         num_assets = len(assets)
 
-        # 按照资产顺序安排风险预算向量
-        risk_budget = np.array([risk_budget_dict[asset] for asset in assets])
-
-        # 规范化风险预算，使其和为 1
-        risk_budget = risk_budget / np.sum(risk_budget)
+        if risk_budget_dict is None:
+            # 如果没有提供风险预算字典，平均分配风险
+            risk_budget = np.ones(num_assets) / num_assets
+        else:
+            # 按照资产顺序安排风险预算向量
+            risk_budget = np.array([risk_budget_dict[asset] for asset in assets])
+            # 规范化风险预算，使其和为 1
+            risk_budget = risk_budget / np.sum(risk_budget)
 
         if initial_weights is None:
             initial_weights = self.calculate_initial_positions(cov_matrix, risk_budget)
@@ -279,40 +279,6 @@ class BaseStrategy:
                 continue
 
         return asset_weights
-
-    def risk_parity_weights(self, cov_matrix):
-        """
-        计算给定协方差矩阵的风险平价权重。
-        """
-        assets = cov_matrix.columns.tolist()
-        num_assets = len(assets)
-        x0 = np.array([1 / num_assets] * num_assets)
-        bounds = [(0, 1) for _ in assets]
-        constraints = {
-            'type': 'eq',
-            'fun': lambda x: np.sum(x) - 1
-        }
-
-        def objective(weights):
-            portfolio_variance = weights.T @ cov_matrix.values @ weights
-            sigma = np.sqrt(portfolio_variance)
-            MRC = cov_matrix.values @ weights / sigma
-            TRC = weights * MRC
-            risk_contribution = TRC / np.sum(TRC)
-            target = np.ones(num_assets) / num_assets
-            return np.sum((risk_contribution - target) ** 2)
-
-        result = minimize(
-            fun=objective,
-            x0=x0,
-            method='SLSQP',
-            bounds=bounds,
-            constraints=constraints,
-            options={'maxiter': 1000, 'ftol': 1e-10}
-        )
-
-        weights = pd.Series(result.x, index=assets)
-        return weights
 
     def calc_rebalance_dates(self, start_date, end_date, date_index, rebalance_frequency):
         # 获取交易日列表
