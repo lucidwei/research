@@ -118,7 +118,7 @@ class MomentumStrategy(BaseStrategy):
                         else:
                             # 使用风险平价
                             print(f"  Performing risk parity allocation")
-                            weights_period = self.risk_parity_weights(cov_matrix)
+                            weights_period = self.risk_budget_allocation(cov_matrix)
 
                         weights_list.append(weights_period)
 
