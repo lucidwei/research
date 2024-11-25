@@ -132,7 +132,7 @@ class BaseStrategy:
             initial_weights = np.array(initial_weights)
 
         if bounds is None:
-            bounds = tuple((0.0, 1.0) for _ in range(num_assets))
+            bounds = tuple((1e-3, 1.0) for _ in range(num_assets))
 
         def risk_budget_objective(weights, cov_mat, risk_budget):
             # 计算组合方差和标准差
@@ -172,14 +172,23 @@ class BaseStrategy:
             method='SLSQP',
             bounds=bounds,
             constraints=constraints,
-            # options={'maxiter': 1000, 'ftol': 1e-12, 'disp': False}
-            options={'maxiter': 1000, 'ftol': 1e-12, 'disp': True}
+            options={'maxiter': 1000, 'ftol': 1e-15, 'disp': True}
         )
 
         if not result.success:
             raise ValueError("优化未能收敛： " + result.message)
 
         weights = pd.Series(result.x, index=assets)
+        objective_value = result.fun
+
+        # 检查目标函数值是否满足要求
+        if objective_value > 1e-6:
+            print(f"  Objective value {objective_value} is too high. Using initial weights.")
+            if initial_weights is not None:
+                weights = pd.Series(initial_weights, index=assets)
+            else:
+                raise Exception('initial_weights not given')
+
         return weights
 
     def generate_cache_filename(self, cache_key_elements):
@@ -372,6 +381,10 @@ class RiskParityStrategy(BaseStrategy):
 
         print(f"\nStarting rebalancing calculations from {start_date} to {end_date}")
         for i, date in enumerate(rebalance_dates):
+            # 检查当前日期是否是暂停日期
+            if date == pd.Timestamp('2020-3-31 00:00:00'):
+                print("Pausing on", date.strftime('%Y-%m-%d'))
+                # 在这里可以进行调试或暂停操作，例如使用断点或打印调试信息
             print(f"Processing rebalance date {date.strftime('%Y-%m-%d')} ({i + 1}/{len(rebalance_dates)})")
             # 生成缓存文件名
             cache_key_elements = {
@@ -434,6 +447,15 @@ class RiskParityStrategy(BaseStrategy):
                     else:
                         weights = pd.Series(1.0 / len(price_data.columns), index=price_data.columns)
                 else:
+                    # # 根据 lookback_periods 计算权重
+                    # weight_factors = np.array([float(lookback) for lookback in lookback_periods[:len(weights_list)]])
+                    # weight_factors /= weight_factors.sum()  # 归一化，确保权重和为 1
+                    #
+                    # # 对每个 lookback period 的权重加权求和
+                    # weighted_weights = pd.concat(weights_list, axis=1).dot(weight_factors)
+                    # weighted_weights /= weighted_weights.sum()  # 归一化，确保最终权重和为 1
+                    #
+                    # weights = weighted_weights
                     avg_weights = pd.concat(weights_list, axis=1).mean(axis=1)
                     avg_weights /= avg_weights.sum()
                     weights = avg_weights
