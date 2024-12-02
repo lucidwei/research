@@ -8,7 +8,7 @@ echo Day of the week: %dayOfWeek%
 
 :: 检查当前是否为周六(6)或周日(0)
 if "%dayOfWeek%"=="0" goto end
-if "%dayOfWeek%"=="6" goto end
+:: if "%dayOfWeek%"=="6" goto end
 
 :: 设置日志文件路径和名称
 set logPath=E:\BaiduNetdiskWorkspace\FICC_research\bat_scripts\logs
