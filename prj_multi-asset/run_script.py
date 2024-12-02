@@ -13,7 +13,7 @@ mpl.rcParams['axes.unicode_minus'] = False  # ½â¾ö±£´æÍ¼ÏñÊÇ¸ººÅ'-'ÏÔÊ¾Îª·½¿éµÄÎ
 
 # ´Ó Excel ÎÄ¼ş¶ÁÈ¡Êı¾İ
 data_path = rf"D:\WPSÔÆÅÌ\WPSÔÆÅÌ\¹¤×÷-Âó¸ß\×¨ÌâÑĞ¾¿\×¨Ìâ-·çÏÕÔ¤ËãµÄ×Ê²úÅäÖÃ²ßÂÔ\×Ê²ú¼Û¸ñ.xlsx"
-data_loader = ExcelDataLoader(data_path)
+data_loader = ExcelDataLoader(data_path, exclude_today=True)
 data_dict = data_loader.get_data()
 asset_class_mapping = data_loader.asset_class_mapping
 
@@ -39,6 +39,8 @@ strategies_config = [
             'risk_budget': {'ÖĞÖ¤800': 0.75, 'ÖĞÕ®-×Ü²Æ¸»(×ÜÖµ)Ö¸Êı': 0.18, 'SHFE»Æ½ğ': 0.07},
             'rebalance_frequency': 'M',
             'lookback_periods': [63, 126, 252],
+            # 'lookback_periods': [252],
+            # 'lookback_periods': [126],
         }
     },
     {
@@ -50,8 +52,6 @@ strategies_config = [
             'rebalance_frequency': 'M',
             'lookback_periods': [252, 126, 63],
             'top_n_assets': 8,
-            'risk_budget': {'Equity': 0.75, 'Bond': 0.2, 'Commodity': 0.05},  # »òÕß×Ê²úÀà±ğµÄ·çÏÕÔ¤Ëã
-            # Èç¹û²»Ìá¹© risk_budget£¬ÔòÊ¹ÓÃ·çÏÕÆ½¼Û
         }
     },
     {
@@ -126,3 +126,19 @@ for strategy_name in all_evaluations.keys():
     print(f"Uploading results for strategy: {strategy_name}")
     results_uploader = ResultsUploader(strategy_name, strategy, evaluator, base_config)
     results_uploader.upload_results()
+
+
+# ±íÏÖ²»ºÃµÄ²ÎÊıÄ£ĞÍ
+    # {
+    #     'name': 'MomentumStrategy',
+    #     'module': 'strategy_momentum',
+    #     'class': 'MomentumStrategy',
+    #     'parameters': {
+    #         'asset_class_mapping': asset_class_mapping,  # Èç¹ûĞèÒª
+    #         'rebalance_frequency': 'M',
+    #         'lookback_periods': [252, 126, 63],
+    #         'top_n_assets': 8,
+    #         'risk_budget': {'Equity': 0.75, 'Bond': 0.2, 'Commodity': 0.05},  # »òÕß×Ê²úÀà±ğµÄ·çÏÕÔ¤Ëã
+    #         # Èç¹û²»Ìá¹© risk_budget£¬ÔòÊ¹ÓÃ·çÏÕÆ½¼Û
+    #     }
+    # },

@@ -10,7 +10,7 @@ import datetime
 
 
 class ExcelDataLoader:
-    def __init__(self, file_path):
+    def __init__(self, file_path, exclude_today=False):
         self.file_path = file_path
         self.data_dict = {}
         self.asset_class_mapping = {
@@ -37,9 +37,9 @@ class ExcelDataLoader:
             '中证800': 'Equity',
             '新交所泛东南亚科技指数': 'Equity',
         }
-        self.load_data()
+        self.load_data(exclude_today)
 
-    def load_data(self):
+    def load_data(self, exclude_today=False):
         # 读取Excel文件
         df = pd.read_excel(self.file_path)
 
@@ -52,63 +52,52 @@ class ExcelDataLoader:
 
         # 处理第一块数据：收盘价数据
         close_data = df.iloc[:, :split_indices[0]]
-        self._process_close_data(close_data)
+        self._process_close_data(close_data, exclude_today)
 
         # 处理第二块数据：经济数据
         edb_data = df.iloc[:, split_indices[0] + 1:split_indices[1]]
-        self._process_edb_data(edb_data)
+        self._process_edb_data(edb_data, exclude_today)
 
         # 处理第三块数据：综合数据
         composite_data = df.iloc[:, split_indices[1] + 1:]
-        self._process_composite_data(composite_data)
+        self._process_composite_data(composite_data, exclude_today)
 
         return self.data_dict
 
-    def _process_close_data(self, df):
-        # 清理并处理收盘价数据
+    def _process_data(self, df, exclude_today):
+        # 设置索引为日期
         data = df.iloc[3:].copy()
         data.columns = df.iloc[1]
         data.set_index('日期', inplace=True)
         data = data.dropna(how='all')
+
         # 检查索引是否有重复
         if data.index.duplicated().any():
             raise ValueError("日期索引有重复，请检查数据源。")
 
-        # 将数据存储到字典中
+        # 如果exclude_today为True，删除今天的数据
+        if exclude_today:
+            today = datetime.datetime.now().strftime('%Y-%m-%d')
+            if today in data.index:
+                data = data.drop(today)
+
+        return data
+
+    def _process_close_data(self, df, exclude_today):
+        data = self._process_data(df, exclude_today)
         self.data_dict['close_prices'] = data.sort_index()
 
-    def _process_edb_data(self, df):
-        # 清理并处理经济数据
-        data = df.iloc[3:].copy()
-        data.columns = df.iloc[1]
-        data.set_index('日期', inplace=True)
-        data = data.dropna(how='all')
-        # 检查索引是否有重复
-        if data.index.duplicated().any():
-            raise ValueError("日期索引有重复，请检查数据源。")
-
-        # 将数据存储到字典中
+    def _process_edb_data(self, df, exclude_today):
+        data = self._process_data(df, exclude_today)
         self.data_dict['edb_data'] = data.sort_index()
 
-    def _process_composite_data(self, df):
-        # 清理并处理综合数据
-        data = df.iloc[3:].copy()
-        data.columns = df.iloc[1]
-        data.set_index('日期', inplace=True)
-        data = data.dropna(how='all')
-        # 检查索引是否有重复
-        if data.index.duplicated().any():
-            raise ValueError("日期索引有重复，请检查数据源。")
-
-        # 转换成交额列的数据类型为float
+    def _process_composite_data(self, df, exclude_today):
+        data = self._process_data(df, exclude_today)
+        # 转换特定列数据类型
         if 'amt' in data.columns:
             data['amt'] = pd.to_numeric(data['amt'], errors='coerce')
-
-        # 转换PE(TTM)列的数据类型为float
         if 'pe_ttm' in data.columns:
             data['pe_ttm'] = pd.to_numeric(data['pe_ttm'], errors='coerce')
-
-        # 将数据存储到字典中
         self.data_dict['composite_data'] = data.sort_index()
 
     def get_data(self):
