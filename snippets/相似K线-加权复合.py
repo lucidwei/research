@@ -9,8 +9,8 @@ mpl.rcParams['font.sans-serif'] = ['STZhongsong']    # Ö¸¶¨Ä¬ÈÏ×ÖÌå£º½â¾öplot²»Ä
 mpl.rcParams['axes.unicode_minus'] = False           # ½â¾ö±£´æÍ¼ÏñÊÇ¸ººÅ'-'ÏÔÊ¾Îª·½¿éµÄÎÊÌâ
 
 class KLineSimilarityFinder:
-    def __init__(self, file_path, window_sizes=[5, 20, 200], weights=[0.2, 0.4, 0.4],
-                 top_n=5, algorithm='euclidean'):
+    def __init__(self, file_path, window_sizes=None, weights=None,
+                 top_n=5, algorithm='euclidean', dates_after=None):
         """
         ³õÊ¼»¯ÏàËÆĞÔ²éÕÒÆ÷¡£
 
@@ -20,6 +20,10 @@ class KLineSimilarityFinder:
         :param top_n: ×îÖÕÑ¡ÔñµÄÇ°¼¸¸ö×îÏàËÆµÄ´°¿ÚÊıÁ¿¡£
         :param algorithm: ÏàËÆĞÔ¼ÆËãËã·¨£¬Ö§³Ö 'euclidean' ºÍ 'pearson'¡£
         """
+        if weights is None:
+            weights = [0.2, 0.4, 0.4]
+        if window_sizes is None:
+            window_sizes = [5, 20, 200]
         if len(window_sizes) != len(weights):
             raise ValueError("window_sizes ºÍ weights ±ØĞë¾ßÓĞÏàÍ¬µÄ³¤¶È¡£")
 
@@ -28,6 +32,7 @@ class KLineSimilarityFinder:
         self.weights = weights
         self.top_n = top_n
         self.algorithm = algorithm
+        self.dates_after = pd.to_datetime(dates_after) if dates_after else None
         self.data = self.load_data()
         self.target_windows_standardized = self.prepare_target_windows()
 
@@ -36,6 +41,10 @@ class KLineSimilarityFinder:
         data = data[['ÈÕÆÚ', '¿ªÅÌ¼Û(Ôª)', '×î¸ß¼Û(Ôª)', '×îµÍ¼Û(Ôª)', 'ÊÕÅÌ¼Û(Ôª)', '³É½»¶î(°ÙÍò)']]
         data.columns = ['Date', 'Open', 'High', 'Low', 'Close', 'Volume']
         data['Date'] = pd.to_datetime(data['Date'])
+        # Èç¹ûÖ¸¶¨ÁËdates_after£¬ÔòÉ¸Ñ¡ÈÕÆÚ
+        if self.dates_after:
+            data = data[data['Date'] >= self.dates_after]
+
         data = data.sort_values('Date').reset_index(drop=True)  # È·±£°´ÈÕÆÚÅÅĞò
         data['Pct_Change'] = data['Close'].pct_change()
         return data.dropna().reset_index(drop=True)
@@ -197,14 +206,165 @@ class KLineSimilarityFinder:
             plt.show()
 
 
+
+class KLinePatternAnalyzer(KLineSimilarityFinder):
+    def __init__(self, file_path, dates_after=None):
+        super().__init__(file_path=file_path, dates_after=dates_after)
+
+    def filter_pattern(self, open_threshold=0.02, pullback_ratio=0.5):
+        """
+        Filters the data based on:
+        - Open > previous close by `open_threshold` (e.g., 2%)
+        - Close is a pullback of at least `pullback_ratio` of the day's rise (e.g., 50%)
+
+        Parameters:
+        - open_threshold: float, e.g., 0.02 for 2%
+        - pullback_ratio: float, e.g., 0.5 for 50%
+
+        Returns:
+        - filtered_dates: DataFrame containing the filtered rows
+        """
+        df = self.data.copy()
+
+        # Calculate the percentage change from previous close to current open
+        df['Prev_Close'] = df['Close'].shift(1)
+        df['Open_Pct_Change'] = (df['Open'] - df['Prev_Close']) / df['Prev_Close']
+
+        # Calculate the day's price movement
+        df['Day_Move'] = (df['Close'] - df['Open']) / df['Open']
+
+        # Calculate the pullback: (Close - Open) / Day_Move
+        df['Pullback_Ratio'] = -df['Day_Move'] / df['Open_Pct_Change']
+
+        # Apply the filters
+        filtered = df[
+            (df['Open_Pct_Change'] > open_threshold) &
+            (df['Day_Move'] < 0) &  # Assuming "»ØÍÂ" means price decreased from open to close
+            (df['Pullback_Ratio'] >= pullback_ratio)
+            ]
+
+        self.filtered_dates = filtered
+        print("Filtered Dates:")
+        print(filtered[['Date', 'Open', 'Close', 'Open_Pct_Change', 'Day_Move', 'Pullback_Ratio']])
+        return filtered
+
+    def compute_statistics(self, filtered_df, periods=[5, 25]):
+        """
+        Computes statistics for the subsequent `periods` days after each filtered date.
+
+        Parameters:
+        - filtered_df: DataFrame containing the filtered dates
+        - periods: list of integers, e.g., [5, 25]
+
+        Returns:
+        - stats: dict containing statistics for each period
+        """
+        stats = {}
+        for period in periods:
+            pct_changes = []
+            win_count = 0
+            total = 0
+            for idx in filtered_df.index:
+                end_idx = idx + period
+                if end_idx < len(self.data):
+                    pct_change = (self.data.loc[end_idx, 'Close'] - self.data.loc[idx, 'Close']) / self.data.loc[
+                        idx, 'Close']
+                    pct_changes.append(pct_change)
+                    if pct_change > 0:
+                        win_count += 1
+                    total += 1
+            pct_changes = np.array(pct_changes)
+            average = np.mean(pct_changes) * 100
+            median = np.median(pct_changes) * 100
+            win_rate = (win_count / total) * 100 if total > 0 else 0
+            stats[period] = {
+                'average_pct_change': average,
+                'median_pct_change': median,
+                'win_rate': win_rate
+            }
+            print(f"\nStatistics for next {period} days:")
+            print(f"Average % Change: {average:.2f}%")
+            print(f"Median % Change: {median:.2f}%")
+            print(f"Win Rate: {win_rate:.2f}%")
+        self.stats = stats
+        return stats
+
+    def plot_patterns_and_trends(self, filtered_df, periods=[5, 25]):
+        """
+        »æÖÆÉ¸Ñ¡³öµÄKÏßÄ£Ê½¼°ÆäºóĞø×ßÊÆ¡£
+
+        ²ÎÊı:
+        - filtered_df: DataFrame£¬·ûºÏÌõ¼şµÄÉ¸Ñ¡ÈÕÆÚ¡£
+        - periods: list of int£¬Ö¸¶¨µÄÍ³¼ÆÌìÊı£¨Èç[5, 25]£©¡£
+        """
+        for period in periods:
+            plt.figure(figsize=(10, 6))
+            all_trends = []
+
+            for idx in filtered_df.index:
+                end_idx = idx + period
+                if end_idx >= len(self.data):
+                    continue  # Ìø¹ıÊı¾İ²»×ãµÄÇé¿ö
+                trend = self.data.loc[idx:end_idx, 'Close'].values
+                if len(trend) != period + 1:
+                    continue  # È·±£Ç÷ÊÆ³¤¶ÈÒ»ÖÂ
+
+                # ¹éÒ»»¯Ç÷ÊÆ£¬ÒÔµÚ0ÌìµÄÊÕÅÌ¼ÛÎª»ù×¼
+                normalized_trend = trend / trend[0]
+                all_trends.append(normalized_trend)
+
+                # »æÖÆµ¥¸öÇ÷ÊÆ
+                plt.plot(range(period + 1), normalized_trend, color='blue', alpha=0.3)
+
+            if not all_trends:
+                print(f"Ã»ÓĞ×ã¹»µÄÊı¾İÀ´»æÖÆ {period} ÌìµÄÇ÷ÊÆÍ¼¡£")
+                continue
+
+            all_trends = np.array(all_trends)
+            # ¼ÆËãÆ½¾ùÇ÷ÊÆ
+            average_trend = all_trends.mean(axis=0)
+            plt.plot(range(period + 1), average_trend, color='red', linewidth=2, label='Æ½¾ùÇ÷ÊÆ')
+
+            plt.title(f'{period} Ììºó×ßÊÆÇ÷ÊÆÍ¼')
+            plt.xlabel('ÌìÊı')
+            plt.ylabel('¹éÒ»»¯ÊÕÅÌ¼Û')
+            plt.legend()
+            plt.grid(True)
+            plt.xticks(range(0, period + 1, max(1, period // 5)))  # ¶¯Ì¬ÉèÖÃxÖá¿Ì¶È
+            plt.ylim(all_trends.min() * 0.95, all_trends.max() * 1.05)  # ¶¯Ì¬ÉèÖÃyÖá·¶Î§
+            plt.show()
+
+    def analyze(self, open_threshold=0.02, pullback_ratio=0.5, periods=[5, 25]):
+        """
+        Executes the full analysis: filtering, statistics, and plotting.
+
+        Parameters:
+        - open_threshold: float for open price increase threshold
+        - pullback_ratio: float for pullback ratio
+        - periods: list of integers for subsequent days analysis
+        """
+        filtered_df = self.filter_pattern(open_threshold, pullback_ratio)
+        if filtered_df.empty:
+            print("No matching patterns found.")
+            return
+        self.compute_statistics(filtered_df, periods)
+        self.plot_patterns_and_trends(filtered_df, periods)
+
+
+
 if __name__ == "__main__":
     # ¼ÙÉèÄúµÄ Excel ÎÄ¼şÂ·¾¶Îª 'kline_data.xlsx'
-    finder = KLineSimilarityFinder(
-        file_path='D:\\Downloads\\000001.SH.xlsx',
-        window_sizes=[5, 20, 200],
-        weights=[0.4, 0.3, 0.3],
-        top_n=6,
-        algorithm='pearson'  # »ò 'euclidean'
-        # algorithm='euclidean'
-    )
-    finder.display_similar_days()
+    file_path = rf"D:\Downloads\a000001.xlsx"
+
+    # finder = KLineSimilarityFinder(
+    #     file_path=file_path,
+    #     window_sizes=[5, 20, 200],
+    #     weights=[0.7, 0.2, 0.1],
+    #     top_n=6,
+    #     algorithm='pearson'  # »ò 'euclidean'
+    #     # algorithm='euclidean'
+    # )
+    # finder.display_similar_days()
+
+    analyzer = KLinePatternAnalyzer(file_path=file_path, dates_after='1993-01-01')
+    analyzer.analyze(open_threshold=0.025, pullback_ratio=0.5, periods=[5, 25])
