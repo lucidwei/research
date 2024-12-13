@@ -214,7 +214,7 @@ class PgDbManager:
             return existing_values
 
     def select_existing_dates_from_long_table(self, table_name, metric_name=None, product_name=None, code=None,
-                                              field=None,
+                                              field=None, filter_condition: str = "",
                                               return_df=False):
         """
         从数据库中获取现有的日期列表。
@@ -232,7 +232,7 @@ class PgDbManager:
 
         """
         # 使用 select_df_from_long_table 函数获取数据
-        df = self.select_df_from_long_table(table_name, metric_name, product_name, code, field)
+        df = self.select_df_from_long_table(table_name, metric_name, product_name, code, field, filter_condition)
 
         # 从获取的数据中提取日期列
         existing_dates_df = df['date'].unique()

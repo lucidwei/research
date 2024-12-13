@@ -23,6 +23,8 @@ class DatabaseUpdater(PgDbUpdaterBase):
     def run_all_updater(self):
         self.industry_data_updater.logic_industry_volume()
         self.industry_data_updater.logic_industry_large_order()
+        # 太费quota，暂不更新
+        # self.industry_data_updater.logic_industry_order_inflows()
         # self.industry_stk_updater.logic_industry_stk_price_volume()
         # self.logic_analyst()
 
@@ -61,6 +63,13 @@ class DatabaseUpdater(PgDbUpdaterBase):
                     join_column='product_static_info_id',
                     selected_column=f'date',
                     filter_condition=filter_condition
+                )
+            case 'industry_order_inflows':
+                field = kwargs.get('field')
+                existing_dates = self.select_existing_dates_from_long_table(
+                    table_name='markets_daily_long',
+                    field=field,
+                    filter_condition=additional_filter
                 )
             case 'analyst':
                 stock_code = kwargs.get('stock_code')
@@ -244,6 +253,92 @@ class IndustryDataUpdater:
             downloaded_filtered = df_upload[~df_upload['date'].isin(existing_dates)]
 
             downloaded_filtered.to_sql('markets_daily_long', self.db_updater.alch_engine, if_exists='append', index=False)
+
+    def logic_industry_order_inflows(self):
+        """
+        1）挂单额小于4万元，小单；
+        2）挂单额4万元到20万元之间，中单；
+        3）挂单额20万元至100万元之间，大单；
+        4）挂单额大于100万元，超大单。
+        流入额：该规模单子买入成交金额
+        净买入额：该规模单子买入-卖出金额
+        净主动买入额：该规模单子主动去成交而非挂单成交的金额
+        large_order为大单和超大单的净买入额之和，非主动
+        四种规模的任意口径额，不同规模加和应接近0，才是合理的
+        """
+        # 获取所有行业代码
+        industry_codes = self.db_updater.select_existing_values_in_target_column(
+            'product_static_info',
+            'code',
+            ('product_type', 'index')
+        )
+
+        trader_type_dict = {
+            1: '机构',
+            2: '大户',
+            3: '中户',
+            4: '散户',
+        }
+
+        for code in industry_codes:
+            for trader_type in [1, 2, 3, 4]:
+                trader_type_name = trader_type_dict.get(trader_type, f"Type{trader_type}")
+                field = f'流入额_{trader_type_name}'
+                additional_filter = f"product_name='{code}'"
+
+                # 查询当前 code 和 trader_type 的缺失日期
+                missing_dates = self.db_updater._check_data_table(
+                    type_identifier='industry_order_inflows',
+                    field=field,
+                    additional_filter=additional_filter
+                )
+
+                if missing_dates:
+                    print(
+                        f"开始上传缺失数据 - 行业代码: {code}, 交易类型: {trader_type_name}, 缺失日期数: {len(missing_dates)}")
+                    self._upload_missing_data_industry_order_inflows(code, trader_type, missing_dates)
+                else:
+                    print(f"No missing dates for 行业代码: {code}, 交易类型: {trader_type_name}")
+
+
+
+    def _upload_missing_data_industry_order_inflows(self, code, trader_type, missing_dates):
+        trader_type_dict = {
+            1: '机构',
+            2: '大户',
+            3: '中户',
+            4: '散户',
+        }
+        print(
+            f'Wind downloading and upload order_inflows for {code} trader_type {trader_type_dict[trader_type]} {missing_dates[0]}~{missing_dates[-1]} '
+            f'_upload_missing_data_industry_order_inflows')
+        df = w.wsd(code, "mfd_buyamt_d,mfd_netbuyamt,mfd_netbuyamt_a", missing_dates[0],
+                   missing_dates[-1], "unit=1", traderType=trader_type, usedf=True)[1]
+        if df.empty:
+            print(
+                f"Missing data for {code} {missing_dates[0]}~{missing_dates[-1]}, "
+                f"_upload_missing_data_industry_order_order_inflows")
+            return
+        if len(missing_dates) == 1:
+            df_upload = df.reset_index().rename(
+                columns={'index': 'product_name',
+                         'MFD_BUYAMT_D': f'流入额_{trader_type_dict[trader_type]}',
+                         'MFD_NETBUYAMT': f'净买入额_{trader_type_dict[trader_type]}',
+                         'MFD_NETBUYAMT_A': f'净主动买入额_{trader_type_dict[trader_type]}',
+                         })
+            df_upload['date'] = missing_dates[0]
+        else:
+            df_upload = df.reset_index().rename(
+                columns={'index': 'date',
+                         'MFD_BUYAMT_D': f'流入额_{trader_type_dict[trader_type]}',
+                         'MFD_NETBUYAMT': f'净买入额_{trader_type_dict[trader_type]}',
+                         'MFD_NETBUYAMT_A': f'净主动买入额_{trader_type_dict[trader_type]}',
+                         })
+            df_upload['product_name'] = code
+        df_upload = df_upload.melt(id_vars=['date', 'product_name'], var_name='field',
+                                   value_name='value').dropna()
+        self.db_updater.upsert_dataframe_to_postgresql(df_upload, 'markets_daily_long',
+                                            ['date', 'product_name', 'field', 'code'])
 
 
 class IndustryStkUpdater:
