@@ -183,6 +183,7 @@ if SINGLE_BATCH_MODE == 'batch_macro':
         {'industry': '社零综指', 'compare_to': '中国:社会消费品零售总额:当月同比', 'stationary': False, 'date_start': '2020-01-01'},
         {'industry': '出口', 'compare_to': '中国:出口金额:当月同比', 'stationary': False, 'date_start': '2010-01-01'},
         {'industry': '出口', 'compare_to': '中国:出口金额:当月同比', 'stationary': False, 'date_start': '2010-01-01', 'single_line': True},
+        {'industry': 'PPI', 'compare_to': '中国:PPI:全部工业品:当月同比', 'stationary': False, 'date_start': '2010-01-01'},
         {'industry': 'PPI', 'compare_to': '中国:PPI:全部工业品:当月同比', 'stationary': False, 'date_start': '2010-01-01', 'single_line': True},
         {'industry': '工业增加值', 'compare_to': '中国:规模以上工业增加值:当月同比', 'stationary': False, 'date_start': '2010-01-01'},
         {'industry': '制造业投资', 'compare_to': '(月度化)中国:固定资产投资完成额:制造业:累计同比', 'stationary': False, 'date_start': '2014-01-01', 'leading_prediction': False},
