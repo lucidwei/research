@@ -1,7 +1,7 @@
 # coding=gbk
 import pandas as pd
 import numpy as np
-from scipy.stats import pearsonr
+from scipy.stats import pearsonr, percentileofscore
 import matplotlib.pyplot as plt
 import mplfinance as mpf
 from pylab import mpl
@@ -243,23 +243,52 @@ class KLinePatternAnalyzer(KLineSimilarityFinder):
             (df['Pullback_Ratio'] >= pullback_ratio)
             ]
 
+        # 计算百分位数
+        periods = [50, 250, 1000]
+        for period in periods:
+            percentile_col = f'Pct_{period}'
+            # 使用滚动窗口计算百分位数
+            df_sorted = self.data['Close'].rolling(window=period, min_periods=1)
+            # 计算每一天的百分位数
+            filtered[percentile_col] = filtered.apply(
+                lambda row: percentileofscore(
+                    self.data.loc[:row.name, 'Close'].iloc[-period - 1:-1],
+                    row['Close'])
+                if row.name >= period else np.nan,
+                axis=1
+            )
+
+        # 处理百分位数列，先保留两位小数后转换为整数表示百分比
+        filtered['Pct_50'] = filtered['Pct_50'].round(0).astype('Int64')
+        filtered['Pct_250'] = filtered['Pct_250'].round(0).astype('Int64')
+        filtered['Pct_1000'] = filtered['Pct_1000'].round(0).astype('Int64')
+
+        # 处理其他数值列，保留0位小数后转换为整数
+        filtered['Pullback_Ratio'] = (filtered['Pullback_Ratio'] * 100).round(0).astype('Int64')  # 转换为百分比
+
         self.filtered_dates = filtered
-        print("Filtered Dates:")
-        print(filtered[['Date', 'Open', 'Close', 'Open_Pct_Change', 'Day_Move', 'Pullback_Ratio']])
+        print("筛选出的符合条件的日期及相关信息：")
+        print(filtered[['Date', 'Close', 'Open_Pct_Change', 'Day_Move', 'Pullback_Ratio', 'Pct_50', 'Pct_250', 'Pct_1000']])
         return filtered
 
     def compute_statistics(self, filtered_df, periods=[5, 25]):
         """
-        Computes statistics for the subsequent `periods` days after each filtered date.
+        计算筛选日期后指定天数的涨跌统计，同时统计收盘价的相对位置。
 
-        Parameters:
-        - filtered_df: DataFrame containing the filtered dates
-        - periods: list of integers, e.g., [5, 25]
+        参数:
+        - filtered_df: DataFrame，符合条件的筛选日期。
+        - periods: list of int，指定的统计天数（如[5, 25]）。
 
-        Returns:
-        - stats: dict containing statistics for each period
+        返回:
+        - stats: dict，每个统计周期的统计结果。
         """
         stats = {}
+        percentile_columns = ['Pct_50', 'Pct_250', 'Pct_1000']
+        percentile_labels = {
+            'Pct_50': '50天百分位数',
+            'Pct_250': '250天百分位数',
+            'Pct_1000': '1000天百分位数'
+        }
         for period in periods:
             pct_changes = []
             win_count = 0
@@ -282,10 +311,30 @@ class KLinePatternAnalyzer(KLineSimilarityFinder):
                 'median_pct_change': median,
                 'win_rate': win_rate
             }
-            print(f"\nStatistics for next {period} days:")
-            print(f"Average % Change: {average:.2f}%")
-            print(f"Median % Change: {median:.2f}%")
-            print(f"Win Rate: {win_rate:.2f}%")
+            print(f"\n接下来 {period} 个交易日的统计信息：")
+            print(f"平均涨跌幅: {average:.2f}%")
+            print(f"中位数涨跌幅: {median:.2f}%")
+            print(f"胜率: {win_rate:.2f}%")
+
+        # 统计收盘价的相对位置
+        # 低位和高位比例统计：
+        # 低位比例：计算有多少筛选日期的收盘价百分位数低于33 %（即处于低位）。
+        # 高位比例：计算有多少筛选日期的收盘价百分位数高于66 %（即处于高位）。
+        # 这样可以了解在筛选出的特定K线模式出现时，收盘价整体处于何种相对水平。
+        print("\n筛选日期的收盘价相对位置统计：")
+        for pct_col in percentile_columns:
+            label = percentile_labels[pct_col]
+            # 定义低位和高位的阈值
+            low_threshold = 33
+            high_threshold = 66
+            low_count = filtered_df[pct_col] < low_threshold
+            high_count = filtered_df[pct_col] > high_threshold
+            total_count = filtered_df[pct_col].notna().sum()
+            low_ratio = (low_count.sum() / total_count) * 100 if total_count > 0 else 0
+            high_ratio = (high_count.sum() / total_count) * 100 if total_count > 0 else 0
+            print(f"{label}:")
+            print(f"  处于低位 (<{low_threshold}%) 的比例: {low_ratio:.2f}%")
+            print(f"  处于高位 (>{high_threshold}%) 的比例: {high_ratio:.2f}%")
         self.stats = stats
         return stats
 
