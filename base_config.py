@@ -31,7 +31,7 @@ class BaseConfig:
                            'risk_parity': datetime.date(2012, 1, 1),
                            'low_freq': datetime.date(2004, 1, 1),
                            'equity_liquidity': datetime.date(2019, 1, 2),
-                           'equity_sentiment': datetime.date(2018, 1, 2),
+                           'equity_sentiment': datetime.date(2016, 1, 2),
                            'quarterly': datetime.date(2000, 1, 2),
                            'boom': datetime.date(2010, 1, 2),
                            'multi-asset': datetime.date(2010, 1, 1),
