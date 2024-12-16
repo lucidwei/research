@@ -24,7 +24,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
         self.industry_data_updater.logic_industry_volume()
         self.industry_data_updater.logic_industry_large_order()
         # 太费quota，暂不更新
-        # self.industry_data_updater.logic_industry_order_inflows()
+        self.industry_data_updater.logic_industry_order_inflows()
         # self.industry_stk_updater.logic_industry_stk_price_volume()
         # self.logic_analyst()
 
@@ -270,7 +270,7 @@ class IndustryDataUpdater:
         industry_codes = self.db_updater.select_existing_values_in_target_column(
             'product_static_info',
             'code',
-            ('product_type', 'index')
+            ('internal_id BETWEEN 69000 AND 69030')
         )
 
         trader_type_dict = {
@@ -279,11 +279,14 @@ class IndustryDataUpdater:
             3: '中户',
             4: '散户',
         }
+        self.trader_type_dict = trader_type_dict
+
+        self._preprocess_excel(rf"D:\WPS云盘\WPS云盘\工作-麦高\研究trial\历史order_inflows.xlsx")
 
         for code in industry_codes:
             for trader_type in [1, 2, 3, 4]:
                 trader_type_name = trader_type_dict.get(trader_type, f"Type{trader_type}")
-                field = f'流入额_{trader_type_name}'
+                field = f'流入额_{trader_type_name}'  # 仅做筛选日期用
                 additional_filter = f"product_name='{code}'"
 
                 # 查询当前 code 和 trader_type 的缺失日期
@@ -301,44 +304,202 @@ class IndustryDataUpdater:
                     print(f"No missing dates for 行业代码: {code}, 交易类型: {trader_type_name}")
 
 
-
     def _upload_missing_data_industry_order_inflows(self, code, trader_type, missing_dates):
+        # 获取缺失日期的起止时间
+        start_date = missing_dates[0]
+        end_date = missing_dates[-1]
+        # 尝试从Excel中获取数据
+        df_upload = self._get_data_from_excel(code, trader_type, start_date, end_date)
+
+        if df_upload is None:
+        # 如果Excel中没有数据，则通过w.wsd下载数据
+            print(
+                f'Wind downloading and upload order_inflows for {code} trader_type {self.trader_type_dict[trader_type]} {missing_dates[0]}~{missing_dates[-1]} '
+                f'_upload_missing_data_industry_order_inflows')
+            df = w.wsd(code, "mfd_buyamt_d,mfd_netbuyamt,mfd_netbuyamt_a", missing_dates[0],
+                       missing_dates[-1], "unit=1", traderType=trader_type, usedf=True)[1]
+            if df.empty:
+                print(
+                    f"Missing data for {code} {start_date}~{end_date}, "
+                    f"_upload_missing_data_industry_order_order_inflows")
+                return
+            if len(missing_dates) == 1:
+                df_upload = df.reset_index().rename(
+                    columns={'index': 'product_name',
+                             'MFD_BUYAMT_D': f'流入额_{self.trader_type_dict[trader_type]}',
+                             'MFD_NETBUYAMT': f'净买入额_{self.trader_type_dict[trader_type]}',
+                             'MFD_NETBUYAMT_A': f'净主动买入额_{self.trader_type_dict[trader_type]}',
+                             })
+                df_upload['date'] = missing_dates[0]
+            else:
+                df_upload = df.reset_index().rename(
+                    columns={'index': 'date',
+                             'MFD_BUYAMT_D': f'流入额_{self.trader_type_dict[trader_type]}',
+                             'MFD_NETBUYAMT': f'净买入额_{self.trader_type_dict[trader_type]}',
+                             'MFD_NETBUYAMT_A': f'净主动买入额_{self.trader_type_dict[trader_type]}',
+                             })
+                df_upload['product_name'] = code
+
+        df_upload = df_upload.melt(id_vars=['date', 'product_name'], var_name='field',
+                                   value_name='value').dropna()
+        self.db_updater.upsert_dataframe_to_postgresql(df_upload, 'markets_daily_long',
+                                            ['date', 'product_name', 'field', 'code'])
+
+    def _preprocess_excel(self, excel_path):
+        """
+        预处理Excel文件，将其转换为结构化的DataFrame。
+        根据用户描述的复杂结构，逐个解析每个数据块。
+        """
+        try:
+            # 读取Excel文件，无表头
+            raw_df = pd.read_excel(excel_path, sheet_name='Sheet3', header=None, dtype=str)
+
+            # 列数
+            total_cols = raw_df.shape[1]
+
+            # 找到所有数据块的起始列：第0行包含"流入额"
+            data_block_cols = raw_df.columns[
+                raw_df.iloc[0].astype(str).str.contains('额', na=False)
+            ].tolist()
+
+            # 初始化一个列表存储所有数据
+            data_records = []
+
+            for start_col in data_block_cols:
+                # 获取字段元数据，例如 "流入额 [单位]元 [类型]机构"
+                field_metadata = raw_df.iloc[0, start_col]
+
+                if pd.isna(field_metadata):
+                    continue
+
+                # 解析字段名，例如 "流入额 [单位]元 [类型]机构" -> "流入额_机构"
+                if '[类型]' in field_metadata:
+                    parts = field_metadata.split('[类型]')
+                    field_name = (
+                            parts[0].strip().replace('\n', '').replace('[单位]元', '') +
+                            '_' +
+                            parts[1].strip(']').strip()
+                    )
+                else:
+                    raise Exception('Not expected in splitting metadata str')
+
+                # 确定数据块的结束列（下一个数据块的起始列之前的列）
+                current_index = data_block_cols.index(start_col)
+                if current_index < len(data_block_cols) - 1:
+                    end_col = data_block_cols[current_index + 1] - 1
+                else:
+                    end_col = total_cols - 1
+
+                # 获取中文标题（第2行，索引为2）
+                chinese_headers = raw_df.iloc[2, start_col:end_col + 1].tolist()
+
+                # 获取英文代码（第3行，索引为3）
+                codes = raw_df.iloc[3, start_col:end_col + 1].tolist()
+
+                # 遍历当前数据块中的每个行业列（跳过第一列“日期”）
+                date_col = start_col -1
+                for col_idx in range(start_col, end_col + 1):
+                    code = codes[col_idx - start_col]
+                    if pd.isna(code):
+                        # 如果行业代码为空，跳过
+                        continue
+
+                    # 遍历数据行（从第4行开始，索引为4）
+                    for row in range(4, len(raw_df)):
+                        date_str = raw_df.iloc[row, date_col]  # 假设日期在流入额前一列
+                        if pd.isna(date_str):
+                            continue
+
+                        try:
+                            date = pd.to_datetime(date_str).date()
+                        except:
+                            # 如果日期转换失败，跳过该行
+                            continue
+
+                        value_str = raw_df.iloc[row, col_idx]
+                        if pd.isna(value_str):
+                            continue
+
+                        try:
+                            value = float(value_str)
+                        except ValueError:
+                            # 如果值转换失败，跳过
+                            continue
+
+                        data_records.append({
+                            'date': date,
+                            'code': code,
+                            'field': field_name,
+                            'value': value
+                        })
+
+            # 创建DataFrame
+            self.excel_data = pd.DataFrame(data_records)
+
+            # 记录预处理成功的信息
+            print("Successfully preprocessed Excel data.")
+
+        except Exception as e:
+            # 捕获并记录所有异常
+            print(f"Error preprocessing Excel file: {e}")
+            self.excel_data = None
+
+    def _get_data_from_excel(self, code, trader_type, start_date, end_date):
+        """
+        从预处理的Excel数据中获取指定的行业代码、交易类型和日期范围的数据。
+        如果数据存在，则返回DataFrame；否则，返回None。
+
+        :param code: 行业代码
+        :param trader_type: 交易类型（整数，1-4）
+        :param start_date: 起始日期（字符串格式）
+        :param end_date: 结束日期（字符串格式）
+        :return: DataFrame或None
+        """
+        if self.excel_data is None:
+            print("Excel data not loaded or preprocessing failed.")
+            return None
+
         trader_type_dict = {
             1: '机构',
             2: '大户',
             3: '中户',
             4: '散户',
         }
-        print(
-            f'Wind downloading and upload order_inflows for {code} trader_type {trader_type_dict[trader_type]} {missing_dates[0]}~{missing_dates[-1]} '
-            f'_upload_missing_data_industry_order_inflows')
-        df = w.wsd(code, "mfd_buyamt_d,mfd_netbuyamt,mfd_netbuyamt_a", missing_dates[0],
-                   missing_dates[-1], "unit=1", traderType=trader_type, usedf=True)[1]
-        if df.empty:
-            print(
-                f"Missing data for {code} {missing_dates[0]}~{missing_dates[-1]}, "
-                f"_upload_missing_data_industry_order_order_inflows")
-            return
-        if len(missing_dates) == 1:
-            df_upload = df.reset_index().rename(
-                columns={'index': 'product_name',
-                         'MFD_BUYAMT_D': f'流入额_{trader_type_dict[trader_type]}',
-                         'MFD_NETBUYAMT': f'净买入额_{trader_type_dict[trader_type]}',
-                         'MFD_NETBUYAMT_A': f'净主动买入额_{trader_type_dict[trader_type]}',
-                         })
-            df_upload['date'] = missing_dates[0]
-        else:
-            df_upload = df.reset_index().rename(
-                columns={'index': 'date',
-                         'MFD_BUYAMT_D': f'流入额_{trader_type_dict[trader_type]}',
-                         'MFD_NETBUYAMT': f'净买入额_{trader_type_dict[trader_type]}',
-                         'MFD_NETBUYAMT_A': f'净主动买入额_{trader_type_dict[trader_type]}',
-                         })
-            df_upload['product_name'] = code
-        df_upload = df_upload.melt(id_vars=['date', 'product_name'], var_name='field',
-                                   value_name='value').dropna()
-        self.db_updater.upsert_dataframe_to_postgresql(df_upload, 'markets_daily_long',
-                                            ['date', 'product_name', 'field', 'code'])
+        trader_type_name = trader_type_dict.get(trader_type, f"Type{trader_type}")
+
+        # 转换日期格式
+        try:
+            start_date_obj = pd.to_datetime(start_date).date()
+            end_date_obj = pd.to_datetime(end_date).date()
+        except Exception as e:
+            print(f"Error converting dates: {e}")
+            return None
+
+        # 过滤DataFrame
+        filtered_df = self.excel_data[
+            (self.excel_data['code'] == code) &
+            (self.excel_data['field'].str.contains(trader_type_name)) &
+            (self.excel_data['date'] >= start_date_obj) &
+            (self.excel_data['date'] <= end_date_obj)
+            ]
+
+        if filtered_df.empty:
+            print(f"No Excel data found for {code} {trader_type_name} from {start_date} to {end_date}.")
+            return None
+
+        # 将数据转换为原始格式，以便上传
+        try:
+            # Pivot to wide format
+            pivot_df = filtered_df.pivot(index='date', columns='field', values='value').reset_index()
+            pivot_df['product_name'] = code
+
+            if pivot_df.empty:
+                return None
+
+            return pivot_df
+        except Exception as e:
+            print(f"Error processing Excel data for {code} {trader_type_name}: {e}")
+            return None
 
 
 class IndustryStkUpdater:
