@@ -281,7 +281,7 @@ class IndustryDataUpdater:
         }
         self.trader_type_dict = trader_type_dict
 
-        self._preprocess_excel(rf"D:\WPS云盘\WPS云盘\工作-麦高\研究trial\历史order_inflows.xlsx")
+        # self._preprocess_excel(rf"D:\WPS云盘\WPS云盘\工作-麦高\研究trial\历史order_inflows.xlsx")
 
         for code in industry_codes:
             for trader_type in [1, 2, 3, 4]:
