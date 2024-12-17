@@ -305,18 +305,21 @@ class IndustryDataUpdater:
 
 
     def _upload_missing_data_industry_order_inflows(self, code, trader_type, missing_dates):
+        if code == 'CI005030.WI' and len(missing_dates)>1: # 该行业缺早期数据
+            missing_dates = [date for date in missing_dates if date > datetime.date(2024, 12, 13)]
         # 获取缺失日期的起止时间
         start_date = missing_dates[0]
         end_date = missing_dates[-1]
+
         # 尝试从Excel中获取数据
         df_upload = self._get_data_from_excel(code, trader_type, start_date, end_date)
 
         if df_upload is None:
         # 如果Excel中没有数据，则通过w.wsd下载数据
             print(
-                f'Wind downloading and upload order_inflows for {code} trader_type {self.trader_type_dict[trader_type]} {missing_dates[0]}~{missing_dates[-1]} '
+                f'Wind downloading and upload order_inflows for {code} trader_type {self.trader_type_dict[trader_type]} {start_date}~{end_date} '
                 f'_upload_missing_data_industry_order_inflows')
-            df = w.wsd(code, "mfd_buyamt_d,mfd_netbuyamt,mfd_netbuyamt_a", missing_dates[0],
+            df = w.wsd(code, "mfd_buyamt_d,mfd_netbuyamt,mfd_netbuyamt_a", start_date,
                        missing_dates[-1], "unit=1", traderType=trader_type, usedf=True)[1]
             if df.empty:
                 print(
