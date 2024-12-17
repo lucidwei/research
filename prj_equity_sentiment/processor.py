@@ -12,6 +12,10 @@ from pgdb_updater_base import PgDbUpdaterBase
 from sqlalchemy import text
 import matplotlib
 
+# 忽略特定类型的警告
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
+
 matplotlib.use('TkAgg')
 from statsmodels.tsa.api import VAR
 
@@ -65,7 +69,7 @@ class Processor(PgDbUpdaterBase):
     def upload_indicator(self, results: dict):
         for table_name, df in results.items():
             print(f'uploading {table_name} to database')
-            df.dropna().to_sql(name=table_name, con=self.alch_engine, schema='processed_data', if_exists='replace',
+            df.to_sql(name=table_name, con=self.alch_engine, schema='processed_data', if_exists='replace',
                                index=True)
 
     @property
