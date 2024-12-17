@@ -231,13 +231,14 @@ class MoneyFlow(PgDbUpdaterBase):
         self.calc_finance_net_buy()
         self.calc_north_inflow()
         self.calc_big_order_inflow()
+        self.calc_order_inflows()
 
     @property
     def results(self):
         return {
             'finance_net_buy_percentile_industry': self.fnb_percentile_industry,
             'north_percentile_industry': self.north_percentile_industry,
-            'big_order_inflow_percentile': self.big_order_inflow_percentile,
+            'big_order_inflow_percentile': self.combined_order_inflows_percentile,
         }
 
     @property
@@ -336,6 +337,116 @@ class MoneyFlow(PgDbUpdaterBase):
         self.big_order_inflow_percentile = self.big_order_inflow_percentile_wide.reset_index().melt(id_vars=['date'],
                                                                                                     var_name='industry',
                                                                                                     value_name='big_order_inflow_percentile')
+
+    def calc_order_inflows(self):
+        # 定义需要查询的字段
+        target_fields = [
+            '流入额_机构', '流入额_大户', '流入额_中户', '流入额_散户',
+            '净买入额_机构', '净买入额_大户', '净买入额_中户', '净买入额_散户',
+            '净主动买入额_机构', '净主动买入额_大户', '净主动买入额_中户', '净主动买入额_散户'
+        ]
+
+        # 构建 SQL 查询
+        fields_placeholder = ', '.join([f"'{field}'" for field in target_fields])
+
+        order_inflow_query = text(
+            f"""
+            SELECT
+                mdl.date AS date,
+                psi.chinese_name AS industry_name,
+                mdl.field AS field,
+                SUM(mdl.value) AS total_value
+            FROM
+                markets_daily_long AS mdl
+            LEFT JOIN
+                product_static_info AS psi
+                ON mdl.product_name = psi.code
+            WHERE
+                psi.product_type = 'index'
+                AND mdl.field IN ({fields_placeholder})
+            GROUP BY
+                mdl.date, psi.chinese_name, mdl.field
+            ORDER BY
+                mdl.date ASC, psi.chinese_name ASC, mdl.field ASC
+            """
+        )
+
+        # 执行查询
+        result = self.alch_conn.execute(order_inflow_query)
+        self.industry_order_inflows_df = pd.DataFrame(result.fetchall(),
+                                                      columns=['date', 'industry', 'field', 'total_value'])
+
+        # 处理数据：透视表，以便分别处理不同的字段（order_type）
+        # 我们保留 'field' 作为一个维度
+        wide_df = self.industry_order_inflows_df.pivot_table(
+            index=['date', 'field'],
+            columns='industry',
+            values='total_value',
+            aggfunc='sum'
+        )
+
+        # 初始化一个列表存储滚动分位数结果
+        rolling_percentile_records = []
+
+        # 设置滚动窗口大小
+        rolling_window = 250
+
+        # 遍历每个目标字段
+        for field in target_fields:
+            # 检查当前field是否存在于wide_df的索引中
+            if field not in wide_df.index.get_level_values('field'):
+                continue  # 如果不存在，跳过当前field
+
+            # 提取当前field的数据，并按日期排序
+            try:
+                field_df = wide_df.xs(field, level='field').reset_index().sort_values('date')
+            except KeyError:
+                # 如果字段不存在，跳过
+                continue
+
+            # 遍历每个行业，计算滚动分位数
+            for industry in field_df.columns:
+                if industry == 'date':
+                    continue  # 跳过日期列
+
+                # 提取该行业的时间序列，确保按日期排序
+                ts = field_df[['date', industry]].dropna().sort_values('date').set_index('date')[industry]
+
+                if ts.empty:
+                    continue
+
+                # 计算滚动平均（例如 10 天）
+                rolling_mean = ts.rolling(window=10, min_periods=1).mean()
+
+                # 计算滚动分位数（例如 250 天）
+                rolling_percentile = rolling_mean.rolling(window=rolling_window, min_periods=1).apply(
+                    lambda x: x.rank(pct=True).iloc[-1] if len(x) > 0 else np.nan, raw=False
+                )
+
+                # 创建临时DataFrame存储结果
+                temp_df = pd.DataFrame({
+                    'date': rolling_percentile.index,
+                    'order_inflow_percentile': rolling_percentile.values,
+                    'order_type': field,
+                    'industry': industry
+                })
+
+                # 添加到结果列表中
+                rolling_percentile_records.append(temp_df)
+
+        # 合并所有字段和行业的滚动分位数
+        if rolling_percentile_records:
+            rolling_percentile_df = pd.concat(rolling_percentile_records, ignore_index=True)
+        else:
+            # 如果没有数据，创建一个空的DataFrame
+            rolling_percentile_df = pd.DataFrame(columns=['date', 'order_inflow_percentile', 'order_type', 'industry'])
+
+        # 保留需要的列
+        self.industry_order_inflows_percentile = rolling_percentile_df[
+            ['date', 'industry', 'order_inflow_percentile', 'order_type']
+        ]
+        self.combined_order_inflows_percentile = pd.concat([self.industry_order_inflows_percentile, self.big_order_inflow_percentile],
+                                ignore_index=True)
 
 
 class PriceVolume(PgDbUpdaterBase):

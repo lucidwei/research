@@ -23,7 +23,6 @@ class DatabaseUpdater(PgDbUpdaterBase):
     def run_all_updater(self):
         self.industry_data_updater.logic_industry_volume()
         self.industry_data_updater.logic_industry_large_order()
-        # 太费quota，暂不更新
         self.industry_data_updater.logic_industry_order_inflows()
         # self.industry_stk_updater.logic_industry_stk_price_volume()
         # self.logic_analyst()
@@ -152,6 +151,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
 class IndustryDataUpdater:
     def __init__(self, db_updater: DatabaseUpdater):
         self.db_updater = db_updater
+        self.excel_data = None
 
     def logic_industry_volume(self):
         """
@@ -306,7 +306,7 @@ class IndustryDataUpdater:
 
     def _upload_missing_data_industry_order_inflows(self, code, trader_type, missing_dates):
         if code == 'CI005030.WI' and len(missing_dates)>1: # 该行业缺早期数据
-            missing_dates = [date for date in missing_dates if date > datetime.date(2024, 12, 13)]
+            missing_dates = [date for date in missing_dates if date > datetime.date(2019, 11, 29)]
         # 获取缺失日期的起止时间
         start_date = missing_dates[0]
         end_date = missing_dates[-1]
