@@ -297,8 +297,6 @@ class IndustryDataUpdater:
                 )
 
                 if missing_dates:
-                    print(
-                        f"开始上传缺失数据 - 行业代码: {code}, 交易类型: {trader_type_name}, 缺失日期数: {len(missing_dates)}")
                     self._upload_missing_data_industry_order_inflows(code, trader_type, missing_dates)
                 else:
                     print(f"No missing dates for 行业代码: {code}, 交易类型: {trader_type_name}")
@@ -307,6 +305,8 @@ class IndustryDataUpdater:
     def _upload_missing_data_industry_order_inflows(self, code, trader_type, missing_dates):
         if code == 'CI005030.WI' and len(missing_dates)>1: # 该行业缺早期数据
             missing_dates = [date for date in missing_dates if date > datetime.date(2019, 11, 29)]
+        print(f"开始上传缺失数据 - 行业代码: {code}, 交易类型: "
+              f"{self.trader_type_dict[trader_type]}, 缺失日期数: {len(missing_dates)}")
         # 获取缺失日期的起止时间
         start_date = missing_dates[0]
         end_date = missing_dates[-1]
