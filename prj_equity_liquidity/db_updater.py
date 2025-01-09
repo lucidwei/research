@@ -224,7 +224,6 @@ class DatabaseUpdater(PgDbUpdaterBase):
             rows_need_update_name['code'].tolist())).union(set(
             rows_need_update_industry['code'].tolist()))
 
-
         df_meta = stk_info_to_add[~stk_info_to_add['证券代码'].isin(existing_value)]
         df_meta = df_meta.set_index('证券代码').rename(columns={'A': 'B'})
         for code in missing_value:
@@ -394,7 +393,7 @@ class AllFundsInfoUpdater:
 
         # 执行数据下载
         # 以认购起始日作为筛选条件，选取的数据更完整、更有前瞻性。只选取严格意义上的新发基金。
-        for missing_date in missing_dates[-30:]:
+        for missing_date in missing_dates[-15:]:
             print(f'Downloading fundissuegeneralview on {missing_date} for _update_funds_by_buystartdate')
             downloaded_df = w.wset("fundissuegeneralview",
                                    f"startdate={missing_date};enddate={missing_date};datetype=startdate;isvalid=yes;"
@@ -524,7 +523,7 @@ class AllFundsInfoUpdater:
                                                                                               "fundfounddate is NULL and product_type='fund'")
         # 筛选buystartdate在近3个月之内的行，再老的就是没有发行成功的基金，不必更新
         df_filtered = funds_missing_fundfounddate[
-            funds_missing_fundfounddate['buystartdate'] >= self.db_updater.tradedays[-70]]
+            funds_missing_fundfounddate['buystartdate'] >= self.db_updater.tradedays[-30]]
         # df_filtered = funds_missing_fundfounddate
 
         for _, row in df_filtered.iterrows():
@@ -628,6 +627,24 @@ class AllFundsInfoUpdater:
 class EtfLofUpdater:
     def __init__(self, db_updater):
         self.db_updater = db_updater
+        self.infrequent_traded_etf = ['512390.OF', '512770.SH', '510410.SH', '510810.OF', '510160.OF', '159907.OF',
+                                      '159908.OF', '159915.OF', '159948.OF', '159949.OF', '159952.OF', '159956.OF',
+                                      '159957.OF', '159958.OF', '510020.OF', '510130.OF', '159954.OF', '159923.OF',
+                                      '159960.OF', '159922.OF', '159940.OF', '159935.OF', '159901.OF', '159912.OF',
+                                      '159913.OF', '159910.OF', '159903.OF', '159930.OF', '159906.OF', '510010.OF',
+                                      '510110.OF', '510170.OF', '510090.OF', '510060.OF', '510500.OF', '510510.OF',
+                                      '510560.OF', '510580.OF', '510590.OF', '510180.OF', '510030.OF', '512100.OF',
+                                      '512090.OF', '512280.OF', '512160.OF', '512330.OF', '512500.OF', '512510.OF',
+                                      '512640.OF', '512550.OF', '513660.OF', '513900.OF', '513600.OF', '512990.OF',
+                                      '159902.SZ', '159943.SZ', '159916.SZ', '159944.SZ', '159945.SZ', '512520.SH',
+                                      '512360.SH', '510290.SH', '510210.SH', '510650.SH', '159918.SZ', '510230.SH',
+                                      '510270.SH', '000930.OF', '159905.OF', '159919.OF', '159925.OF', '159928.OF',
+                                      '159936.OF', '159931.SZ', '159933.OF', '159929.SZ', '159909.SZ', '159939.OF',
+                                      '159938.SZ', '510050.OF', '510150.OF', '510190.OF', '510300.OF', '510310.OF',
+                                      '510330.OF', '510360.OF', '510380.OF', '510390.OF', '510600.OF', '510630.OF',
+                                      '510680.OF', '510710.OF', '510660.SH', '510800.OF', '510880.OF', '512120.SH',
+                                      '512000.SH', '512010.SH', '512070.SH', '512180.OF', '512600.OF', '512580.SH',
+                                      '512220.SH', '512880.SH', '512660.SH', '512680.SH', '512810.SH']
 
     def logic_etf_lof_funds(self):
         etf_funds_df = self.db_updater.select_rows_by_column_strvalue(
@@ -662,8 +679,11 @@ class EtfLofUpdater:
         # 对于有fund_found_date的情况
         gross_missing_dates = self.db_updater._check_data_table('markets_daily_long', 'fund',
                                                                 additional_filter=f"product_static_info.code='{etf_info_row['code']}'")
+        if etf_info_row['code'] in self.infrequent_traded_etf:
+            missing_dates = self.db_updater.tradedays[-10:] #避免从2019开始更新，慢又浪费quota
+            missing_start_date = missing_dates[0]
         # 检查最早的 existing_date 是否在 fund_found_date 的3个月之内
-        if not existing_dates or min(existing_dates) > (fund_found_date[0] + datetime.timedelta(days=100)):
+        elif not existing_dates or min(existing_dates) > (fund_found_date[0] + datetime.timedelta(days=100)):
             # 否则说明该etf没有历史数据
             missing_start_date = max(gross_missing_dates[0], fund_found_date[0])
             missing_dates = gross_missing_dates
