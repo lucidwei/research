@@ -34,14 +34,79 @@ class StrategyBacktester:
             pd.DataFrame: 经过处理的数据框。
         """
         # Read the Excel file
-        metadata, df = process_wind_excel(self.file_path, sheet_name='Sheet1', column_name='指标名称')
+        metadata, df_macro = process_wind_excel(self.file_path, sheet_name='Sheet1', column_name='指标名称')
         # 将所有列转换为数值类型
-        for col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
+        for col in df_macro.columns:
+            df_macro[col] = pd.to_numeric(df_macro[col], errors='coerce')
         # Sort the DataFrame by date
-        df.sort_index(inplace=True)
+        df_macro.sort_index(inplace=True)
 
-        return df
+        # 读取Sheet2中的所有数据
+        df = pd.read_excel(self.file_path, sheet_name='Sheet2', header=0)
+
+        # 通过查找全空列来分割不同的数据块
+        empty_cols = df.columns[df.isna().all()]
+        split_indices = [df.columns.get_loc(col) for col in empty_cols]
+
+        # 假设“上证指数”是第一个数据块
+        if split_indices:
+            first_split = split_indices[0]
+            z_index_df = df.iloc[:, :first_split].copy()
+        else:
+            z_index_df = df.copy()
+
+        # 重命名上证指数的列
+        # 假设列顺序为 ['日期', '收盘价', '成交额\n[单位]亿元', '市净率PB(LF,内地)']
+        z_index_df.columns = ['日期', '收盘价', '成交额', '市净率PB(LF,内地)']
+        # 删除前三行
+        z_index_df = z_index_df[3:]
+        # 删除日期为NaN的行
+        z_index_df.dropna(subset=['日期'], inplace=True)
+
+        # 将 '日期' 转换为 datetime 类型并设置为索引
+        z_index_df['日期'] = pd.to_datetime(z_index_df['日期'])
+        z_index_df.set_index('日期', inplace=True)
+
+        # 按日期排序
+        z_index_df.sort_index(inplace=True)
+
+        # 转换所有列为数值类型（忽略错误）
+        z_index_df = z_index_df.apply(pd.to_numeric, errors='coerce')
+
+        # 将日频数据转换为月频数据
+        monthly = z_index_df.resample('M').agg({
+            '收盘价': 'last',
+            '成交额': 'sum',
+            '市净率PB(LF,内地)': 'last'
+        })
+
+        # 计算所需的指标列
+        monthly['上证综合指数:月:最后一条'] = monthly['收盘价']
+        monthly['上证综合指数:月:最后一条:同比'] = monthly['收盘价'].pct_change(12)
+        monthly['上证综合指数:月:最后一条:环比'] = monthly['收盘价'].pct_change(1)
+        monthly['上证综合指数:成交金额:月:合计值'] = monthly['成交额']
+        monthly['上证综合指数:成交金额:月:合计值:同比'] = monthly['成交额'].pct_change(12)
+        monthly['上证综合指数:成交金额:月:合计值:环比'] = monthly['成交额'].pct_change(1)
+        monthly['市净率:上证指数:月:最后一条'] = monthly['市净率PB(LF,内地)']
+
+        # 选择并重新排列需要的列
+        final_df = monthly[[
+            '市净率:上证指数:月:最后一条',
+            '上证综合指数:月:最后一条',
+            '上证综合指数:月:最后一条:同比',
+            '上证综合指数:月:最后一条:环比',
+            '上证综合指数:成交金额:月:合计值:同比',
+            '上证综合指数:成交金额:月:合计值:环比'
+        ]]
+
+        # 确保 df_macro 和 final_df 的索引（日期）对齐
+        if not df_macro.index.equals(final_df.index):
+            raise ValueError("df_macro 和 final_df 的日期索引不匹配，无法合并。")
+
+        # 合并 df_macro 和 final_df
+        merged_df = pd.concat([df_macro, final_df], axis=1)
+
+        return merged_df
 
     def generate_signals_for_all_strategies(self):
         """
@@ -99,8 +164,6 @@ class StrategyBacktester:
 
         elif strategy_num == 2:
             # Strategy 2: M1同比MA3 and M1-PPI同比MA3
-            # df['M1同比MA3'] = calculate_moving_average(df, 'M1同比MA3', window=3)
-            # df['M1-PPI同比MA3'] = calculate_moving_average(df, 'M1-PPI同比MA3', window=3)
             df['M1同比MA3_prev'] = df['M1同比MA3'].shift(1)
             df['M1-PPI同比MA3_prev'] = df['M1-PPI同比MA3'].shift(1)
             condition1 = df['M1同比MA3'] > df['M1同比MA3_prev']
@@ -113,7 +176,6 @@ class StrategyBacktester:
 
         elif strategy_num == 3:
             # Strategy 3: 美元指数MA2
-            # df['美元指数MA2'] = calculate_moving_average(df, '美元指数MA2', window=2)
             df['美元指数MA2_prev'] = df['美元指数MA2'].shift(1)
             signals = np.where(df['美元指数MA2'] < df['美元指数MA2_prev'], 1, 0)
             signals = pd.Series(signals, index=df.index)
@@ -150,12 +212,6 @@ class StrategyBacktester:
 
         elif strategy_num == 5:
             # Strategy 5: Technical Short Strategy
-            # # Calculate 5-year (60 months) rolling percentile for 市净率:上证指数:月:最后一条
-            # df['PER_5Y_PCT'] = calculate_percentile(df, '市净率:上证指数:月:最后一条', window=60, percentile=0.5)
-            #
-            # # Condition 1: PER percentile above 50%
-            # condition_per = df['市净率:上证指数:月:最后一条'] > df['PER_5Y_PCT']
-
             # 计算滚动60个月的百分位排名
             df['PER_5Y_Pct_Rank'] = calculate_rolling_percentile_rank(
                 df, '市净率:上证指数:月:最后一条', window=60
