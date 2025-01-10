@@ -195,6 +195,54 @@ def generate_strategy_signals(df, strategy_num):
     return signals
 
 
+def generate_strategy6_signals(df):
+    """
+    Generate buy/sell signals for Strategy 6 based on Strategy 1~5 signals.
+
+    Model Rules:
+    1. If any of the following conditions are met, allocate/increase position in the index:
+       a. Fundamental indicators show improvement, and technical indicators do not signal sell.
+       b. Technical indicators signal a clear buy.
+    2. Otherwise, consider reducing/closing the position.
+
+    Parameters:
+        df (pd.DataFrame): The DataFrame containing strategy1~5 signals.
+
+    Returns:
+        pd.Series: Signals where 1 indicates buy, -1 indicates sell, and 0 indicates hold.
+    """
+    # 基本面改善信号：策略1、策略2、策略3中至少两个为1
+    basic_improved = (
+                             (df['strategy1_signal']) +
+                             (df['strategy2_signal']) +
+                             (df['strategy3_signal'])
+                     ) >= 2
+
+    # 技术面卖出信号：策略5信号为-1
+    technical_sell = df['strategy5_signal'] == -1
+
+    # 技术面买入信号：策略4信号为1
+    technical_buy = df['strategy4_signal'] == 1
+
+    # **模型规则**：
+    # 条件1：基本面改善且无技术面卖出信号
+    condition1 = basic_improved & (~technical_sell)
+
+    # 条件2：技术面买入信号
+    condition2 = technical_buy
+
+    # 最终信号：
+    # 满足条件1或条件2则买入（1）
+    # 满足技术面卖出信号则卖出（-1）
+    # 否则保持持仓（0）
+    signals = np.where(
+        condition1 | condition2, 1,
+        np.where(technical_sell, -1, 0)
+    )
+
+    return pd.Series(signals, index=df.index)
+
+
 def backtest_strategy(df, signals, strategy_num):
     """
     Backtest the strategy based on buy/sell signals.
@@ -260,6 +308,9 @@ def main():
 
     # List to store strategy numbers
     strategies = [1, 2, 3, 4, 5]
+    # 初始化新列以存储每个策略的信号
+    for strategy_num in strategies:
+        df_backtest[f'strategy{strategy_num}_signal'] = 0
 
     for strategy_num in strategies:
         print(f'正在回测策略{strategy_num}...')
@@ -267,6 +318,9 @@ def main():
         # Generate signals
         signals = generate_strategy_signals(df.copy(), strategy_num)
         signals = signals[signals.index >= backtest_start].copy()
+
+        # **将信号存储到对应的列中**
+        df_backtest[f'strategy{strategy_num}_signal'] = signals
 
         # Backtest strategy
         cumulative_strategy, cumulative_index = backtest_strategy(df_backtest.copy(), signals, strategy_num)
@@ -283,6 +337,32 @@ def main():
         final_index = cumulative_index.iloc[-1]
         print(f'策略{strategy_num} 最终净值: {final_strategy:.2f}')
         print(f'上证综合指数 最终净值: {final_index:.2f}\n')
+
+    # **新增部分**：构建策略6
+    print('正在回测策略6...')
+
+    # 生成策略6的信号
+    df_backtest['strategy6_signal'] = generate_strategy6_signals(df_backtest)
+
+    # Backtest 策略6
+    cumulative_strategy6, cumulative_index6 = backtest_strategy(
+        df_backtest.copy(),
+        df_backtest['strategy6_signal'],
+        strategy_num=6
+    )
+
+    # **设置累计净值的起始值为1**
+    cumulative_strategy6 = cumulative_strategy6 / cumulative_strategy6.iloc[0]
+    cumulative_index6 = cumulative_index6 / cumulative_index6.iloc[0]
+
+    # 绘制策略6的回测结果
+    plot_results(cumulative_strategy6, cumulative_index6, strategy_num=6)
+
+    # 打印策略6的最终净值
+    final_strategy6 = cumulative_strategy6.iloc[-1]
+    final_index6 = cumulative_index6.iloc[-1]
+    print(f'策略6 最终净值: {final_strategy6:.2f}')
+    print(f'上证综合指数 最终净值: {final_index6:.2f}\n')
 
 
 # 5. Execute the main function
