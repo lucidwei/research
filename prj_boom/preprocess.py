@@ -90,7 +90,7 @@ def transform_cumulative_data(series: pd.Series, data_type: str, period: int = 1
 
         # 处理一月份累计值为空的情况
         for year, data in current_yoy.groupby(current_yoy.index.year):
-            if pd.isna(data.iloc[0]) and not pd.isna(data.iloc[1]):
+            if len(data) > 1 and pd.isna(data.iloc[0]) and not pd.isna(data.iloc[1]):
                 feb_value = data.iloc[1]
                 jan_index = pd.to_datetime(f'{year}-01-01') + pd.offsets.MonthEnd()
                 current_yoy.loc[jan_index] = feb_value

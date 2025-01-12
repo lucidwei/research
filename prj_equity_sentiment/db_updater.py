@@ -21,7 +21,7 @@ class DatabaseUpdater(PgDbUpdaterBase):
         self.industry_stk_updater = IndustryStkUpdater(self)
 
     def run_all_updater(self):
-        self.industry_data_updater.logic_industry_volume()
+        # self.industry_data_updater.logic_industry_volume()
         self.industry_data_updater.logic_industry_large_order()
         self.industry_data_updater.logic_industry_order_inflows()
         # self.industry_stk_updater.logic_industry_stk_price_volume()
