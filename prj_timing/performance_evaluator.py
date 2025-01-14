@@ -150,6 +150,43 @@ class PerformanceEvaluator:
         self.metrics_df = pd.DataFrame(metrics)
         self.metrics_df.set_index('策略名称', inplace=True)
 
+    def calculate_annual_metrics_for(self, strategy_name):
+        """
+        Calculates annual metrics for a specific strategy.
+
+        Parameters:
+            strategy_name (str): The name of the strategy (e.g., 'strategy6').
+
+        """
+        # 获取策略的信号回报
+        if strategy_name not in self.strategies_results:
+            raise ValueError(f"策略名称 '{strategy_name}' 不存在于回测结果中。")
+
+        strategy_returns = self.strategies_results[strategy_name]['Strategy_Return']
+        index_returns = self.df['Index_Return']
+
+        # 年度收益
+        annual_strategy_returns = self.calculate_annual_returns(strategy_returns)
+
+        # 年度指数收益
+        annual_index_returns = (1 + index_returns).resample('Y').prod() - 1
+
+        # 超额收益
+        annual_excess_returns = annual_strategy_returns - annual_index_returns
+
+        # 交易次数
+        trade_counts = self.calculate_trade_counts(self.df[f"{strategy_name}_signal"])
+
+        # 创建DataFrame
+        self.annual_returns_df[strategy_name] = pd.DataFrame({
+            '策略年度收益': annual_strategy_returns,
+            '上证指数年度收益': annual_index_returns,
+            '超额收益': annual_excess_returns,
+            '每年交易多单次数': trade_counts['Annual_Long_Trades'],
+            '每年交易空单次数': trade_counts['Annual_Short_Trades']
+        })
+        self.annual_returns_df[strategy_name].index = self.annual_returns_df[strategy_name].index.year  # 将索引设置为年份
+
     def calculate_average_signal_count(self, strategy_returns):
         """
         Calculates the average number of signals per year.
@@ -312,19 +349,18 @@ class PerformanceEvaluator:
         })
         return trade_counts
 
-    def generate_excel_reports(self, metrics_output, annual_output):
+    def generate_excel_reports(self, output_file):
         """
-        Generates Excel reports for performance metrics.
+        生成并保存两个Excel统计表到同一个文件的两个工作表中。
 
         Parameters:
-            metrics_output (str): Path to save metrics report.
-            annual_output (str): Path to save annual returns report.
+            output_file (str): 输出Excel文件的路径。
         """
-        with pd.ExcelWriter(metrics_output) as writer:
-            self.metrics_df.to_excel(writer, sheet_name='策略绩效指标')
+        with pd.ExcelWriter(output_file) as writer:
+            # 表1：策略6每年的收益、上证指数收益、超额收益、每年交易多单次数和空单次数
+            self.annual_returns_df.to_excel(writer, sheet_name='策略6年度统计')
 
-        if self.annual_returns_df is not None:
-            with pd.ExcelWriter(annual_output) as writer:
-                self.annual_returns_df.to_excel(writer, sheet_name='策略6年度统计')
+            # 表2：各评价指标，行名为指标，列名为策略名
+            self.metrics_df.to_excel(writer, sheet_name='策略绩效指标')
 
     # Additional methods for annual metrics can be added here as needed.

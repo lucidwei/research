@@ -18,28 +18,39 @@ class SignalGenerator:
         """
         self.df = df.copy()
         self.strategies_results = {}
+        self.strategy_names = {}  # 字典：策略编号 -> 策略名称
 
-    def generate_signals_for_all_strategies(self, strategies_params=None):
+    def generate_signals_for_all_strategies(self, strategies_params=None, strategy_names=None):
         """
         Generates signals for all strategies with optional parameter optimization.
 
         Parameters:
             strategies_params (dict): Dictionary containing strategy parameters for optimization.
-
+            strategy_names (dict): Dictionary mapping strategy numbers to strategy names.
         """
+        if strategy_names:
+            self.strategy_names = strategy_names
+        else:
+            # 默认策略名称为 strategy1, strategy2, ...
+            self.strategy_names = {num: f'strategy{num}' for num in range(1, 6)}
+
         if strategies_params:
             for strategy_num, params in strategies_params.items():
                 signals = self.generate_strategy_signals(strategy_num, **params)
-                self.df[f'strategy{strategy_num}_signal'] = signals
+                strategy_name = self.strategy_names.get(strategy_num, f'strategy{strategy_num}')
+                self.df[f'{strategy_name}_signal'] = signals
         else:
             # Default strategies without parameter optimization
             for strategy_num in range(1, 6):
                 signals = self.generate_strategy_signals(strategy_num)
-                self.df[f'strategy{strategy_num}_signal'] = signals
+                strategy_name = self.strategy_names.get(strategy_num, f'strategy{strategy_num}')
+                self.df[f'{strategy_name}_signal'] = signals
 
             # Strategy 6
             strategy6_signals = self.generate_strategy6_signals()
             self.df['strategy6_signal'] = strategy6_signals
+
+        return self.df
 
     def generate_strategy_signals(self, strategy_num, **kwargs):
         """
@@ -56,29 +67,32 @@ class SignalGenerator:
         signals = pd.Series(index=df.index, data=0)
 
         if strategy_num == 1:
-            # Strategy 1: Example with parameter 'ma_window'
-            ma_window = kwargs.get('ma_window', 2)
+            # Strategy 1: 中长期贷款同比MA2
+            # df['中长期贷款同比MA2'] = calculate_moving_average(df, '中长期贷款同比MA2', window=2)
             df['中长期贷款同比MA2_prev'] = df['中长期贷款同比MA2'].shift(1)
             signals = np.where(df['中长期贷款同比MA2'] > df['中长期贷款同比MA2_prev'], 1, 0)
-            signals = pd.Series(signals, index=df.index).shift(1)
+            signals = pd.Series(signals, index=df.index)
+
+            # 将信号向前移动一个周期，表示次月末建仓
+            signals = signals.shift(1)
 
         elif strategy_num == 2:
-            # Strategy 2: Example with parameters 'ma_window1', 'ma_window2'
-            ma_window1 = kwargs.get('ma_window1', 3)
-            ma_window2 = kwargs.get('ma_window2', 3)
-            df[f'M1同比MA{ma_window1}_prev'] = df['M1同比MA3'].shift(1)
-            df[f'M1-PPI同比MA{ma_window2}_prev'] = df['M1-PPI同比MA3'].shift(1)
-            condition1 = df['M1同比MA3'] > df[f'M1同比MA{ma_window1}_prev']
-            condition2 = df['M1-PPI同比MA3'] > df[f'M1-PPI同比MA{ma_window2}_prev']
+            # Strategy 2: M1同比MA3 and M1-PPI同比MA3
+            df['M1同比MA3_prev'] = df['M1同比MA3'].shift(1)
+            df['M1-PPI同比MA3_prev'] = df['M1-PPI同比MA3'].shift(1)
+            condition1 = df['M1同比MA3'] > df['M1同比MA3_prev']
+            condition2 = df['M1-PPI同比MA3'] > df['M1-PPI同比MA3_prev']
             signals = np.where(condition1 | condition2, 1, 0)
-            signals = pd.Series(signals, index=df.index).shift(1)
+            signals = pd.Series(signals, index=df.index)
+
+            # 将信号向前移动一个周期，表示次月末建仓
+            signals = signals.shift(1)
 
         elif strategy_num == 3:
-            # Strategy 3: Example with parameter 'ma_window'
-            ma_window = kwargs.get('ma_window', 2)
+            # Strategy 3: 美元指数MA2
             df['美元指数MA2_prev'] = df['美元指数MA2'].shift(1)
             signals = np.where(df['美元指数MA2'] < df['美元指数MA2_prev'], 1, 0)
-            signals = pd.Series(signals, index=df.index).shift(1)
+            signals = pd.Series(signals, index=df.index)
 
         elif strategy_num == 4:
             # Strategy 4: Parameters like 'percentile_threshold', 'volume_threshold'
@@ -131,19 +145,31 @@ class SignalGenerator:
         Returns:
             pd.Series: Strategy 6 signals.
         """
+        # 假设 strategy_names 已包含所有策略的名称
         df = self.df
-        basic_improved = (
-                                 (df['strategy1_signal']) +
-                                 (df['strategy2_signal']) +
-                                 (df['strategy3_signal'])
-                         ) >= 2
+        # 获取策略1-5的信号列名
+        strategy_signals = [f"{self.strategy_names.get(num, f'strategy{num}')}_signal" for num in range(1, 6)]
 
-        technical_sell = df['strategy5_signal'] == -1
-        technical_buy = df['strategy4_signal'] == 1
+        # 基本面改善信号：策略1、策略2、策略3中至少两个为1
+        basic_improved = df[[f'strategy{num}_signal' for num in range(1, 4)]].sum(axis=1) >= 2
 
+        # 技术面卖出信号：策略5信号为-1
+        technical_sell = df[f"{self.strategy_names.get(5, 'strategy5')}_signal"] == -1
+
+        # 技术面买入信号：策略4信号为1
+        technical_buy = df[f"{self.strategy_names.get(4, 'strategy4')}_signal"] == 1
+
+        # **模型规则**：
+        # 条件1：基本面改善且无技术面卖出信号
         condition1 = basic_improved & (~technical_sell)
+
+        # 条件2：技术面买入信号
         condition2 = technical_buy
 
+        # 最终信号：
+        # 满足条件1或条件2则买入（1）
+        # 满足技术面卖出信号则卖出（-1）
+        # 否则保持持仓（0）
         signals = np.where(
             condition1 | condition2, 1,
             np.where(technical_sell, -1, 0)
