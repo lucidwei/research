@@ -23,7 +23,7 @@ class PerformanceEvaluator:
         self.signals_columns = signals_columns
         self.strategies_results = {}
         self.metrics_df = None
-        self.annual_returns_df = None
+        self.stats_by_each_year = {}
 
     def backtest_all_strategies(self, start_date='2001-12'):
         """
@@ -33,6 +33,7 @@ class PerformanceEvaluator:
             start_date (str): Start date for backtesting (format 'YYYY-MM').
 
         """
+        self.df['Index_Return'] = self.df['上证综合指数:月:最后一条'].pct_change()
         for strategy_num in self.signals_columns:
             print(f'\n正在回测策略{strategy_num}...')
             signals = self.df[strategy_num]
@@ -66,7 +67,6 @@ class PerformanceEvaluator:
             pd.Series, pd.Series, pd.Series: Cumulative strategy returns, cumulative index returns, monthly returns.
         """
         df = self.df.copy()
-        df['Index_Return'] = df['上证综合指数:月:最后一条'].pct_change()
 
         backtest_start = pd.to_datetime(start_date, format='%Y-%m')
         df = df[df.index >= backtest_start].copy()
@@ -166,7 +166,7 @@ class PerformanceEvaluator:
         index_returns = self.df['Index_Return']
 
         # 年度收益
-        annual_strategy_returns = self.calculate_annual_returns(strategy_returns)
+        annual_strategy_returns = (1 + strategy_returns).resample('Y').prod() - 1
 
         # 年度指数收益
         annual_index_returns = (1 + index_returns).resample('Y').prod() - 1
@@ -175,17 +175,17 @@ class PerformanceEvaluator:
         annual_excess_returns = annual_strategy_returns - annual_index_returns
 
         # 交易次数
-        trade_counts = self.calculate_trade_counts(self.df[f"{strategy_name}_signal"])
+        trade_counts = self.calculate_trade_counts(self.df[strategy_name])
 
         # 创建DataFrame
-        self.annual_returns_df[strategy_name] = pd.DataFrame({
+        self.stats_by_each_year[strategy_name] = pd.DataFrame({
             '策略年度收益': annual_strategy_returns,
             '上证指数年度收益': annual_index_returns,
             '超额收益': annual_excess_returns,
             '每年交易多单次数': trade_counts['Annual_Long_Trades'],
             '每年交易空单次数': trade_counts['Annual_Short_Trades']
         })
-        self.annual_returns_df[strategy_name].index = self.annual_returns_df[strategy_name].index.year  # 将索引设置为年份
+        self.stats_by_each_year[strategy_name].index = self.stats_by_each_year[strategy_name].index.year  # 将索引设置为年份
 
     def calculate_average_signal_count(self, strategy_returns):
         """
@@ -358,7 +358,7 @@ class PerformanceEvaluator:
         """
         with pd.ExcelWriter(output_file) as writer:
             # 表1：策略6每年的收益、上证指数收益、超额收益、每年交易多单次数和空单次数
-            self.annual_returns_df.to_excel(writer, sheet_name='策略6年度统计')
+            self.stats_by_each_year['strategy6_signal'].to_excel(writer, sheet_name='策略6年度统计')
 
             # 表2：各评价指标，行名为指标，列名为策略名
             self.metrics_df.to_excel(writer, sheet_name='策略绩效指标')
