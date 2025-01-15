@@ -11,15 +11,15 @@ mpl.rcParams['font.sans-serif'] = ['STZhongsong']    # Ö¸¶¨Ä¬ÈÏ×ÖÌå£º½â¾öplot²»Ä
 mpl.rcParams['axes.unicode_minus'] = False           # ½â¾ö±£´æÍ¼ÏñÊÇ¸ººÅ'-'ÏÔÊ¾Îª·½¿éµÄÎÊÌâ
 
 class PerformanceEvaluator:
-    def __init__(self, df, signals_columns):
+    def __init__(self, indices_data, signals_columns):
         """
         Initializes the PerformanceEvaluator.
 
         Parameters:
-            df (pd.DataFrame): Dataframe containing price data and signals.
+            indices_data (pd.DataFrame): Dataframe containing price data and signals.
             signals_columns (list): List of signal column names to evaluate.
         """
-        self.df = df.copy()
+        self.indices_data = indices_data.copy()
         self.signals_columns = signals_columns
         self.strategies_results = {}
         self.metrics_df = None
@@ -33,29 +33,32 @@ class PerformanceEvaluator:
             start_date (str): Start date for backtesting (format 'YYYY-MM').
 
         """
-        self.df['Index_Return'] = self.df['ÉÏÖ¤×ÛºÏÖ¸Êı:ÔÂ:×îºóÒ»Ìõ'].pct_change()
-        for strategy_num in self.signals_columns:
-            print(f'\nÕıÔÚ»Ø²â²ßÂÔ{strategy_num}...')
-            signals = self.df[strategy_num]
-            cumulative_strategy, cumulative_index, strategy_returns = self.backtest_strategy(signals, start_date)
+        for strategy_signal in self.signals_columns:
+            strategy_id = strategy_signal.replace('_signal', '')
+            # Extract index name from strategy_id
+            index_name, strategy_num = strategy_id.rsplit('_strategy', 1)
+            print(f'\nÕıÔÚ»Ø²â²ßÂÔ {strategy_id} ({index_name})...')
+            signals = self.indices_data[index_name][strategy_signal]
+            cumulative_strategy, cumulative_index, strategy_returns = self.backtest_strategy(signals, self.indices_data[index_name], start_date)
             # Normalize cumulative returns
             cumulative_strategy = cumulative_strategy / cumulative_strategy.iloc[0]
             cumulative_index = cumulative_index / cumulative_index.iloc[0]
             # Store results
-            self.strategies_results[strategy_num] = {
+            self.strategies_results[strategy_id] = {
                 'Cumulative_Strategy': cumulative_strategy,
                 'Cumulative_Index': cumulative_index,
                 'Strategy_Return': strategy_returns
             }
             # Plot results
-            self.plot_results(cumulative_strategy, cumulative_index, strategy_num)
+            self.plot_results(cumulative_strategy, cumulative_index, strategy_id)
             # Print final net value
             final_strategy = cumulative_strategy.iloc[-1]
             final_index = cumulative_index.iloc[-1]
-            print(f'²ßÂÔ{strategy_num} ×îÖÕ¾»Öµ: {final_strategy:.2f}')
-            print(f'ÉÏÖ¤×ÛºÏÖ¸Êı ×îÖÕ¾»Öµ: {final_index:.2f}\n')
+            print(f'²ßÂÔ {strategy_id} ×îÖÕ¾»Öµ: {final_strategy:.2f}')
+            print(f'Ö¸Êı {index_name} ×îÖÕ¾»Öµ: {final_index:.2f}\n')
 
-    def backtest_strategy(self, signals, start_date):
+
+    def backtest_strategy(self, signals, indices_data, start_date):
         """
         Backtests a single strategy.
 
@@ -66,7 +69,8 @@ class PerformanceEvaluator:
         Returns:
             pd.Series, pd.Series, pd.Series: Cumulative strategy returns, cumulative index returns, monthly returns.
         """
-        df = self.df.copy()
+        df = indices_data.copy()
+        df['Index_Return'] = df['Ö¸Êı:×îºóÒ»Ìõ'].pct_change()
 
         backtest_start = pd.to_datetime(start_date, format='%Y-%m')
         df = df[df.index >= backtest_start].copy()
@@ -84,24 +88,25 @@ class PerformanceEvaluator:
 
         return df['Cumulative_Strategy'], df['Cumulative_Index'], df['Strategy_Return']
 
-    def plot_results(self, cumulative_strategy, cumulative_index, strategy_num):
+    def plot_results(self, cumulative_strategy, cumulative_index, strategy_id):
         """
         Plots cumulative returns of the strategy against the index.
 
         Parameters:
             cumulative_strategy (pd.Series): Cumulative strategy returns.
             cumulative_index (pd.Series): Cumulative index returns.
-            strategy_num (int): Strategy number.
+            strategy_id (int): Strategy id.
         """
         plt.figure(figsize=(12, 6))
-        plt.plot(cumulative_index, label='ÉÏÖ¤×ÛºÏÖ¸Êı')
-        plt.plot(cumulative_strategy, label=f'²ßÂÔ{strategy_num} ¾»Öµ')
-        plt.title(f'²ßÂÔ{strategy_num} »Ø²â½á¹û')
+        plt.plot(cumulative_index, label='»ù×¼Ö¸Êı')
+        plt.plot(cumulative_strategy, label=f'{strategy_id} ¾»Öµ')
+        plt.title(f'{strategy_id} »Ø²â½á¹û')
         plt.xlabel('Ê±¼ä')
         plt.ylabel('ÀÛ¼ÆÊÕÒæ')
         plt.legend()
         plt.grid(True)
         plt.show()
+
 
     def calculate_metrics_all_strategies(self):
         """
@@ -120,8 +125,8 @@ class PerformanceEvaluator:
             'Äê¾ùĞÅºÅ´ÎÊı': []
         }
 
-        for strategy_num, results in self.strategies_results.items():
-            print(f'ÕıÔÚ¼ÆËã²ßÂÔ{strategy_num}µÄ¼¨Ğ§Ö¸±ê...')
+        for strategy_id, results in self.strategies_results.items():
+            print(f'ÕıÔÚ¼ÆËã²ßÂÔ {strategy_id} µÄ¼¨Ğ§Ö¸±ê...')
             strategy_returns = results['Strategy_Return']
             cumulative_strategy = results['Cumulative_Strategy']
 
@@ -135,7 +140,7 @@ class PerformanceEvaluator:
             kelly_fraction = self.calculate_kelly_fraction(win_rate, odds_ratio)
             average_signals = self.calculate_average_signal_count(strategy_returns)
 
-            metrics['²ßÂÔÃû³Æ'].append(f'²ßÂÔ{strategy_num}')
+            metrics['²ßÂÔÃû³Æ'].append(strategy_id)
             metrics['Äê»¯ÊÕÒæÂÊ'].append(annualized_return)
             metrics['Äê»¯²¨¶¯ÂÊ'].append(annualized_volatility)
             metrics['ÏÄÆÕ±ÈÂÊ'].append(sharpe_ratio)
@@ -163,7 +168,7 @@ class PerformanceEvaluator:
             raise ValueError(f"²ßÂÔÃû³Æ '{strategy_name}' ²»´æÔÚÓÚ»Ø²â½á¹ûÖĞ¡£")
 
         strategy_returns = self.strategies_results[strategy_name]['Strategy_Return']
-        index_returns = self.df['Index_Return']
+        index_returns = self.indices_data['Index_Return']
 
         # Äê¶ÈÊÕÒæ
         annual_strategy_returns = (1 + strategy_returns).resample('Y').prod() - 1
@@ -175,7 +180,7 @@ class PerformanceEvaluator:
         annual_excess_returns = annual_strategy_returns - annual_index_returns
 
         # ½»Ò×´ÎÊı
-        trade_counts = self.calculate_trade_counts(self.df[strategy_name])
+        trade_counts = self.calculate_trade_counts(self.indices_data[strategy_name])
 
         # ´´½¨DataFrame
         self.stats_by_each_year[strategy_name] = pd.DataFrame({
