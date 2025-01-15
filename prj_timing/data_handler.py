@@ -18,7 +18,7 @@ class DataHandler:
         """
         self.file_path = file_path
         self.frequency = frequency
-        self.df = self.load_data()
+        self.macro_data, self.indices_data_dict = self.load_data()
 
     def load_data(self):
         """
@@ -37,47 +37,40 @@ class DataHandler:
         # Sort by date
         df_macro.sort_index(inplace=True)
 
-        # Read Sheet2 data
-        df = pd.read_excel(self.file_path, sheet_name='Sheet2', header=0)
+        # 读取 Sheet2 中的所有数据
+        df_sheet2 = pd.read_excel(self.file_path, sheet_name='Sheet2', header=0)
 
-        # Split data based on empty columns
-        empty_cols = df.columns[df.isna().all()]
-        split_indices = [df.columns.get_loc(col) for col in empty_cols]
+        # 动态识别所有指数（假设非 'Unnamed' 列为指数名称）
+        index_columns = [col for col in df_sheet2.columns if not col.startswith('Unnamed')]
 
-        if split_indices:
-            first_split = split_indices[0]
-            z_index_df = df.iloc[:, :first_split].copy()
-        else:
-            z_index_df = df.copy()
+        indices_data = {}
+        for index_col in index_columns:
+            # 假设每个指数的数据占用4列：'日期', '收盘价', '成交额', '市净率PB(LF,内地)'
+            start_loc = df_sheet2.columns.get_loc(index_col) - 1
+            df_index = df_sheet2.iloc[:, start_loc:start_loc + 4].copy()
+            df_index.columns = ['日期', '收盘价', '成交额', '市净率PB(LF,内地)']
 
-        # Rename columns
-        z_index_df.columns = ['日期', '收盘价', '成交额', '市净率PB(LF,内地)']
+            # # Drop first three rows and rows with NaN dates
+            df_index = df_index[3:].dropna(subset=['日期'])
 
-        # Drop first three rows and rows with NaN dates
-        z_index_df = z_index_df[3:].dropna(subset=['日期'])
+            # 将 '日期' 转换为 datetime 类型并设置为索引
+            df_index['日期'] = pd.to_datetime(df_index['日期'])
+            df_index.set_index('日期', inplace=True)
+            df_index.sort_index(inplace=True)
 
-        # Convert '日期' to datetime and set as index
-        z_index_df['日期'] = pd.to_datetime(z_index_df['日期'])
-        z_index_df.set_index('日期', inplace=True)
-        z_index_df.sort_index(inplace=True)
+            # 将所有列转换为数值类型（忽略错误）
+            df_index = df_index.apply(pd.to_numeric, errors='coerce')
 
-        # Convert all columns to numeric
-        z_index_df = z_index_df.apply(pd.to_numeric, errors='coerce')
+            # 按设定频率重采样数据
+            resampled_df = self.resample_data(df_index)
 
-        # Resample data based on desired frequency
-        resampled_df = self.resample_data(z_index_df)
+            # 计算所需指标
+            final_df = self.compute_indicators(resampled_df)
 
-        # Compute additional indicators
-        final_df = self.compute_indicators(resampled_df)
+            # 存储到字典
+            indices_data[index_col] = final_df
 
-        # Ensure df_macro and final_df have aligned indices
-        if not df_macro.index.equals(final_df.index):
-            raise ValueError("df_macro 和 final_df 的日期索引不匹配，无法合并。")
-
-        # Merge dataframes
-        merged_df = pd.concat([df_macro, final_df], axis=1)
-
-        return merged_df
+        return df_macro, indices_data
 
     def resample_data(self, df):
         """
@@ -112,31 +105,45 @@ class DataHandler:
         Returns:
             pd.DataFrame: Dataframe with additional indicators.
         """
-        df['上证综合指数:月:最后一条'] = df['收盘价']
-        df['上证综合指数:月:最后一条:同比'] = df['收盘价'].pct_change(12)
-        df['上证综合指数:月:最后一条:环比'] = df['收盘价'].pct_change(1)
-        df['上证综合指数:成交金额:月:合计值'] = df['成交额']
-        df['上证综合指数:成交金额:月:合计值:同比'] = df['成交额'].pct_change(12)
-        df['上证综合指数:成交金额:月:合计值:环比'] = df['成交额'].pct_change(1)
-        df['市净率:上证指数:月:最后一条'] = df['市净率PB(LF,内地)']
+        df['指数:最后一条'] = df['收盘价']
+        df['指数:最后一条:同比'] = df['收盘价'].pct_change(252 if self.frequency == 'D' else 12)
+        df['指数:最后一条:环比'] = df['收盘价'].pct_change(1)
+        df['指数:成交金额:合计值'] = df['成交额']
+        df['指数:成交金额:合计值:同比'] = df['成交额'].pct_change(252 if self.frequency == 'D' else 12)
+        df['指数:成交金额:合计值:环比'] = df['成交额'].pct_change(1)
+        df['市净率:指数'] = df['市净率PB(LF,内地)']
 
-        # Select and reorder columns
+        # 选择并重新排列需要的列
         final_df = df[[
-            '市净率:上证指数:月:最后一条',
-            '上证综合指数:月:最后一条',
-            '上证综合指数:月:最后一条:同比',
-            '上证综合指数:月:最后一条:环比',
-            '上证综合指数:成交金额:月:合计值:同比',
-            '上证综合指数:成交金额:月:合计值:环比'
+            '市净率:指数',
+            '指数:最后一条',
+            '指数:最后一条:同比',
+            '指数:最后一条:环比',
+            '指数:成交金额:合计值:同比',
+            '指数:成交金额:合计值:环比'
         ]]
 
         return final_df
 
-    def get_data(self):
+    def get_macro_data(self):
         """
-        Returns the preprocessed dataframe.
+        返回预处理后的宏观数据。
 
         Returns:
-            pd.DataFrame: Preprocessed data.
+            pd.DataFrame: 宏观数据。
         """
-        return self.df
+        return self.macro_data
+
+    def get_indices_data(self, index_name=None):
+        """
+        返回预处理后的指数数据。
+
+        Parameters:
+            index_name (str, optional): 指定的指数名称。如果为 None，则返回所有数据。
+
+        Returns:
+            pd.DataFrame or dict: 指定指数的数据框或所有指数的数据字典。
+        """
+        if index_name:
+            return self.indices_data_dict.get(index_name)
+        return self.indices_data_dict
