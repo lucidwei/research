@@ -6,6 +6,7 @@
 import pandas as pd
 import numpy as np
 from scipy import stats
+from scipy.stats import percentileofscore
 
 
 class SignalGenerator:
@@ -43,24 +44,55 @@ class SignalGenerator:
             # Default to all indices
             selected_indices = list(self.indices_data.keys())
 
-        for index_name in selected_indices:
-            for strategy_num in range(1, 6):
-                strategy_id = f"{index_name}_strategy{strategy_num}"
-                strategy_name = self.strategy_names.get(strategy_id, strategy_id)
+        for strategy_id, strategy_name in self.strategy_names.items():
+            # 解析 strategy_id，例如 '上证指数_strategy_turnover'
+            if '_strategy_' not in strategy_id:
+                print(f"策略标识符 '{strategy_id}' 格式不正确。应包含 '_strategy_'。跳过此策略。")
+                continue  # 跳过格式不正确的策略
 
-                if strategies_params and strategy_id in strategies_params:
-                    params = strategies_params[strategy_id]
-                    signals = self.generate_strategy_signals(index_name, strategy_num, **params)
-                else:
-                    signals = self.generate_strategy_signals(index_name, strategy_num)
+            index_name, strategy_type = strategy_id.split('_strategy_', 1)
 
-                self.indices_data[index_name][f'{strategy_name}_signal'] = signals
+            if index_name not in selected_indices:
+                print(f"指数 '{index_name}' 未在 selected_indices 中。跳过策略 '{strategy_id}'。")
+                continue  # 跳过未选择的指数
 
-            # Generate strategy6 (aggregated strategy)
-            strategy6_id = f"{index_name}_strategy6"
-            strategy6_name = self.strategy_names.get(strategy6_id, strategy6_id)
-            strategy6_signals = self.generate_strategy6_signals(index_name)
-            self.indices_data[index_name][f'{strategy6_name}_signal'] = strategy6_signals
+            if 'turnover' in strategy_type.lower():
+                # 如果策略类型包含 'turnover'，调用 generate_turnover_strategy_signals
+                params = strategies_params.get(strategy_id, {}) if strategies_params else {}
+                signals = self.generate_turnover_strategy_signals(
+                    index_name=index_name,
+                    holding_days=params.get('holding_days', 10),
+                    percentile_window_years=params.get('percentile_window_years', 4),
+                    next_day_open=params.get('next_day_open', True)
+                )
+
+            elif strategy_type.isdigit():
+                signals = self.generate_strategy_signals(index_name, int(strategy_type))
+
+            else:
+                print(f"策略类型标识符 '{strategy_type}' 不支持。跳过此策略({strategy_id})。")
+                continue  # 跳过格式不正确的策略
+
+            self.indices_data[index_name][f'{strategy_name}_signal'] = signals
+
+        # for index_name in selected_indices:
+        #     for strategy_num in range(1, 6):
+        #         strategy_id = f"{index_name}_strategy{strategy_num}"
+        #         strategy_name = self.strategy_names.get(strategy_id, strategy_id)
+        #
+        #         if strategies_params and strategy_id in strategies_params:
+        #             params = strategies_params[strategy_id]
+        #             signals = self.generate_strategy_signals(index_name, strategy_num, **params)
+        #         else:
+        #             signals = self.generate_strategy_signals(index_name, strategy_num)
+        #
+        #         self.indices_data[index_name][f'{strategy_name}_signal'] = signals
+        #
+        #     # Generate strategy6 (aggregated strategy)
+        #     strategy6_id = f"{index_name}_strategy6"
+        #     strategy6_name = self.strategy_names.get(strategy6_id, strategy6_id)
+        #     strategy6_signals = self.generate_strategy6_signals(index_name)
+        #     self.indices_data[index_name][f'{strategy6_name}_signal'] = strategy6_signals
 
         return self.indices_data
 
@@ -148,6 +180,9 @@ class SignalGenerator:
             signals = np.where(condition_per & condition_sell, -1, 0)
             signals = pd.Series(signals, index=df.index)
 
+        elif strategy_num == 6:
+            signals = self.generate_strategy6_signals(index_name)
+
         return signals
 
     def generate_strategy6_signals(self, index_name):
@@ -187,96 +222,105 @@ class SignalGenerator:
 
         return pd.Series(signals, index=df.index)
 
-    def generate_turnover_strategy_signals(self, index_name, holding_days=10, percentile_window_years=4, next_day_open=True):
+
+    def generate_turnover_strategy_signals(self, index_name, holding_days=10, percentile_window_years=4,
+                                           next_day_open=True):
         """
         Generates signals for the turnover-based strategy.
 
         Parameters:
             index_name (str): Name of the index.
-            holding_days (int): Number of days to hold the position.
+            holding_days (int): Number of trading days to hold the position.
             percentile_window_years (int): Number of years to calculate historical percentiles.
             next_day_open (bool): Whether to open positions the next day after signal.
-
-        Returns:
-            pd.Series: Signal series with 1 for buy, -1 for sell, 0 for hold.
         """
         df = self.indices_data[index_name].copy()
-        strategy_name = f"{index_name}_strategy6"
+        strategy_name = f"{index_name}_strategy_turnover"
 
-        # Initialize signal column
-        df[strategy_name + '_signal'] = 0
+        # 初始化新列
+        df[f'{strategy_name}_signal'] = 0
+        df['turnover_trend'] = np.nan
+        df['trend_percentile'] = np.nan
 
-        # Record holding end dates
-        holding_end_date = None
+        # 近四年的交易日数量
+        trading_days_per_year = 252
+        total_lookback_days = trading_days_per_year * percentile_window_years
 
-        for current_date in df.index:
-            if holding_end_date and current_date >= holding_end_date:
-                # Sell signal to close position
-                df.at[current_date, strategy_name + '_signal'] = -1
-                holding_end_date = None
+        # 1. 计算成交额趋势指标
+        df['turnover_trend'] = df['指数:成交金额:合计值'] / df['指数:成交金额:合计值'].rolling(window=60, min_periods=1).mean()
 
-            if holding_end_date:
-                # Currently holding, skip further signals
+        # 2. 计算成交额趋势指标的百分位
+        trend_percentiles = []
+
+        # 遍历每个交易日计算百分位
+        turnover_trend_values = df['turnover_trend'].values
+        for i in range(len(df)):
+            if i < 1:
+                trend_percentiles.append(np.nan)
+                continue
+            # 定义过去的窗口
+            start_idx = max(0, i - total_lookback_days)
+            window = turnover_trend_values[start_idx:i]
+            current_value = turnover_trend_values[i]
+            if len(window) > 0:
+                percentile = percentileofscore(window, current_value, kind='rank') / 100
+                trend_percentiles.append(percentile)
+            else:
+                trend_percentiles.append(np.nan)
+
+        df['trend_percentile'] = trend_percentiles
+
+        # 3. 生成持仓信号
+        signal_series = [0] * len(df)
+        holding_end_idx = -1  # 持仓结束的索引
+        current_signal = 0  # 当前持仓信号
+
+        for i in range(len(df)):
+            percentile = df.iloc[i]['trend_percentile']
+
+            if pd.isna(percentile):
+                # 如果百分位为空，则不生成信号
+                signal_series[i] = current_signal
                 continue
 
-            # Calculate recent 60 days turnover trend
-            recent_turnover = df.loc[:current_date].tail(60)['指数:成交金额:合计值']
-            if len(recent_turnover) < 60:
-                continue  # Not enough data
-
-            current_turnover = recent_turnover.iloc[-1]
-            avg_turnover_60 = recent_turnover.mean()
-            turnover_trend = current_turnover / avg_turnover_60
-
-            # Calculate historical turnover trends over the percentile window
-            start_date = current_date - pd.DateOffset(years=percentile_window_years)
-            historical_df = df.loc[start_date:current_date].tail(60 * percentile_window_years)
-            if len(historical_df) < 60 * percentile_window_years:
-                continue  # Not enough historical data
-
-            historical_df = historical_df.copy()
-            historical_df['turnover_trend'] = historical_df['指数:成交金额:合计值'] / historical_df['指数:成交金额:合计值'].rolling(window=60).mean()
-            turnover_trends = historical_df['turnover_trend'].dropna()
-
-            if turnover_trends.empty:
-                continue  # No valid turnover trends
-
-            # Calculate percentiles
-            percentile_95 = np.percentile(turnover_trends, 95)
-            percentile_5 = np.percentile(turnover_trends, 5)
-
-            # Generate buy or sell signal based on trend percentiles
-            signal = 0
-            if turnover_trend >= percentile_95:
-                signal = 1  # Buy signal
-            elif turnover_trend <= percentile_5:
-                signal = -1  # Sell signal
-
-            if signal != 0:
-                if next_day_open:
-                    # Place signal for the next trading day if possible
-                    try:
-                        next_day = df.index[df.index.get_loc(current_date) + 1]
-                        df.at[next_day, strategy_name + '_signal'] = signal
-                        # Set holding end date
-                        holding_end_date = next_day + pd.Timedelta(days=holding_days)
-                        # Find the nearest trading day after holding_end_date
-                        if holding_end_date not in df.index:
-                            holding_end_date = df.index[df.index <= holding_end_date].max()
-                    except IndexError:
-                        # If current_date is the last trading day, cannot place next day signal
-                        pass
+            if i > holding_end_idx:
+                # 当前不在持仓中
+                if percentile >= 0.95:
+                    # 异常放量信号
+                    current_signal = 1
+                    holding_end_idx = i + holding_days
+                elif percentile <= 0.05:
+                    # 异常缩量信号
+                    current_signal = -1
+                    holding_end_idx = i + holding_days
                 else:
-                    # Place signal on the same day
-                    df.at[current_date, strategy_name + '_signal'] = signal
-                    # Set holding end date
-                    holding_end_date = current_date + pd.Timedelta(days=holding_days)
-                    # Find the nearest trading day after holding_end_date
-                    if holding_end_date not in df.index:
-                        holding_end_date = df.index[df.index <= holding_end_date].max()
+                    current_signal = 0
+            else:
+                # 当前在持仓中
+                if percentile >= 0.95:
+                    # 重新触发异常放量信号，延长持仓期
+                    current_signal = 1
+                    holding_end_idx = i + holding_days
+                elif percentile <= 0.05:
+                    # 重新触发异常缩量信号，延长持仓期
+                    current_signal = -1
+                    holding_end_idx = i + holding_days
+                # 否则保持当前持仓状态
 
+            signal_series[i] = current_signal
+
+        # 将信号写入DataFrame
+        absolute_signal = [abs(item) for item in signal_series]
+        df[f'{strategy_name}_signal'] = absolute_signal
+
+        # 如果需要在信号发生的次日开仓，则将信号向前移动一天
+        if next_day_open:
+            df[f'{strategy_name}_signal'] = df[f'{strategy_name}_signal'].shift(1).fillna(0)
+
+        # 更新 self.indices_data
         self.indices_data[index_name] = df
-        return df[strategy_name + '_signal']
+
+        return df[f'{strategy_name}_signal']
 
     def calculate_rolling_percentile_rank(self, df, column, window):
         """
