@@ -10,7 +10,6 @@ from datetime import datetime, timedelta
 import chardet
 import pandas as pd
 
-
 def count_trading_days(start_date, end_date, trading_days):
     current_date = start_date
     trading_day_count = 0
@@ -19,7 +18,6 @@ def count_trading_days(start_date, end_date, trading_days):
             trading_day_count += 1
         current_date += timedelta(days=1)
     return trading_day_count
-
 
 # 定义正则表达式匹配模式
 open_trade_pattern = re.compile(r"次日开仓：(\d{4}-\d{2}-\d{2})")
@@ -78,7 +76,7 @@ for line in lines:
     if close_trade_match and open_date:
         close_date = close_trade_match.group(1)
 
-        # 计算持仓时长
+        # 计算持仓时长和交易日持仓时长
         open_datetime = datetime.strptime(open_date, "%Y-%m-%d")
         close_datetime = datetime.strptime(close_date, "%Y-%m-%d")
         holding_duration = (close_datetime - open_datetime).days
@@ -142,19 +140,17 @@ df = pd.DataFrame(results)
 # 删除收益率为None的记录
 df = df.dropna(subset=["收益率"])
 
-
 # 定义一个函数来计算凯利仓位
 def calculate_kelly(win_rate, avg_win, avg_loss):
     if avg_loss == 0:
         return 0
     return (win_rate - (1 - win_rate) / (avg_win / avg_loss)) * 100  # 转换为百分比
 
-
 # 定义一个函数来计算统计指标
 def compute_stats(group):
     count = len(group)
     avg_return = group["收益率"].mean()
-    avg_holding_days = group["交易日持仓时长"].mean()
+    avg_holding_days = group["交易日持仓时长"].mean()  # 使用交易日持仓时长
 
     # 计算胜率
     wins = group[group["收益率"] > 0]
@@ -178,30 +174,61 @@ def compute_stats(group):
         "凯利仓位 (%)": round(kelly, 2)
     })
 
-
 # 按开仓理由分组并计算统计指标
-summary = df.groupby("开仓理由").apply(compute_stats).reset_index()
+summary_all = df.groupby("开仓理由").apply(compute_stats).reset_index()
 
-# 准备详细的分类数据
-shrink = df[df["开仓理由"] == "异常缩量"]
-expand = df[df["开仓理由"] == "异常放量"]
+# 定义要剔除的特定交易
+excluded_trade = {
+    "开仓时间": "2016-01-08",
+    "平仓时间": "2016-02-29"
+}
+
+# 处理“异常缩量”分类，分为全量和剔除特定交易
+# 提取所有“异常缩量”交易
+shrink_all = df[df["开仓理由"] == "异常缩量"]
+
+# 提取剔除特定交易后的“异常缩量”交易
+shrink_excluded = shrink_all[
+    ~((shrink_all["开仓时间"] == excluded_trade["开仓时间"]) &
+      (shrink_all["平仓时间"] == excluded_trade["平仓时间"]))
+]
+
+# 计算“异常缩量”全量统计
+stats_shrink_all = compute_stats(shrink_all)
+stats_shrink_all.name = "异常缩量（全量）"
+
+# 计算“异常缩量”剔除特定交易后的统计
+stats_shrink_excluded = compute_stats(shrink_excluded)
+stats_shrink_excluded.name = "异常缩量（剔除特定交易）"
+
+# 将这两条统计结果转换为DataFrame
+summary_shrink_all = stats_shrink_all.to_frame().T
+summary_shrink_excluded = stats_shrink_excluded.to_frame().T
+
+# 合并这两条统计结果
+summary_shrink = pd.concat([summary_shrink_all, summary_shrink_excluded], ignore_index=True)
+
+# 更新summary_all，移除“异常缩量”的原始统计，并替换为新的统计
+summary_all = summary_all[summary_all["开仓理由"] != "异常缩量"]
+summary_all = pd.concat([summary_all, summary_shrink], ignore_index=True)
+
+# 准备详细的分类数据（不再需要，因为已合并到summary_all）
 
 # 使用ExcelWriter保存到Excel文件的不同Sheet
-output_excel = rf"D:\WPS云盘\WPS云盘\工作-麦高\专题研究\低频择时\trading_summary.xlsx"
+output_excel = rf"D:\WPS云盘\WPS云盘\工作-麦高\专题研究\低频择时\trading_summary1.xlsx"
 with pd.ExcelWriter(output_excel, engine='openpyxl') as writer:
     # 写入详细交易记录到Sheet1
     df.to_excel(writer, sheet_name='交易记录', index=False)
 
-    # 写入“异常缩量”总结到Sheet2
-    summary_shrink = compute_stats(shrink)
-    summary_shrink.name = "异常缩量"
-    summary_shrink_df = summary_shrink.to_frame().T
-    summary_shrink_df.to_excel(writer, sheet_name='异常缩量', index=False)
+    # 写入总结到Sheet2
+    summary_all.to_excel(writer, sheet_name='统计总结', index=False)
 
-    # 写入“异常放量”总结到Sheet3
-    summary_expand = compute_stats(expand)
-    summary_expand.name = "异常放量"
-    summary_expand_df = summary_expand.to_frame().T
-    summary_expand_df.to_excel(writer, sheet_name='异常放量', index=False)
+    # 另外，也可以单独写入“异常缩量”的详细统计
+    # 写入“异常缩量”总结到Sheet3
+    summary_shrink.to_excel(writer, sheet_name='异常缩量', index=False)
+
+    # 写入“异常放量”总结到Sheet4
+    summary_expand = summary_all[summary_all["开仓理由"] == "异常放量"]
+    summary_expand.to_excel(writer, sheet_name='异常放量', index=False)
 
 print(f"统计结果已保存到 {output_excel} 文件中。")
