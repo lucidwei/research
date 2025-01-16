@@ -14,8 +14,8 @@ def run_without_optimization():
     运行不包含参数优化的回测流程。
     功能与原始的 main() 函数相同。
     """
-    FREQ = 'D'
-    # FREQ = 'M'
+    # FREQ = 'D'
+    FREQ = 'M'
     INDEX_NAME = '上证指数'
     # INDEX_NAME = '沪深300'
 
@@ -30,11 +30,11 @@ def run_without_optimization():
 
     # 定义策略名称映射
     strategy_names = {}
-    strategy_names[f"{INDEX_NAME}_strategy_turnover"] = f'{INDEX_NAME}_strategy_turnover'
+    # strategy_names[f"{INDEX_NAME}_strategy_turnover"] = f'{INDEX_NAME}_strategy_turnover'
     # 为策略1-6命名
-    # for num in range(1, 7):
-    #     strategy_id = f"{index_name}_strategy{num}"
-    #     strategy_names[strategy_id] = strategy_id
+    for num in range(1, 7):
+        strategy_id = f"{INDEX_NAME}_strategy_{num}"
+        strategy_names[strategy_id] = strategy_id
 
     # 实例化 SignalGenerator 类，生成策略信号
     signal_generator = SignalGenerator(indices_data, macro_data)
@@ -47,8 +47,8 @@ def run_without_optimization():
     performance_evaluator = PerformanceEvaluator(df_with_signals, signal_columns)
     performance_evaluator.backtest_all_strategies(start_date='2001-12')
     performance_evaluator.calculate_metrics_all_strategies()
-    # performance_evaluator.calculate_annual_metrics_for('strategy6_signal')
-    performance_evaluator.calculate_annual_metrics_for('turnover_strategy')
+    performance_evaluator.calculate_annual_metrics_for('strategy_6_signal')
+    # performance_evaluator.calculate_annual_metrics_for('turnover_strategy')
 
     # 生成并保存Excel报告
     performance_evaluator.generate_excel_reports(output_file)

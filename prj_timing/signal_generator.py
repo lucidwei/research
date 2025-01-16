@@ -75,25 +75,6 @@ class SignalGenerator:
 
             self.indices_data[index_name][f'{strategy_name}_signal'] = signals
 
-        # for index_name in selected_indices:
-        #     for strategy_num in range(1, 6):
-        #         strategy_id = f"{index_name}_strategy{strategy_num}"
-        #         strategy_name = self.strategy_names.get(strategy_id, strategy_id)
-        #
-        #         if strategies_params and strategy_id in strategies_params:
-        #             params = strategies_params[strategy_id]
-        #             signals = self.generate_strategy_signals(index_name, strategy_num, **params)
-        #         else:
-        #             signals = self.generate_strategy_signals(index_name, strategy_num)
-        #
-        #         self.indices_data[index_name][f'{strategy_name}_signal'] = signals
-        #
-        #     # Generate strategy6 (aggregated strategy)
-        #     strategy6_id = f"{index_name}_strategy6"
-        #     strategy6_name = self.strategy_names.get(strategy6_id, strategy6_id)
-        #     strategy6_signals = self.generate_strategy6_signals(index_name)
-        #     self.indices_data[index_name][f'{strategy6_name}_signal'] = strategy6_signals
-
         return self.indices_data
 
     def generate_strategy_signals(self, index_name, strategy_num, **kwargs):
@@ -196,13 +177,13 @@ class SignalGenerator:
         df = self.indices_data[index_name]
 
         # 基本面改善信号：策略1、策略2、策略3中至少两个为1
-        basic_improved = df[[f'{index_name}_strategy{num}_signal' for num in range(1, 4)]].sum(axis=1) >= 2
+        basic_improved = df[[f'{index_name}_strategy_{num}_signal' for num in range(1, 4)]].sum(axis=1) >= 2
 
         # 技术面卖出信号：策略5信号为-1
-        technical_sell = df[f"{index_name}_strategy5_signal"] == -1
+        technical_sell = df[f"{index_name}_strategy_5_signal"] == -1
 
         # 技术面买入信号：策略4信号为1
-        technical_buy = df[f"{index_name}_strategy4_signal"] == 1
+        technical_buy = df[f"{index_name}_strategy_4_signal"] == 1
 
         # **模型规则**：
         # 条件1：基本面改善且无技术面卖出信号
