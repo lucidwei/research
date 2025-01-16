@@ -75,7 +75,7 @@ class SignalGenerator:
 
             self.indices_data[index_name][f'{strategy_name}_signal'] = signals
 
-        return self.indices_data
+        return self.indices_data[index_name]
 
     def generate_strategy_signals(self, index_name, strategy_num, **kwargs):
         """

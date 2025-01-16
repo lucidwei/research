@@ -14,12 +14,13 @@ class PerformanceEvaluator:
     def __init__(self, indices_data, signals_columns):
         """
         Initializes the PerformanceEvaluator.
+        本class不需知道标的，只对信号结果进行评价。只适用于单标的
 
         Parameters:
-            indices_data (pd.DataFrame): Dataframe containing price data and signals.
+            index_df_with_signal (pd.DataFrame): Dataframe containing price data and signals.
             signals_columns (list): List of signal column names to evaluate.
         """
-        self.indices_data = indices_data.copy()
+        self.index_df_with_signal = indices_data.copy()
         self.signals_columns = signals_columns
         self.strategies_results = {}
         self.metrics_df = None
@@ -38,8 +39,8 @@ class PerformanceEvaluator:
             # Extract index name from strategy_id
             index_name, strategy_num = strategy_id.rsplit('_strategy', 1)
             print(f'\n正在回测策略 {strategy_id} ({index_name})...')
-            signals = self.indices_data[index_name][strategy_signal]
-            cumulative_strategy, cumulative_index, strategy_returns = self.backtest_strategy(signals, self.indices_data[index_name], start_date)
+            signals = self.index_df_with_signal[strategy_signal]
+            cumulative_strategy, cumulative_index, strategy_returns = self.backtest_strategy(signals, start_date)
             # Normalize cumulative returns
             cumulative_strategy = cumulative_strategy / cumulative_strategy.iloc[0]
             cumulative_index = cumulative_index / cumulative_index.iloc[0]
@@ -58,7 +59,7 @@ class PerformanceEvaluator:
             print(f'指数 {index_name} 最终净值: {final_index:.2f}\n')
 
 
-    def backtest_strategy(self, signals, indices_data, start_date):
+    def backtest_strategy(self, signals, start_date):
         """
         Backtests a single strategy.
 
@@ -69,7 +70,7 @@ class PerformanceEvaluator:
         Returns:
             pd.Series, pd.Series, pd.Series: Cumulative strategy returns, cumulative index returns, monthly returns.
         """
-        df = indices_data.copy()
+        df = self.index_df_with_signal
         df['Index_Return'] = df['指数:最后一条'].pct_change()
 
         backtest_start = pd.to_datetime(start_date, format='%Y-%m')
@@ -168,7 +169,7 @@ class PerformanceEvaluator:
             raise ValueError(f"策略名称 '{strategy_name}' 不存在于回测结果中。")
 
         strategy_returns = self.strategies_results[strategy_name]['Strategy_Return']
-        index_returns = self.indices_data['Index_Return']
+        index_returns = self.index_df_with_signal['Index_Return']
 
         # 年度收益
         annual_strategy_returns = (1 + strategy_returns).resample('Y').prod() - 1
@@ -180,7 +181,7 @@ class PerformanceEvaluator:
         annual_excess_returns = annual_strategy_returns - annual_index_returns
 
         # 交易次数
-        trade_counts = self.calculate_trade_counts(self.indices_data[strategy_name])
+        trade_counts = self.calculate_trade_counts(self.index_df_with_signal[f'{strategy_name}_signal'])
 
         # 创建DataFrame
         self.stats_by_each_year[strategy_name] = pd.DataFrame({
@@ -354,7 +355,7 @@ class PerformanceEvaluator:
         })
         return trade_counts
 
-    def generate_excel_reports(self, output_file):
+    def generate_excel_reports(self, output_file, annual_metrics_strategy_name):
         """
         生成并保存两个Excel统计表到同一个文件的两个工作表中。
 
@@ -363,7 +364,7 @@ class PerformanceEvaluator:
         """
         with pd.ExcelWriter(output_file) as writer:
             # 表1：策略6每年的收益、上证指数收益、超额收益、每年交易多单次数和空单次数
-            self.stats_by_each_year['strategy6_signal'].to_excel(writer, sheet_name='策略6年度统计')
+            self.stats_by_each_year[annual_metrics_strategy_name].to_excel(writer, sheet_name=f'{annual_metrics_strategy_name}年度统计')
 
             # 表2：各评价指标，行名为指标，列名为策略名
             self.metrics_df.to_excel(writer, sheet_name='策略绩效指标')
