@@ -11,7 +11,7 @@ mpl.rcParams['font.sans-serif'] = ['STZhongsong']    # Ö¸¶¨Ä¬ÈÏ×ÖÌå£º½â¾öplot²»Ä
 mpl.rcParams['axes.unicode_minus'] = False           # ½â¾ö±£´æÍ¼ÏñÊÇ¸ººÅ'-'ÏÔÊ¾Îª·½¿éµÄÎÊÌâ
 
 class PerformanceEvaluator:
-    def __init__(self, indices_data, signals_columns):
+    def __init__(self, indices_data, signals_columns, frequency):
         """
         Initializes the PerformanceEvaluator.
         ±¾class²»ĞèÖªµÀ±êµÄ£¬Ö»¶ÔĞÅºÅ½á¹û½øĞĞÆÀ¼Û¡£Ö»ÊÊÓÃÓÚµ¥±êµÄ
@@ -19,12 +19,24 @@ class PerformanceEvaluator:
         Parameters:
             index_df_with_signal (pd.DataFrame): Dataframe containing price data and signals.
             signals_columns (list): List of signal column names to evaluate.
+            frequency (str): Data frequency ('D' for daily, 'M' for monthly).
         """
         self.index_df_with_signal = indices_data.copy()
         self.signals_columns = signals_columns
         self.strategies_results = {}
         self.metrics_df = None
         self.stats_by_each_year = {}
+        self.frequency = frequency.upper()
+
+        # Set annualization factor based on frequency
+        if self.frequency == 'D':
+            self.annual_factor = 252
+            self.time_delta = 'Y'  # For yearly metrics
+        elif self.frequency == 'M':
+            self.annual_factor = 12
+            self.time_delta = 'Y'
+        else:
+            raise ValueError("Unsupported frequency. Use 'D' for daily or 'M' for monthly.")
 
     def backtest_all_strategies(self, start_date='2001-12'):
         """
@@ -204,7 +216,7 @@ class PerformanceEvaluator:
             float: Average number of signals per year.
         """
         signals = strategy_returns != 0
-        annual_signals = signals.resample('Y').sum()
+        annual_signals = signals.resample(self.time_delta).sum()
         average_signals = annual_signals.mean()
         return average_signals
 
@@ -213,14 +225,16 @@ class PerformanceEvaluator:
         Calculates the annualized return.
 
         Parameters:
-            strategy_returns (pd.Series): Monthly strategy returns.
+            strategy_returns (pd.Series): Strategy returns.
 
         Returns:
             float: Annualized return.
         """
         cumulative_return = (1 + strategy_returns).prod()
-        n_months = strategy_returns.count()
-        annualized_return = cumulative_return ** (12 / n_months) - 1
+        n_periods = strategy_returns.count()
+        if n_periods == 0:
+            return np.nan
+        annualized_return = cumulative_return ** (self.annual_factor / n_periods) - 1
         return annualized_return
 
     def calculate_annualized_volatility(self, strategy_returns):
@@ -228,41 +242,44 @@ class PerformanceEvaluator:
         Calculates the annualized volatility.
 
         Parameters:
-            strategy_returns (pd.Series): Monthly strategy returns.
+            strategy_returns (pd.Series): Strategy returns.
 
         Returns:
             float: Annualized volatility.
         """
-        return strategy_returns.std() * np.sqrt(12)
+        return strategy_returns.std() * np.sqrt(self.annual_factor)
 
     def calculate_sharpe_ratio(self, strategy_returns, risk_free_rate=0):
         """
         Calculates the Sharpe Ratio.
 
         Parameters:
-            strategy_returns (pd.Series): Monthly strategy returns.
+            strategy_returns (pd.Series): Strategy returns.
             risk_free_rate (float): Risk-free rate.
 
         Returns:
             float: Sharpe Ratio.
         """
-        excess_returns = strategy_returns.mean() - risk_free_rate / 12
-        return (excess_returns / strategy_returns.std()) * np.sqrt(12)
+        excess_returns = strategy_returns.mean() - (risk_free_rate / self.annual_factor)
+        volatility = strategy_returns.std()
+        if volatility == 0:
+            return np.nan
+        return (excess_returns / volatility) * np.sqrt(self.annual_factor)
 
     def calculate_sortino_ratio(self, strategy_returns, target=0):
         """
         Calculates the Sortino Ratio.
 
         Parameters:
-            strategy_returns (pd.Series): Monthly strategy returns.
+            strategy_returns (pd.Series): Strategy returns.
             target (float): Target return.
 
         Returns:
             float: Sortino Ratio.
         """
         downside_returns = strategy_returns[strategy_returns < target]
-        downside_deviation = downside_returns.std() * np.sqrt(12)
-        expected_return = 12 * (strategy_returns.mean() - target)
+        downside_deviation = downside_returns.std() * np.sqrt(self.annual_factor)
+        expected_return = (strategy_returns.mean() - target) * self.annual_factor
         if downside_deviation == 0:
             return np.nan
         return expected_return / downside_deviation
@@ -347,8 +364,8 @@ class PerformanceEvaluator:
         signal_changes = signals.diff()
         long_trades = signal_changes == 1
         short_trades = signal_changes == -1
-        annual_long = long_trades.resample('Y').sum()
-        annual_short = short_trades.resample('Y').sum()
+        annual_long = long_trades.resample(self.time_delta).sum()
+        annual_short = short_trades.resample(self.time_delta).sum()
         trade_counts = pd.DataFrame({
             'Annual_Long_Trades': annual_long,
             'Annual_Short_Trades': annual_short
