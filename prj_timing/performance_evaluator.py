@@ -100,6 +100,15 @@ class PerformanceEvaluator:
         df['Cumulative_Index'] = (1 + df['Index_Return']).cumprod()
 
         self.index_df_with_signal = df
+        # 存储原始行数
+        original_rows = len(df)
+        # 检查 'Cumulative_Strategy', 'Cumulative_Index', 'Strategy_Return' 列是否有 NaN 值，并删除包含 NaN 的行
+        df_before_drop = df.copy()
+        df = df.dropna(subset=['Cumulative_Strategy', 'Cumulative_Index', 'Strategy_Return'])
+        # 找出被删除的行
+        # dropped_rows = df_before_drop[~df_before_drop.index.isin(df.index)]
+        # print(f"Deleted rows: {dropped_rows}")
+        print(f"Number of deleted rows: {original_rows - len(df)}")
         return df['Cumulative_Strategy'], df['Cumulative_Index'], df['Strategy_Return']
 
     def plot_results(self, cumulative_strategy, cumulative_index, strategy_id):
