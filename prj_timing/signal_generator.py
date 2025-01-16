@@ -294,9 +294,11 @@ class SignalGenerator:
         absolute_signal = [abs(item) for item in signal_series]
         df[f'{strategy_name}_signal'] = absolute_signal
 
-        # 如果需要在信号发生的次日开仓，则将信号向前移动一天
+        # 如果需要在信号发生的次日开仓，则在PerformanceEvaluator.backtest_strategy中已实现，不需额外操作。否则，将信号提前一天。
         if next_day_open:
-            df[f'{strategy_name}_signal'] = df[f'{strategy_name}_signal'].shift(1).fillna(0)
+            pass
+        else:
+            df[f'{strategy_name}_signal'] = df[f'{strategy_name}_signal'].shift(-1).fillna(0)
 
         # 更新 self.indices_data
         self.indices_data[index_name] = df

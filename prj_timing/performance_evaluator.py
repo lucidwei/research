@@ -99,6 +99,7 @@ class PerformanceEvaluator:
         df['Cumulative_Strategy'] = (1 + df['Strategy_Return']).cumprod()
         df['Cumulative_Index'] = (1 + df['Index_Return']).cumprod()
 
+        self.index_df_with_signal = df
         return df['Cumulative_Strategy'], df['Cumulative_Index'], df['Strategy_Return']
 
     def plot_results(self, cumulative_strategy, cumulative_index, strategy_id):
