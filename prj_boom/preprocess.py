@@ -35,12 +35,13 @@ def transform_cumulative_data(series: pd.Series, data_type: str, period: int = 1
 
         # 处理一月份累计值为空的情况
         for year, data in current_data.groupby(current_data.index.year):
-            if pd.isna(data.iloc[0]) and not pd.isna(data.iloc[1]):
-                feb_value = data.iloc[1]
-                jan_index = pd.to_datetime(f'{year}-01-01') + pd.offsets.MonthEnd()
-                feb_index = pd.to_datetime(f'{year}-02-01') + pd.offsets.MonthEnd()
-                current_data.loc[jan_index] = feb_value / 2
-                current_data.loc[feb_index] = feb_value / 2
+            if len(data) > 1:  # 检查数据长度是否大于 1
+                if pd.isna(data.iloc[0]) and not pd.isna(data.iloc[1]):
+                    feb_value = data.iloc[1]
+                    jan_index = pd.to_datetime(f'{year}-01-01') + pd.offsets.MonthEnd()
+                    feb_index = pd.to_datetime(f'{year}-02-01') + pd.offsets.MonthEnd()
+                    current_data.loc[jan_index] = feb_value / 2
+                    current_data.loc[feb_index] = feb_value / 2
 
         # 将结果重新采样回原始频率
         current_data = current_data.reindex(series.index)

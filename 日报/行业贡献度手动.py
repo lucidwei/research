@@ -20,10 +20,10 @@ draw_both_sides = True
 draw_lunch_break = False
 latest_n_days = 0  # >0,最近n个交易日; =0,今天; <0, 今天往前推几天
 # 用户定义的截断点，可以根据实际情况进行调整
-user_break_points分钟 = ['11:21', ]
+user_break_points分钟 = ['09:44', '13:15']
 # user_break_points分钟 = ['23-14:27', ]
 # 用户定义的截断点，对于日度数据，这些是日期
-user_break_points日K = ['2024-02-05', '2024-05-20',  '2024-12-12']
+user_break_points日K = ['2024-02-05', '2024-05-20', '2024-09-13', '2024-12-12']
 
 # 读取数据
 industry_data = pd.read_excel(rf'{file_path}/指数、行业走势.xlsx', header=3, index_col=0, sheet_name=sheet_name)
