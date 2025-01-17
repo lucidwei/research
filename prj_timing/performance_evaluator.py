@@ -212,7 +212,7 @@ class PerformanceEvaluator:
             # 创建年度统计的DataFrame
             self.stats_by_each_year[strategy_name] = pd.DataFrame({
                 '策略年度收益': annual_strategy_returns,
-                '上证指数年度收益': annual_index_returns,
+                '指数年度收益': annual_index_returns,
                 '超额收益': annual_excess_returns,
                 '持有多单次数': trade_counts['Annual_Long_Trades'],
                 '持有空单次数': trade_counts['Annual_Short_Trades']
