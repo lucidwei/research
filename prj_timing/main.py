@@ -48,7 +48,7 @@ def run_without_optimization():
     performance_evaluator.backtest_all_strategies(start_date='2001-12')
     performance_evaluator.calculate_metrics_all_strategies()
     # 针对个别策略进行按年份统计
-    annual_metrics_strategy_name = f'{INDEX_NAME}_strategy_6'
+    annual_metrics_strategy_name = [f'{INDEX_NAME}_strategy_6']
     # annual_metrics_strategy_name = f'{INDEX_NAME}_strategy_turnover'
     performance_evaluator.calculate_annual_metrics_for(annual_metrics_strategy_name)
 

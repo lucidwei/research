@@ -26,6 +26,7 @@ class PerformanceEvaluator:
         self.strategies_results = {}
         self.metrics_df = None
         self.stats_by_each_year = {}
+        self.detailed_data = {}
         self.frequency = frequency.upper()
 
         # Set annualization factor based on frequency
@@ -178,42 +179,86 @@ class PerformanceEvaluator:
         self.metrics_df = pd.DataFrame(metrics)
         self.metrics_df.set_index('策略名称', inplace=True)
 
-    def calculate_annual_metrics_for(self, strategy_name):
+    def calculate_annual_metrics_for(self, strategy_names):
         """
-        Calculates annual metrics for a specific strategy.
+        Calculates annual metrics for specific strategies and saves detailed data.
 
         Parameters:
-            strategy_name (str): The name of the strategy (e.g., 'strategy6').
-
+            strategy_names (list): List of strategy names (e.g., ['strategy6', 'strategy7']).
         """
-        # 获取策略的信号回报
-        if strategy_name not in self.strategies_results:
-            raise ValueError(f"策略名称 '{strategy_name}' 不存在于回测结果中。")
+        if not isinstance(strategy_names, list):
+            raise TypeError("strategy_names 应该是一个列表。")
 
-        strategy_returns = self.strategies_results[strategy_name]['Strategy_Return']
-        index_returns = self.index_df_with_signal['Index_Return']
+        for strategy_name in strategy_names:
+            # 获取策略的信号回报
+            if strategy_name not in self.strategies_results:
+                raise ValueError(f"策略名称 '{strategy_name}' 不存在于回测结果中。")
 
-        # 年度收益
-        annual_strategy_returns = (1 + strategy_returns).resample('Y').prod() - 1
+            strategy_returns = self.strategies_results[strategy_name]['Strategy_Return']
+            index_returns = self.index_df_with_signal['Index_Return']
 
-        # 年度指数收益
-        annual_index_returns = (1 + index_returns).resample('Y').prod() - 1
+            # 年度收益
+            annual_strategy_returns = (1 + strategy_returns).resample('Y').prod() - 1
 
-        # 超额收益
-        annual_excess_returns = annual_strategy_returns - annual_index_returns
+            # 年度指数收益
+            annual_index_returns = (1 + index_returns).resample('Y').prod() - 1
 
-        # 交易次数
-        trade_counts = self.calculate_trade_counts(self.index_df_with_signal[f'{strategy_name}_signal'])
+            # 超额收益
+            annual_excess_returns = annual_strategy_returns - annual_index_returns
 
-        # 创建DataFrame
-        self.stats_by_each_year[strategy_name] = pd.DataFrame({
-            '策略年度收益': annual_strategy_returns,
-            '上证指数年度收益': annual_index_returns,
-            '超额收益': annual_excess_returns,
-            '每年交易多单次数': trade_counts['Annual_Long_Trades'],
-            '每年交易空单次数': trade_counts['Annual_Short_Trades']
-        })
-        self.stats_by_each_year[strategy_name].index = self.stats_by_each_year[strategy_name].index.year  # 将索引设置为年份
+            # 交易次数
+            trade_counts = self.calculate_trade_counts(self.index_df_with_signal[f'{strategy_name}_signal'])
+
+            # 创建年度统计的DataFrame
+            self.stats_by_each_year[strategy_name] = pd.DataFrame({
+                '策略年度收益': annual_strategy_returns,
+                '上证指数年度收益': annual_index_returns,
+                '超额收益': annual_excess_returns,
+                '每年交易多单次数': trade_counts['Annual_Long_Trades'],
+                '每年交易空单次数': trade_counts['Annual_Short_Trades']
+            })
+            self.stats_by_each_year[strategy_name].index = self.stats_by_each_year[strategy_name].index.year  # 将索引设置为年份
+
+            # 提取用户指定的列
+            signal_column = f'{strategy_name}_signal'
+            if signal_column not in self.index_df_with_signal.columns:
+                raise ValueError(f"信号列 '{signal_column}' 不存在于 index_df_with_signal 中。")
+
+            detailed_df = self.index_df_with_signal[
+                [signal_column, 'Position', 'Strategy_Return', 'Cumulative_Strategy', 'Cumulative_Index']].copy()
+            detailed_df.rename(columns={
+                signal_column: 'Signal'
+            }, inplace=True)
+
+            self.detailed_data[strategy_name] = detailed_df
+
+    def generate_excel_reports(self, output_file, annual_metrics_strategy_names):
+        """
+        生成并保存年度统计和详细数据到同一个Excel文件的多个工作表中。
+
+        Parameters:
+            output_file (str): 输出Excel文件的路径。
+            annual_metrics_strategy_names (list): List of strategy names to generate annual metrics for.
+        """
+        with pd.ExcelWriter(output_file) as writer:
+            for strategy_name in annual_metrics_strategy_names:
+                # 保存年度统计数据
+                if strategy_name in self.stats_by_each_year:
+                    self.stats_by_each_year[strategy_name].to_excel(writer, sheet_name=f'{strategy_name}_年度统计')
+                else:
+                    print(f"策略 {strategy_name} 的年度统计数据不存在，跳过。")
+
+                # 保存详细数据
+                if strategy_name in self.detailed_data:
+                    self.detailed_data[strategy_name].to_excel(writer, sheet_name=f'{strategy_name}_详细数据')
+                else:
+                    print(f"策略 {strategy_name} 的详细数据不存在，跳过。")
+
+            # 表：各评价指标，行名为指标，列名为策略名
+            if self.metrics_df is not None:
+                self.metrics_df.to_excel(writer, sheet_name='策略绩效指标')
+            else:
+                print("策略绩效指标数据不存在，跳过。")
 
     def calculate_average_signal_count(self, strategy_returns):
         """
@@ -382,18 +427,3 @@ class PerformanceEvaluator:
         })
         return trade_counts
 
-    def generate_excel_reports(self, output_file, annual_metrics_strategy_name):
-        """
-        生成并保存两个Excel统计表到同一个文件的两个工作表中。
-
-        Parameters:
-            output_file (str): 输出Excel文件的路径。
-        """
-        with pd.ExcelWriter(output_file) as writer:
-            # 表1：策略6每年的收益、上证指数收益、超额收益、每年交易多单次数和空单次数
-            self.stats_by_each_year[annual_metrics_strategy_name].to_excel(writer, sheet_name=f'{annual_metrics_strategy_name}年度统计')
-
-            # 表2：各评价指标，行名为指标，列名为策略名
-            self.metrics_df.to_excel(writer, sheet_name='策略绩效指标')
-
-    # Additional methods for annual metrics can be added here as needed.
