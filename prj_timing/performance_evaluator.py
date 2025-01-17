@@ -164,7 +164,7 @@ class PerformanceEvaluator:
             kelly_fraction = self.calculate_kelly_fraction(win_rate, odds_ratio)
             average_signals = self.calculate_average_signal_count(strategy_returns)
 
-            metrics['策略名称'].append(strategy_id)
+            metrics['策略名称'].append(strategy_id[strategy_id.find('_') + 1:])
             metrics['年化收益率'].append(annualized_return)
             metrics['年化波动率'].append(annualized_volatility)
             metrics['夏普比率'].append(sharpe_ratio)
@@ -214,8 +214,8 @@ class PerformanceEvaluator:
                 '策略年度收益': annual_strategy_returns,
                 '上证指数年度收益': annual_index_returns,
                 '超额收益': annual_excess_returns,
-                '每年交易多单次数': trade_counts['Annual_Long_Trades'],
-                '每年交易空单次数': trade_counts['Annual_Short_Trades']
+                '持有多单次数': trade_counts['Annual_Long_Trades'],
+                '持有空单次数': trade_counts['Annual_Short_Trades']
             })
             self.stats_by_each_year[strategy_name].index = self.stats_by_each_year[strategy_name].index.year  # 将索引设置为年份
 
@@ -423,9 +423,11 @@ class PerformanceEvaluator:
         Returns:
             pd.DataFrame: Trade counts per year.
         """
-        signal_changes = signals.diff()
-        long_trades = signal_changes == 1
-        short_trades = signal_changes == -1
+        # signal_changes = signals.diff()
+        # long_trades = signal_changes == 1
+        # short_trades = signal_changes == -1
+        long_trades = signals == 1
+        short_trades = signals == -1
         annual_long = long_trades.resample(self.time_delta).sum()
         annual_short = short_trades.resample(self.time_delta).sum()
         trade_counts = pd.DataFrame({
