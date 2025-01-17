@@ -186,7 +186,8 @@ class SignalGenerator:
         elif strategy_num == 7:
             # 基本面改善信号：策略1、策略2、策略3中至少两个为1
             basic_improved = df[[f'{index_name}_strategy_{num}_signal' for num in range(1, 4)]].sum(axis=1) >= 2
-            signals = pd.Series(basic_improved, index=df.index)
+            signals = np.where(basic_improved, 1, 0)
+            signals = pd.Series(signals, index=df.index)
 
         return signals
 

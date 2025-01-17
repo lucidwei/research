@@ -227,8 +227,15 @@ class PerformanceEvaluator:
             detailed_df = self.index_df_with_signal[
                 [signal_column, 'Position', 'Strategy_Return', 'Cumulative_Strategy', 'Cumulative_Index']].copy()
             detailed_df.rename(columns={
-                signal_column: 'Signal'
+                signal_column: '本策略Signal'
             }, inplace=True)
+
+            # 提取用户指定的列及增量记录
+            signal_columns = [col for col in self.index_df_with_signal.columns if col.endswith('_signal')]
+            for signal_column in signal_columns:
+                # 提取第一个'_'之后的字符串作为列名
+                new_col_name = signal_column.split('_', 1)[1]
+                detailed_df[f'{new_col_name}'] = self.index_df_with_signal[signal_column]
 
             self.detailed_data[strategy_name] = detailed_df
 

@@ -21,7 +21,7 @@ def run_without_optimization():
 
     # 指定Excel文件路径和输出路径
     file_path = r"D:\WPS云盘\WPS云盘\工作-麦高\专题研究\低频择时\招商择时快速复现.xlsx"
-    output_file = r"D:\WPS云盘\WPS云盘\工作-麦高\专题研究\低频择时\策略回测结果_沪深300.xlsx"
+    output_file = rf"D:\WPS云盘\WPS云盘\工作-麦高\专题研究\低频择时\策略回测结果_{INDEX_NAME}_{FREQ}.xlsx"
 
     # 实例化 DataHandler 类，加载并预处理数据（默认按月频处理）
     data_handler = DataHandler(file_path=file_path, frequency=FREQ)
