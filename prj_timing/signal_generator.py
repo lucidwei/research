@@ -28,37 +28,32 @@ class SignalGenerator:
 
         Parameters:
             strategies_params (dict): Dictionary containing strategy parameters for optimization.
-            strategy_names (dict): Dictionary mapping strategy numbers to strategy names.
+            strategy_names (list):  strategy names.
         """
         if strategy_names:
             self.strategy_names = strategy_names
         else:
-            # Default strategy names (for strategies 1-6 per index)
-            self.strategy_names = {}
-            for index_name in self.indices_data.keys():
-                for num in range(1, 7):
-                    strategy_id = f"{index_name}_strategy{num}"
-                    self.strategy_names[strategy_id] = strategy_id
+            raise Exception('Must 指定策略名才能执行')
 
         if selected_indices is None:
             # Default to all indices
             selected_indices = list(self.indices_data.keys())
 
-        for strategy_id, strategy_name in self.strategy_names.items():
-            # 解析 strategy_id，例如 '上证指数_strategy_turnover'
-            if '_strategy_' not in strategy_id:
-                print(f"策略标识符 '{strategy_id}' 格式不正确。应包含 '_strategy_'。跳过此策略。")
+        for strategy_name in self.strategy_names:
+            # 解析 strategy_name，例如 '上证指数_strategy_turnover'
+            if '_strategy_' not in strategy_name:
+                print(f"策略标识符 '{strategy_name}' 格式不正确。应包含 '_strategy_'。跳过此策略。")
                 continue  # 跳过格式不正确的策略
 
-            index_name, strategy_type = strategy_id.split('_strategy_', 1)
+            index_name, strategy_type = strategy_name.split('_strategy_', 1)
 
             if index_name not in selected_indices:
-                print(f"指数 '{index_name}' 未在 selected_indices 中。跳过策略 '{strategy_id}'。")
+                print(f"指数 '{index_name}' 未在 selected_indices 中。跳过策略 '{strategy_name}'。")
                 continue  # 跳过未选择的指数
 
             if 'turnover' in strategy_type.lower():
                 # 如果策略类型包含 'turnover'，调用 generate_turnover_strategy_signals
-                params = strategies_params.get(strategy_id, {}) if strategies_params else {}
+                params = strategies_params.get(strategy_name, {}) if strategies_params else {}
                 signals = self.generate_turnover_strategy_signals(
                     index_name=index_name,
                     holding_days=params.get('holding_days', 10),
@@ -67,17 +62,17 @@ class SignalGenerator:
                 )
 
             elif strategy_type.isdigit():
-                signals = self.generate_strategy_signals(index_name, int(strategy_type))
+                signals = self.generate_strategy_zhaoshang_signals(index_name, int(strategy_type))
 
             else:
-                print(f"策略类型标识符 '{strategy_type}' 不支持。跳过此策略({strategy_id})。")
+                print(f"策略类型标识符 '{strategy_type}' 不支持。跳过此策略({strategy_name})。")
                 continue  # 跳过格式不正确的策略
 
             self.indices_data[index_name][f'{strategy_name}_signal'] = signals
 
         return self.indices_data[index_name]
 
-    def generate_strategy_signals(self, index_name, strategy_num, **kwargs):
+    def generate_strategy_zhaoshang_signals(self, index_name, strategy_num, **kwargs):
         """
         Generates buy/sell signals for a specific strategy.
 
@@ -162,47 +157,38 @@ class SignalGenerator:
             signals = pd.Series(signals, index=df.index)
 
         elif strategy_num == 6:
-            signals = self.generate_strategy6_signals(index_name)
+            # 基本面改善信号：策略1、策略2、策略3中至少两个为1
+            basic_improved = df[[f'{index_name}_strategy_{num}_signal' for num in range(1, 4)]].sum(axis=1) >= 2
+
+            # 技术面卖出信号：策略5信号为-1
+            technical_sell = df[f"{index_name}_strategy_5_signal"] == -1
+
+            # 技术面买入信号：策略4信号为1
+            technical_buy = df[f"{index_name}_strategy_4_signal"] == 1
+
+            # **模型规则**：
+            # 条件1：基本面改善且无技术面卖出信号
+            condition1 = basic_improved & (~technical_sell)
+
+            # 条件2：技术面买入信号
+            condition2 = technical_buy
+
+            # 最终信号：
+            # 满足条件1或条件2则买入（1）
+            # 满足技术面卖出信号则卖出（-1）
+            # 否则保持持仓（0）
+            signals = np.where(
+                condition1 | condition2, 1,
+                np.where(technical_sell, -1, 0)
+            )
+            signals = pd.Series(signals, index=df.index)
+
+        elif strategy_num == 7:
+            # 基本面改善信号：策略1、策略2、策略3中至少两个为1
+            basic_improved = df[[f'{index_name}_strategy_{num}_signal' for num in range(1, 4)]].sum(axis=1) >= 2
+            signals = pd.Series(basic_improved, index=df.index)
 
         return signals
-
-    def generate_strategy6_signals(self, index_name):
-        """
-        Generates signals for Strategy 6 based on Strategies 1-5.
-
-        Returns:
-            pd.Series: Strategy 6 signals.
-        """
-        # 假设 strategy_names 已包含所有策略的名称
-        df = self.indices_data[index_name]
-
-        # 基本面改善信号：策略1、策略2、策略3中至少两个为1
-        basic_improved = df[[f'{index_name}_strategy_{num}_signal' for num in range(1, 4)]].sum(axis=1) >= 2
-
-        # 技术面卖出信号：策略5信号为-1
-        technical_sell = df[f"{index_name}_strategy_5_signal"] == -1
-
-        # 技术面买入信号：策略4信号为1
-        technical_buy = df[f"{index_name}_strategy_4_signal"] == 1
-
-        # **模型规则**：
-        # 条件1：基本面改善且无技术面卖出信号
-        condition1 = basic_improved & (~technical_sell)
-
-        # 条件2：技术面买入信号
-        condition2 = technical_buy
-
-        # 最终信号：
-        # 满足条件1或条件2则买入（1）
-        # 满足技术面卖出信号则卖出（-1）
-        # 否则保持持仓（0）
-        signals = np.where(
-            condition1 | condition2, 1,
-            np.where(technical_sell, -1, 0)
-        )
-
-        return pd.Series(signals, index=df.index)
-
 
     def generate_turnover_strategy_signals(self, index_name, holding_days=10, percentile_window_years=4,
                                            next_day_open=True):
@@ -344,7 +330,7 @@ class SignalGenerator:
 
         for params in param_combinations:
             # Generate signals with current parameters
-            signals = self.generate_strategy_signals(strategy_num, **params)
+            signals = self.generate_strategy_zhaoshang_signals(strategy_num, **params)
 
             # Temporarily store signals in dataframe
             temp_df = self.indices_data.copy()

@@ -28,27 +28,31 @@ def run_without_optimization():
     macro_data = data_handler.get_macro_data()  # 分离的宏观数据
     indices_data = data_handler.get_indices_data()  # 分离的指数数据
 
-    # 定义策略名称映射
-    strategy_names = {}
-    # strategy_names[f"{INDEX_NAME}_strategy_turnover"] = f'{INDEX_NAME}_strategy_turnover'
-    # 为策略1-6命名
-    for num in range(1, 7):
-        strategy_id = f"{INDEX_NAME}_strategy_{num}"
-        strategy_names[strategy_id] = strategy_id
+    # 定义策略名称
+    strategy_names = [
+        f"{INDEX_NAME}_strategy_1",
+        f"{INDEX_NAME}_strategy_2",
+        f"{INDEX_NAME}_strategy_3",
+        f"{INDEX_NAME}_strategy_4",
+        f"{INDEX_NAME}_strategy_5",
+        f"{INDEX_NAME}_strategy_6",
+        f"{INDEX_NAME}_strategy_7",
+        # f"{INDEX_NAME}_strategy_turnover",
+    ]
 
     # 实例化 SignalGenerator 类，生成策略信号
     signal_generator = SignalGenerator(indices_data, macro_data)
     df_with_signals = signal_generator.generate_signals_for_all_strategies(strategy_names=strategy_names)
 
     # 获取所有策略的信号列名
-    signal_columns = [f"{name}_signal" for name in strategy_names.values()]
+    signal_columns = [f"{name}_signal" for name in strategy_names]
 
     # 实例化 PerformanceEvaluator 类，进行回测和绩效评估
     performance_evaluator = PerformanceEvaluator(df_with_signals, signal_columns, FREQ)
     performance_evaluator.backtest_all_strategies(start_date='2001-12')
     performance_evaluator.calculate_metrics_all_strategies()
     # 针对个别策略进行按年份统计
-    annual_metrics_strategy_name = [f'{INDEX_NAME}_strategy_6']
+    annual_metrics_strategy_name = [f'{INDEX_NAME}_strategy_6', f'{INDEX_NAME}_strategy_7', ]
     # annual_metrics_strategy_name = f'{INDEX_NAME}_strategy_turnover'
     performance_evaluator.calculate_annual_metrics_for(annual_metrics_strategy_name)
 
@@ -113,7 +117,7 @@ def run_with_optimization():
         print(f"策略{strategy_num}的最佳绩效指标（例如夏普比率）: {best_metric:.4f}")
 
         # 使用最佳参数生成信号
-        signal_generator.generate_strategy_signals(strategy_num, **best_params)
+        signal_generator.generate_strategy_zhaoshang_signals(strategy_num, **best_params)
         # 如策略6依赖于策略1的信号，确保策略6信号重新生成
         if strategy_num in [1, 2, 3, 4, 5]:
             signal_generator.generate_strategy6_signals()

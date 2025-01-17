@@ -28,7 +28,7 @@ def grid_search(signal_generator, strategy_num, param_grid, performance_evaluato
 
     for params in param_combinations:
         # Generate signals with current parameters
-        signals = signal_generator.generate_strategy_signals(strategy_num, **params)
+        signals = signal_generator.generate_strategy_zhaoshang_signals(strategy_num, **params)
         temp_df = signal_generator.df.copy()
         temp_df[f'strategy{strategy_num}_signal'] = signals
 
