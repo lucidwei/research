@@ -9,7 +9,9 @@ import pandas as pd
 import warnings
 warnings.filterwarnings("ignore")
 
-# 结论：使用凯利仓位会优化净值曲线形状/夏普比率，但在正ev下，终值仍然是高仓位的更高。
+# 结论：使用凯利仓位会优化净值曲线形状/夏普比率。
+# 在正ev下，终值仍然是高仓位的更高，这个结论是不对的。
+# 某些情况下（尚不清楚具体条件，例子是2 1 0.5），凯利仓位会显著优化终值。
 
 
 def calculate_zero_cost_trials(win_prob, position_ratio, win_odds, loss_odds, total_trials, simulation_times):
@@ -40,14 +42,18 @@ def calculate_zero_cost_trials(win_prob, position_ratio, win_odds, loss_odds, to
 
 
 # 参数设置
-win_odds = 3        # 获胜时的赔率
+# win_odds = 3        # 获胜时的赔率
+# loss_odds = 1       # 失败时的赔率
+# win_prob = 0.3     # 胜率（可以调整）
+win_odds = 2        # 获胜时的赔率
 loss_odds = 1       # 失败时的赔率
-win_prob = 0.3     # 胜率（可以调整）
+win_prob = 0.5     # 胜率（可以调整）
+
 total_trials = 100  # 总试验次数
 simulation_times = 200  # 模拟次数
 # 仓位比例
-# position_ratio = 0.25
-position_ratio = win_prob - (1 - win_prob) * (loss_odds / win_odds)
+position_ratio = 0.75
+# position_ratio = win_prob - (1 - win_prob) * (loss_odds / win_odds)
 print(f'position_ratio={position_ratio}')
 ev = win_prob * win_odds + (1 - win_prob) * (-loss_odds)
 print(f'ev={ev}')
