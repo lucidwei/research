@@ -11,7 +11,7 @@ mpl.rcParams['font.sans-serif'] = ['STZhongsong']    # Ö¸¶¨Ä¬ÈÏ×ÖÌå£º½â¾öplot²»Ä
 mpl.rcParams['axes.unicode_minus'] = False           # ½â¾ö±£´æÍ¼ÏñÊÇ¸ººÅ'-'ÏÔÊ¾Îª·½¿éµÄÎÊÌâ
 
 class PerformanceEvaluator:
-    def __init__(self, indices_data, signals_columns, frequency):
+    def __init__(self, indices_data, signals_columns, frequency='D'):
         """
         Initializes the PerformanceEvaluator.
         ±¾class²»ĞèÖªµÀ±êµÄ£¬Ö»¶ÔĞÅºÅ½á¹û½øĞĞÆÀ¼Û¡£Ö»ÊÊÓÃÓÚµ¥±êµÄ
@@ -50,7 +50,7 @@ class PerformanceEvaluator:
         for strategy_signal in self.signals_columns:
             strategy_id = strategy_signal.replace('_signal', '')
             # Extract index name from strategy_id
-            index_name, strategy_num = strategy_id.rsplit('_strategy', 1)
+            index_name, strategy_num = strategy_id.rsplit('_', 1)
             print(f'\nÕıÔÚ»Ø²â²ßÂÔ {strategy_id} ({index_name})...')
             signals = self.index_df_with_signal[strategy_signal]
             cumulative_strategy, cumulative_index, strategy_returns = self.backtest_strategy(signals, start_date)
