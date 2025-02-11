@@ -78,13 +78,13 @@ class SignalGenerator:
         # 定义策略类型映射：策略类型到生成函数的映射字典
         strategy_mapping = {
             "turnover": self.generate_turnover_strategy_signals,
-            "macro_loan": self._macro_signal_loan,
-            "macro_m1ppi": self._macro_signal_m1ppi,
-            "macro_usd": self._macro_signal_usd,
-            "tech_long": self._macro_signal_tech_long,
-            "tech_sell": self._macro_signal_tech_sell,
-            "composite_basic_tech": self.generate_composite_basic_tech,
-            "composite_basic": self.generate_composite_basic
+            "macro_loan_monthly": self._macro_signal_loan_monthly,
+            "macro_m1ppi_monthly": self._macro_signal_m1ppi_monthly,
+            "macro_usd_monthly": self._macro_signal_usd_monthly,
+            "tech_long_monthly": self._macro_signal_tech_long_monthly,
+            "tech_sell_monthly": self._macro_signal_tech_sell_monthly,
+            "composite_basic_tech_monthly": self.generate_composite_basic_tech_monthly,
+            "composite_basic_monthly": self.generate_composite_basic_monthly
         }
 
         # 将 composite 策略分为两组：非 composite 和 composite 策略
@@ -146,7 +146,7 @@ class SignalGenerator:
         # 返回其中一个指标的合并结果（假设只有一个指标或指定了其中一个）
         return list(merged_dfs.values())[-1]
 
-    def _macro_signal_loan(self, index_name, shift=True):
+    def _macro_signal_loan_monthly(self, index_name, shift=True):
         """
         生成基于中长期贷款同比MA2的信号。
 
@@ -163,7 +163,7 @@ class SignalGenerator:
             signal = signal.shift(1)
         return signal
 
-    def _macro_signal_m1ppi(self, index_name, shift=True):
+    def _macro_signal_m1ppi_monthly(self, index_name, shift=True):
         """
         生成基于 M1同比MA3 与 M1-PPI同比MA3 的信号。
 
@@ -177,7 +177,7 @@ class SignalGenerator:
             signal = signal.shift(1)
         return signal
 
-    def _macro_signal_usd(self, index_name, shift=False):
+    def _macro_signal_usd_monthly(self, index_name, shift=False):
         """
         生成基于美元指数MA2下降的信号。
 
@@ -192,7 +192,7 @@ class SignalGenerator:
             signal = signal.shift(1)
         return signal
 
-    def _macro_signal_tech_long(self, index_name, window=60, percentile_threshold=0.5):
+    def _macro_signal_tech_long_monthly(self, index_name, window=60, percentile_threshold=0.5):
         """
         生成技术指标买入信号（买入时机）。
 
@@ -207,7 +207,7 @@ class SignalGenerator:
         self.monthly_signals_dict['tech_buy'] = signal
         return signal
 
-    def _macro_signal_tech_sell(self, index_name, window=60, percentile_threshold=0.5):
+    def _macro_signal_tech_sell_monthly(self, index_name, window=60, percentile_threshold=0.5):
         """
         生成技术指标卖出信号（卖出时机）。
 
@@ -243,7 +243,7 @@ class SignalGenerator:
             raise ValueError(f"策略名称 '{strategy_full_name}' 格式不正确，应为 '<指数名称>_<策略类型>' 格式。")
         return parts[0], parts[1].lower()
 
-    def generate_composite_basic_tech(self, index_name, **kwargs):
+    def generate_composite_basic_tech_monthly(self, index_name, **kwargs):
         """
         生成组合信号：综合基本面改善信号与技术信号。
 
@@ -262,11 +262,11 @@ class SignalGenerator:
                 basic_signals.append(df[col])
             else:
                 if sig_type == "macro_loan":
-                    basic_signals.append(self._macro_signal_loan(index_name))
+                    basic_signals.append(self._macro_signal_loan_monthly(index_name))
                 elif sig_type == "macro_m1ppi":
-                    basic_signals.append(self._macro_signal_m1ppi(index_name))
+                    basic_signals.append(self._macro_signal_m1ppi_monthly(index_name))
                 elif sig_type == "macro_usd":
-                    basic_signals.append(self._macro_signal_usd(index_name))
+                    basic_signals.append(self._macro_signal_usd_monthly(index_name))
         if basic_signals:
             basic_improved = (pd.concat(basic_signals, axis=1).sum(axis=1) >= 2).astype(int)
         else:
@@ -283,7 +283,7 @@ class SignalGenerator:
         combined[(tech_sell == -1) & ~(tech_buy == 1)] = -1
         return combined
 
-    def generate_composite_basic(self, index_name, **kwargs):
+    def generate_composite_basic_monthly(self, index_name, **kwargs):
         """
         生成仅基于基本面改善的组合信号。
 
@@ -301,11 +301,11 @@ class SignalGenerator:
                 basic_signals.append(df[col])
             else:
                 if sig_type == "macro_loan":
-                    basic_signals.append(self._macro_signal_loan(index_name))
+                    basic_signals.append(self._macro_signal_loan_monthly(index_name))
                 elif sig_type == "macro_m1ppi":
-                    basic_signals.append(self._macro_signal_m1ppi(index_name))
+                    basic_signals.append(self._macro_signal_m1ppi_monthly(index_name))
                 elif sig_type == "macro_usd":
-                    basic_signals.append(self._macro_signal_usd(index_name))
+                    basic_signals.append(self._macro_signal_usd_monthly(index_name))
         if basic_signals:
             basic_improved = (pd.concat(basic_signals, axis=1).sum(axis=1) >= 2).astype(int)
             return basic_improved
