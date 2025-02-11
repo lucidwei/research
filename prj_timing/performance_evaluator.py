@@ -40,12 +40,10 @@ class PerformanceEvaluator:
         # 遍历月频信号，列名中统一附加 "_monthly_signal"
         for index_name, df in self.df_signals_monthly.items():
             for col in df.columns:
-                self.signals_columns.append(col)
                 self.is_monthly_signal[col] = True
         # 遍历日频信号，列名中统一附加 "_daily_signal"
         for index_name, df in self.df_signals_daily.items():
             for col in df.columns:
-                self.signals_columns.append(col)
                 self.is_monthly_signal[col] = False
 
         # 其它初始化设置保持不变
@@ -89,7 +87,7 @@ class PerformanceEvaluator:
                 self.strategies_results[base_name] = result
                 final_strategy = result['Daily_Cumulative_Strategy'].iloc[-1]
                 print(f"策略 {base_name} 最终净值: {final_strategy:.2f}")
-                self.plot_results(result['Daily_Cumulative_Strategy'], result['Daily_Cumulative_Index'], base_name)
+                # self.plot_results(result['Daily_Cumulative_Strategy'], result['Daily_Cumulative_Index'], base_name)
 
         # 处理日频信号回测
         for index_name, df_signals in self.df_signals_daily.items():
@@ -112,6 +110,7 @@ class PerformanceEvaluator:
             2. 调用 convert_monthly_signals_to_daily_positions 将月频信号映射为日频仓位，再计算日频净值。
         对日频策略：
             直接在日度数据上计算策略净值。
+        修改点：增加返回结果中的 'Position' 字段，用于保存每日仓位信息（增量信息）。
         """
         df_daily = self.daily_data_dict[index_name].copy()
         df_monthly = self.monthly_data_dict[index_name].copy()
@@ -123,6 +122,7 @@ class PerformanceEvaluator:
             # 月频策略处理
             monthly_net_value, monthly_strategy_returns = self._backtest_monthly(df_monthly, signal_series)
             daily_positions = self.convert_monthly_signals_to_daily_positions(df_daily, signal_series)
+            # 注意：仓位设置后要向后移一日，保证信号滞后生效
             df_daily['Position'] = daily_positions.shift(1).fillna(0)
             df_daily['Index_Return'] = df_daily['指数:最后一条'].pct_change()
             df_daily['Strategy_Return'] = df_daily['Position'] * df_daily['Index_Return']
@@ -135,7 +135,8 @@ class PerformanceEvaluator:
                 'Daily_Cumulative_Index': df_daily['Cumulative_Index'],
                 'Monthly_Strategy_Return': monthly_strategy_returns,
                 'Monthly_Cumulative_Strategy': monthly_net_value,
-                'is_monthly': True
+                'is_monthly': True,
+                'Position': df_daily['Position']  # 保存增量信息（仓位）
             }
         else:
             # 日频策略处理：直接使用日频信号进行回测
@@ -149,8 +150,10 @@ class PerformanceEvaluator:
                 'Daily_Strategy_Return': df_daily['Strategy_Return'],
                 'Daily_Cumulative_Strategy': df_daily['Cumulative_Strategy'],
                 'Daily_Cumulative_Index': df_daily['Cumulative_Index'],
-                'is_monthly': False
+                'is_monthly': False,
+                'Position': df_daily['Position']  # 保存增量信息（仓位）
             }
+
 
     def _backtest_monthly(self, df_monthly, monthly_signal_series):
         """
@@ -225,6 +228,117 @@ class PerformanceEvaluator:
             daily_positions.loc[mask] = sig_val
 
         return daily_positions
+
+    def load_kelly_fractions(self):
+        """
+        从 self.metrics_df 中读取各策略 Kelly 仓位信息
+        返回一个字典，键为策略标识，值为对应的 Kelly 仓位。
+        """
+        if self.metrics_df is None:
+            return {}
+        kelly_dict = self.metrics_df['Kelly仓位'].to_dict()
+        return kelly_dict
+
+    def compose_strategies_by_kelly(self, method='sum_to_one'):
+        """
+        根据各策略的 Kelly 仓位以及当日是否持仓（通过 Daily_Strategy_Return 判断）
+        组合成一个总策略：
+          - 当日若该策略的 Daily_Strategy_Return 为 0，则认为无持仓，其 Kelly 仓位不计入当日加权。
+          - 对于有持仓的策略，其贡献收益为 Daily_Strategy_Return 乘以 Kelly 仓位，
+            当日有效 Kelly 仓位为 Kelly 仓位（即常量）乘以持仓指示器（非零 -> 1，否则 0）。
+          - 日综合收益为所有策略贡献收益总和除以当日所有活跃策略 Kelly 仓位之和，
+            若当日无活跃策略，则综合收益记为 0。
+
+        特别说明：
+          对于策略 '上证指数_tech_sell' 和 '上证指数_composite_basic_tech'（做空策略），
+          其有效仓位将取负值，从而在总仓位中“减去”它们的仓位（总仓位可以为负，代表做空）。
+
+        参数:
+            method:
+                'sum_to_one'：使用当日所有活跃策略的 Kelly 仓位求和归一化计算综合收益；
+                'avg_to_one'：扩展方案（目前示例中与 sum_to_one 用法一致）。
+
+        返回:
+            pd.DataFrame: 包含综合策略日收益、累计净值、各策略当日贡献收益及其有效 Kelly 仓位，
+                          以及每日综合仓位（Composite_Position）。
+        """
+        if not self.strategies_results:
+            print("无策略回测结果。")
+            return None
+
+        # 以第一个策略的 Daily_Strategy_Return 索引作为基础日期序列
+        base_index = list(self.strategies_results.values())[0]['Daily_Strategy_Return'].index
+        combined_df = pd.DataFrame(index=base_index)
+        kelly_dict = self.load_kelly_fractions()
+
+        composite_raw = pd.Series(0.0, index=base_index)  # 用于累计各策略贡献的日收益
+        active_kelly_sum = pd.Series(0.0, index=base_index)  # 当日活跃策略的 Kelly 仓位加总
+
+        # 遍历每个策略，判断当日是否持仓（通过 Daily_Strategy_Return 是否为 0 判断）
+        for strategy_id, results in self.strategies_results.items():
+            # 根据策略名称去除前缀，例如 '上证指数_tech_sell' 得到 "tech_sell"
+            strategy_id_ = "_".join(strategy_id.split("_")[1:])
+            if strategy_id_ not in kelly_dict:
+                print(f"策略 {strategy_id_} 不在 Kelly 数据中，跳过。")
+                continue
+            fraction = kelly_dict[strategy_id_]
+            # 获取该策略的日收益序列
+            daily_return = results['Daily_Strategy_Return'].reindex(base_index).fillna(0)
+
+            effective_fraction = fraction * results['Position'].reindex(base_index).fillna(0)
+
+            active_kelly_sum += effective_fraction
+            composite_raw += daily_return * effective_fraction
+
+            # 保存各策略的贡献收益和每日有效仓位到结果 DataFrame 中
+            combined_df[f'{strategy_id_}_ret'] = daily_return * effective_fraction
+            combined_df[f'{strategy_id_}_position'] = effective_fraction
+
+        # 以第一个策略的基准指数累计净值作为对比基准
+        first_result = list(self.strategies_results.values())[0]
+        combined_df['Daily_Cumulative_Index'] = first_result['Daily_Cumulative_Index'].reindex(base_index).fillna(
+            method='ffill')
+
+        # 当日若无活跃策略（active_kelly_sum 为 0），则综合收益记为 0
+        if method == 'sum_to_one':
+            composite_daily_return = composite_raw.divide(active_kelly_sum.max()).fillna(0)
+            active_kelly_sum = active_kelly_sum.divide(active_kelly_sum.max()).fillna(0)
+        elif method == 'avg_to_one':
+            composite_daily_return = composite_raw.divide(active_kelly_sum.mean()).fillna(0)
+        else:
+            composite_daily_return = composite_raw.divide(active_kelly_sum.replace(0, np.nan)).fillna(0)
+
+        composite_cum = (1 + composite_daily_return).cumprod()
+        combined_df['Composite_Return'] = composite_daily_return
+        combined_df['Composite_Cum'] = composite_cum
+
+        # 保存当日所有活跃策略 Kelly 仓位之和为综合仓位
+        combined_df['Composite_Position'] = active_kelly_sum
+
+        # 利用已有指标计算函数（假设这些函数已在类中实现）计算综合策略业绩指标，年化因子对日频数据取 252
+        annual_return = self.calculate_annualized_return(composite_daily_return, annual_factor=252)
+        annual_vol = self.calculate_annualized_volatility(composite_daily_return, annual_factor=252)
+        sharpe = self.calculate_sharpe_ratio(composite_daily_return, risk_free_rate=0, annual_factor=252)
+        sortino = self.calculate_sortino_ratio(composite_daily_return, target=0, annual_factor=252)
+        max_dd = self.calculate_max_drawdown(composite_cum)
+        win_rate = self.calculate_win_rate(composite_daily_return)
+        odds = self.calculate_odds_ratio(composite_daily_return)
+
+        metrics = {
+            '年化收益率': annual_return,
+            '年化波动率': annual_vol,
+            '夏普比率': sharpe,
+            '索提诺比率': sortino,
+            '最大回撤': max_dd,
+            '胜率': win_rate,
+            '赔率': odds,
+            'Composite_Position_Today': active_kelly_sum.iloc[-1]
+        }
+        print("综合策略业绩指标:")
+        for key, value in metrics.items():
+            print(f"{key}: {value}")
+
+        return combined_df
 
     def calculate_metrics_all_strategies(self):
         """
@@ -356,16 +470,6 @@ class PerformanceEvaluator:
                 self.metrics_df.to_excel(writer, sheet_name='策略绩效指标')
             else:
                 print("策略绩效指标数据不存在，跳过。")
-
-            # # 如果存在月度回测结果，则保存到额外工作表
-            # for strategy_name, result in self.strategies_results.items():
-            #     if result.get('is_monthly', False):
-            #         monthly_df = pd.DataFrame({
-            #             'Monthly_Cumulative_Strategy': result['Monthly_Cumulative_Strategy'],
-            #             'Monthly_Strategy_Return': result['Monthly_Strategy_Return']
-            #         })
-            #         monthly_df.index.name = 'Date'
-            #         monthly_df.to_excel(writer, sheet_name=f'{strategy_name}_月度回测')
 
     def calculate_average_signal_count(self, strategy_returns):
         """
