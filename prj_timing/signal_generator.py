@@ -43,7 +43,7 @@ class SignalGenerator:
         self.indices_data_daily = self.data_handler.daily_indices_data
         self.macro_data = self.data_handler.macro_data
 
-        # 保存策略名称列表（例如："上证指数_strategy_1"）
+        # 保存策略名称列表（例如："上证指数_macro_loan" 或 "上证指数_daily_turnover"）
         self.strategy_names = []
         self.monthly_signals_dict = {}
 
@@ -52,57 +52,55 @@ class SignalGenerator:
         生成所有策略信号。
 
         注意：
-          - 本方法仅对生成的策略信号（通常为月频）进行月-->日转换，
-            不修改 self.indices_data 中的原始日频价格数据。
-          - 若策略中需要使用月频的指数数据，请由 DataHandler 另行提供；
-            本方法返回的是转换后的 日频信号 DataFrame。
+          - 本方法根据策略名称判断频率：若名称中包含 "daily"，则为日频信号；否则默认为月频信号。
+          - 月频信号直接与月频价格数据合并，日频信号直接与日频价格数据合并。
+          - PerformanceEvaluator 内部根据 signal 列名（例如包含 "_monthly"）判断策略类型，
+            并在日频回测前完成月→日仓位映射。
 
         参数：
             strategies_params (dict, optional): 策略参数字典，例如 {策略全名: {参数名: 参数值, ...}}。
             strategy_names (list): 策略名称列表，例如：
                ["上证指数_macro_loan", "上证指数_macro_m1ppi", "上证指数_macro_usd",
-                "上证指数_tech_long", "上证指数_tech_sell", "上证指数_composite_basic_tech",
-                "上证指数_composite_basic", "上证指数_turnover"]
-            selected_indices (list, optional): 指数名称列表；若为 None，则采用 self.indices_data 中所有指数数据。
+                "上证指数_daily_turnover", "上证指数_tech_long", "上证指数_tech_sell",
+                "上证指数_composite_basic_tech", "上证指数_composite_basic"]
+            selected_indices (list, optional): 指数名称列表；若为 None，则采用所有指数数据。
 
         返回:
-            pd.DataFrame: 返回其中一个指标转换为日频后的信号数据（仅信号列）。
+            dict: 包含两个键：
+                "M" -> 月频信号合并结果字典（键为指数名，值为合并的月频 DataFrame）；
+                "D" -> 日频信号合并结果字典。
         """
         if not strategy_names or not isinstance(strategy_names, list):
             raise ValueError("必须提供策略名称列表（strategy_names）。")
         self.strategy_names = strategy_names
 
         if selected_indices is None:
-            selected_indices = list(self.indices_data_monthly.keys())
+            # 默认选取月频和日频数据中的所有指数（注意：两个数据源有可能不完全相同）
+            selected_indices = list(set(list(self.indices_data_monthly.keys()) + list(self.indices_data_daily.keys())))
 
-        # 定义策略类型映射：策略类型到生成函数的映射字典
-        strategy_mapping = {
-            "turnover": self.generate_turnover_strategy_signals,
+        # 定义月频策略类型映射
+        strategy_mapping_monthly = {
             "macro_loan_monthly": self._macro_signal_loan_monthly,
             "macro_m1ppi_monthly": self._macro_signal_m1ppi_monthly,
             "macro_usd_monthly": self._macro_signal_usd_monthly,
             "tech_long_monthly": self._macro_signal_tech_long_monthly,
             "tech_sell_monthly": self._macro_signal_tech_sell_monthly,
             "composite_basic_tech_monthly": self.generate_composite_basic_tech_monthly,
-            "composite_basic_monthly": self.generate_composite_basic_monthly
+            "composite_basic_monthly": self.generate_composite_basic_monthly,
+        }
+        # 定义日频策略映射，此处仅演示成交额策略的日频版本，
+        # 其他日频策略可按需扩展。例如，如果宏观数据不适合日频，则不用提供。
+        strategy_mapping_daily = {
+            "turnover": self.generate_turnover_strategy_signals
+            # 可以添加更多日频策略映射
         }
 
-        # 将 composite 策略分为两组：非 composite 和 composite 策略
-        non_composite_strategies = []
-        composite_strategies = []
+        # 分别存储月频和日频信号，按指数存放
+        monthly_signals = {}
+        daily_signals = {}
+
+        # 重新排序：这里不做 composite 分组，直接遍历所有策略名称
         for full_name in self.strategy_names:
-            # 判断策略名称中是否包含 "composite"（也可根据实际规则调整判断方式）
-            if "composite" in full_name:
-                composite_strategies.append(full_name)
-            else:
-                non_composite_strategies.append(full_name)
-
-        # 重排后的策略名称顺序：先非 composite 策略，再 composite 策略
-        ordered_strategy_names = non_composite_strategies + composite_strategies
-
-        # 用于存储生成的月频信号，单独与价格数据分离
-        signals_dict = {}
-        for full_name in ordered_strategy_names:
             try:
                 index_name, strat_type = self._parse_strategy_name(full_name)
             except ValueError as e:
@@ -113,38 +111,60 @@ class SignalGenerator:
                 print(f"指数 '{index_name}' 不在 selected_indices 中，跳过策略 '{full_name}'。")
                 continue
 
-            strat_key = strat_type.lower()
-            if strat_key not in strategy_mapping:
-                print(f"策略类型 '{strat_key}' 未定义，跳过策略 '{full_name}'。")
-                continue
-
             params = strategies_params.get(full_name, {}) if strategies_params else {}
-            # 生成月频信号
-            signals = strategy_mapping[strat_key](index_name, **params)
-            # 将生成的信号存入 signals_dict（按指数划分）
-            if index_name not in signals_dict:
-                signals_dict[index_name] = pd.DataFrame(index=signals.index)
-            signals_dict[index_name][f'{full_name}_signal'] = signals
 
-        # 对 signals_dict 中的月频信号转换为日频信号（仅信号数据转换）
-        signals_daily = {}
-        for index_name, df_signals in signals_dict.items():
-            signals_daily[index_name] = self.convert_monthly_signals_to_daily_signals(df_signals)
+            # 判断频率：如果策略名称中含有 "daily"，则频率为日频；否则默认为月频。
+            if "daily" in strat_type:
+                freq = "D"
+            else:
+                freq = "M"
 
-        # 合并原始日频指数数据与计算的信号数据
-        merged_dfs = {}
-        for index_name, daily_signals in signals_daily.items():
-            # 原始日频价格数据，保持不变（由 DataHandler 提供）
-            original_df = self.indices_data_daily[index_name].copy()
-            # 按索引合并：信号数据可能只覆盖特定日期区间
-            merged_df = original_df.join(daily_signals, how='left')
-            # 将信号列的缺失值填充为 0
-            for col in daily_signals.columns:
+            # 根据频率选择生成函数和数据源
+            if freq == "M":
+                if strat_type not in strategy_mapping_monthly:
+                    print(f"月频策略类型 '{strat_type}' 未定义，跳过策略 '{full_name}'。")
+                    continue
+                signal = strategy_mapping_monthly[strat_type](index_name, **params)
+                # 保存时建议将信号列名称中含有标识“_monthly”，以便后续识别
+                col_name = f"{full_name}_signal" if "_monthly" in full_name else f"{full_name}_monthly_signal"
+                if index_name not in monthly_signals:
+                    monthly_signals[index_name] = pd.DataFrame(index=signal.index)
+                monthly_signals[index_name][col_name] = signal
+            else:
+                # 日频信号
+                if strat_type not in strategy_mapping_daily:
+                    print(f"日频策略类型 '{strat_type}' 未定义，跳过策略 '{full_name}'。")
+                    continue
+                signal = strategy_mapping_daily[strat_type](index_name, **params)
+                col_name = f"{full_name}_signal" if "_daily" in full_name else f"{full_name}_daily_signal"
+                if index_name not in daily_signals:
+                    daily_signals[index_name] = pd.DataFrame(index=signal.index)
+                daily_signals[index_name][col_name] = signal
+
+        # 合并信号与价格数据分别处理月频和日频部分
+        merged_monthly = {}
+        for index_name, df_signals in monthly_signals.items():
+            if index_name not in self.indices_data_monthly:
+                print(f"月频价格数据中未找到指数 {index_name}，跳过。")
+                continue
+            monthly_prices = self.indices_data_monthly[index_name].copy()
+            merged_df = monthly_prices.join(df_signals, how='left')
+            for col in df_signals.columns:
                 merged_df[col] = merged_df[col].fillna(0)
-            merged_dfs[index_name] = merged_df
+            merged_monthly[index_name] = merged_df
 
-        # 返回其中一个指标的合并结果（假设只有一个指标或指定了其中一个）
-        return list(merged_dfs.values())[-1]
+        merged_daily = {}
+        for index_name, df_signals in daily_signals.items():
+            if index_name not in self.indices_data_daily:
+                print(f"日频价格数据中未找到指数 {index_name}，跳过。")
+                continue
+            daily_prices = self.indices_data_daily[index_name].copy()
+            merged_df = daily_prices.join(df_signals, how='left')
+            for col in df_signals.columns:
+                merged_df[col] = merged_df[col].fillna(0)
+            merged_daily[index_name] = merged_df
+
+        return {"M": merged_monthly, "D": merged_daily}
 
     def _macro_signal_loan_monthly(self, index_name, shift=True):
         """
@@ -405,36 +425,6 @@ class SignalGenerator:
         # 保存回原数据
         self.indices_data_monthly[index_name] = df
         return df[f'{strategy_name}_signal']
-
-    def convert_monthly_signals_to_daily_signals(self, df_signals):
-        """
-        将月频策略信号数据转换为日频信号数据。
-
-        对于 df_signals 中的每个信号列，遍历每个原始信号日期，
-        将该信号值扩展到“有效月份”内（即原日期加1个月内所有工作日）。
-
-        参数：
-            df_signals (pd.DataFrame): 含有月频策略信号的 DataFrame，行索引为月频日期。
-
-        返回:
-             pd.DataFrame: 日频信号 DataFrame，行索引为工作日。
-        """
-        # 确定日频日期区间：从最早信号日期加1个月的首个交易日到最晚信号日期加1个月的月末
-        start_date = (df_signals.index.min() + pd.offsets.MonthBegin(1)).normalize()
-        end_date = (df_signals.index.max() + pd.offsets.MonthEnd(1)).normalize()
-        daily_index = pd.date_range(start=start_date, end=end_date, freq='B')
-        new_df = pd.DataFrame(index=daily_index)
-
-        for col in df_signals.columns:
-            new_signal = pd.Series(0, index=daily_index)
-            for date, value in df_signals[col].iteritems():
-                effective_date = (date + pd.offsets.MonthBegin(1)).normalize()  # 有效月份起始
-                effective_month_end = (effective_date + pd.offsets.MonthEnd(0)).normalize()  # 有效月份末
-                effective_range = pd.date_range(start=effective_date, end=effective_month_end, freq='B')
-                new_signal.loc[effective_range] = value
-            new_df[col] = new_signal
-
-        return new_df
 
     def generate_turnover_strategy_signals(self, index_name, holding_days=10, percentile_window_years=4,
                                            next_day_open=True):

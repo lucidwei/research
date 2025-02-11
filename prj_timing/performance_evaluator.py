@@ -21,31 +21,37 @@ class PerformanceEvaluator:
       1. 如果识别到是月频策略，先在月度层面计算净值及指标，以保证胜率、赔率、Kelly等统计的正确性；
       2. 将月度信号逐月映射为日度仓位，以便与其他策略在相同日度坐标系下进行净值曲线合并、作图。
     """
-    def __init__(self, data_handler: DataHandler, df_signals: pd.DataFrame, signals_columns=None):
+    def __init__(self, data_handler: DataHandler, signals_dict: dict, signals_columns):
         """
         参数:
             data_handler: 依赖于DataHandler对象，用于获取daily_indices_data和monthly_indices_data。
-            df_signals: 包含所有策略信号的DataFrame，行索引为日期（或月份），列名为各策略的 *_signal。
+            df_signals: 来自 generate_signals_for_all_strategies，结构形如：
+                 {"M": merged_monthly, "D": merged_daily}。
             signals_columns (list): 明示哪些列是策略信号。若为 None，则默认df_signals的全部列。
-            frequency (str): 评估频率，'D' 或 'M'。决定最终统计指标（夏普比率、年化收益等）的年化因子。
         """
         self.data_handler = data_handler
-        self.df_signals = df_signals.copy()
+        # 分别保存月频与日频的合并信号（均为字典：键为指数名称，值为对应的 DataFrame）
+        self.df_signals_monthly = signals_dict.get("M", {})
+        self.df_signals_daily = signals_dict.get("D", {})
 
-        if signals_columns is None:
-            self.signals_columns = self.df_signals.columns.tolist()
-        else:
-            self.signals_columns = signals_columns
-
-        # 识别月度/日度。只要列名包含 "_monthly" 就视为月度策略。
+        # 构造所有信号列和频率映射
+        self.signals_columns = signals_columns
         self.is_monthly_signal = {}
-        for col in self.signals_columns:
-            if "_monthly" in col:
+        # 遍历月频信号，列名中统一附加 "_monthly_signal"
+        for index_name, df in self.df_signals_monthly.items():
+            for col in df.columns:
+                self.signals_columns.append(col)
                 self.is_monthly_signal[col] = True
-            else:
+        # 遍历日频信号，列名中统一附加 "_daily_signal"
+        for index_name, df in self.df_signals_daily.items():
+            for col in df.columns:
+                self.signals_columns.append(col)
                 self.is_monthly_signal[col] = False
 
-        # 存储各策略最终回测结果
+        # 其它初始化设置保持不变
+        # 默认年化因子针对日频策略，月频策略在计算绩效指标时使用 12
+        self.annual_factor_default = 252
+        self.time_delta = 'Y'
         self.strategies_results = {}
         self.metrics_df = None
         self.stats_by_each_year = {}
@@ -69,86 +75,60 @@ class PerformanceEvaluator:
 
     def backtest_all_strategies(self, start_date='2001-12'):
         """
-        对 self.signals_columns 中所有策略进行回测。
-        如果某策略名含有上证指数_...，则识别 index_name=上证指数，准备对应的日度数据。
-        只做一个简单示例，您可自行扩展更多情况。
+        分别对月频和日频信号进行回测。
         """
-        for signal_col in self.signals_columns:
-            # 举例：signal_col = "上证指数_macro_loan_monthly_signal"
-            # 先去掉"_signal"
-            base_name = signal_col.replace("_signal", "")
-            # 拿到第一个下划线前的部分，视为index_name
-            try:
-                index_name = base_name.split("_", 1)[0]
-            except:
-                index_name = base_name
+        # 处理月频信号回测
+        for index_name, df_signals in self.df_signals_monthly.items():
+            for signal_col in self.signals_columns:
+                print(f"\n开始回测月频策略: {signal_col} (指数: {index_name})...")
+                self.prepare_data(index_name)  # 从 daily_data_dict 中获取日度数据（回测时需要日频数据作图）
+                # 直接从月频信号 DataFrame 中提取对应信号
+                current_signal_series = df_signals[signal_col].dropna().copy()
+                result = self.backtest_single_strategy(index_name, signal_col, start_date, signal_series=current_signal_series)
+                base_name = signal_col.replace("_monthly_signal", "")
+                self.strategies_results[base_name] = result
+                final_strategy = result['Daily_Cumulative_Strategy'].iloc[-1]
+                print(f"策略 {base_name} 最终净值: {final_strategy:.2f}")
+                self.plot_results(result['Daily_Cumulative_Strategy'], result['Daily_Cumulative_Index'], base_name)
 
-            # 根据 index_name 准备日度数据
-            self.prepare_data(index_name)
+        # 处理日频信号回测
+        for index_name, df_signals in self.df_signals_daily.items():
+            for signal_col in self.signals_columns:
+                print(f"\n开始回测日频策略: {signal_col} (指数: {index_name})...")
+                self.prepare_data(index_name)
+                current_signal_series = df_signals[signal_col].dropna().copy()
+                result = self.backtest_single_strategy(index_name, signal_col, start_date, signal_series=current_signal_series)
+                base_name = signal_col.replace("_daily_signal", "")
+                self.strategies_results[base_name] = result
+                final_strategy = result['Daily_Cumulative_Strategy'].iloc[-1]
+                print(f"策略 {base_name} 最终净值: {final_strategy:.2f}")
+                self.plot_results(result['Daily_Cumulative_Strategy'], result['Daily_Cumulative_Index'], base_name)
 
-            print(f"\n开始回测策略 {base_name} (指数: {index_name})...")
-
-            # 回测单个策略，返回一个字典，包含每日和（如果月频）月度数据
-            result = self.backtest_single_strategy(
-                index_name=index_name,
-                signal_col=signal_col,
-                start_date=start_date
-            )
-
-            # 存储，并记录该策略是否为月频
-            self.strategies_results[base_name] = result
-
-            # 打印最终净值（使用日度净值用于显示）
-            final_strategy = result['Daily_Cumulative_Strategy'].iloc[-1]
-            final_index_val = result['Daily_Cumulative_Index'].iloc[-1]
-            print(f"策略 {base_name} 最终净值: {final_strategy:.2f}")
-            print(f"指数 {index_name} 最终净值: {final_index_val:.2f}")
-
-            # 画图（示例，使用日度数据绘图）
-            self.plot_results(result['Daily_Cumulative_Strategy'], result['Daily_Cumulative_Index'], base_name)
-
-    def backtest_single_strategy(self, index_name, signal_col, start_date='2001-12'):
+    def backtest_single_strategy(self, index_name, signal_col, start_date='2001-12', signal_series=None):
         """
-        回测单只策略。
-        如果是月频策略:
-          - 先用月度数据与月度信号，计算月度层面的净值(只为正确计算胜率、赔率、Kelly等)。
-          - 再把月度信号映射到日度仓位，做日度净值计算，用于合并和画图。
-          返回一个字典，包含：
-              'Daily_Strategy_Return', 'Daily_Cumulative_Strategy', 'Daily_Cumulative_Index'
-          对于月频策略，还额外包含:
-              'Monthly_Strategy_Return', 'Monthly_Cumulative_Strategy'
-          以及键 'is_monthly' 指示策略类型。
-        如果是日频策略:
-          - 直接在日度数据上回测。
+        增加 signal_series 参数，直接使用传入的信号数据（来自 df_signals_monthly 或 df_signals_daily）。
+        对月频策略：
+            1. 在月度数据上计算月频净值及收益；
+            2. 调用 convert_monthly_signals_to_daily_positions 将月频信号映射为日频仓位，再计算日频净值。
+        对日频策略：
+            直接在日度数据上计算策略净值。
         """
-        # 日度和月度数据
         df_daily = self.daily_data_dict[index_name].copy()
         df_monthly = self.monthly_data_dict[index_name].copy()
 
-        # 截取起始日期
         df_daily = df_daily[df_daily.index >= pd.to_datetime(start_date)].copy()
         df_monthly = df_monthly[df_monthly.index >= pd.to_datetime(start_date)].copy()
 
-        # 从信号数据中取出对应信号
-        current_signal_series = self.df_signals[signal_col].dropna().copy()
-
-        if self.is_monthly_signal[signal_col]:
-            # 1) 月度层面回测 -> monthly_net_value, monthly_strategy_returns
-            monthly_net_value, monthly_strategy_returns = self._backtest_monthly(
-                df_monthly, current_signal_series
-            )
-            # 2) 将月度信号映射到日度
-            daily_positions = self.convert_monthly_signals_to_daily_positions(
-                df_daily, current_signal_series
-            )
-            # 3) 在日度数据上计算策略净值
+        if self.is_monthly_signal.get(signal_col, False):
+            # 月频策略处理
+            monthly_net_value, monthly_strategy_returns = self._backtest_monthly(df_monthly, signal_series)
+            daily_positions = self.convert_monthly_signals_to_daily_positions(df_daily, signal_series)
             df_daily['Position'] = daily_positions.shift(1).fillna(0)
             df_daily['Index_Return'] = df_daily['指数:最后一条'].pct_change()
             df_daily['Strategy_Return'] = df_daily['Position'] * df_daily['Index_Return']
             df_daily['Strategy_Return'].fillna(0, inplace=True)
             df_daily['Cumulative_Strategy'] = (1 + df_daily['Strategy_Return']).cumprod()
             df_daily['Cumulative_Index'] = (1 + df_daily['Index_Return']).cumprod()
-
             return {
                 'Daily_Strategy_Return': df_daily['Strategy_Return'],
                 'Daily_Cumulative_Strategy': df_daily['Cumulative_Strategy'],
@@ -158,14 +138,13 @@ class PerformanceEvaluator:
                 'is_monthly': True
             }
         else:
-            # 日度策略
-            df_daily['Position'] = current_signal_series.shift(1).reindex(df_daily.index).fillna(0)
+            # 日频策略处理：直接使用日频信号进行回测
+            df_daily['Position'] = signal_series.shift(1).reindex(df_daily.index).fillna(0)
             df_daily['Index_Return'] = df_daily['指数:最后一条'].pct_change()
             df_daily['Strategy_Return'] = df_daily['Position'] * df_daily['Index_Return']
             df_daily['Strategy_Return'].fillna(0, inplace=True)
             df_daily['Cumulative_Strategy'] = (1 + df_daily['Strategy_Return']).cumprod()
             df_daily['Cumulative_Index'] = (1 + df_daily['Index_Return']).cumprod()
-
             return {
                 'Daily_Strategy_Return': df_daily['Strategy_Return'],
                 'Daily_Cumulative_Strategy': df_daily['Cumulative_Strategy'],
@@ -211,17 +190,12 @@ class PerformanceEvaluator:
         plt.show()
 
     def convert_monthly_signals_to_daily_positions(self, df_daily, monthly_signal_series,
-                                                   shift=True, next_day_open=True):
+                                                   next_day_open=True):
         """
         将月度信号映射为日度仓位。示例写法：
-          shift=True表示当月信号需要到下个月才生效。
           next_day_open=True表示在目标生效日的下一交易日开盘建仓。
-        这里仅给一个简单示例逻辑，仅做演示。
         """
         daily_positions = pd.Series(0, index=df_daily.index, dtype=float)
-        # 如果shift=True, 则对月度信号做一次shift(1)
-        if shift:
-            monthly_signal_series = monthly_signal_series.shift(1).fillna(0)
 
         # 遍历月度信号，根据 next_day_open 决定在下个月首日还是当月末日建仓
         monthly_signal_series = monthly_signal_series.dropna()
