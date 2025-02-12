@@ -3,7 +3,7 @@
 # Author  : Lucid
 # FileName: main.py
 # Software: PyCharm
-import sys
+import sys, os
 from data_handler import DataHandler
 from signal_generator import SignalGenerator
 from performance_evaluator import PerformanceEvaluator
@@ -19,42 +19,74 @@ def run_without_optimization():
 
     # 指定Excel文件路径和输出路径
     file_path = r"D:\WPS云盘\WPS云盘\工作-麦高\专题研究\低频择时\招商择时快速复现.xlsx"
-    output_file = rf"D:\WPS云盘\WPS云盘\工作-麦高\专题研究\低频择时\策略回测结果_{INDEX_NAME}.xlsx"
+    output_file = rf"D:\WPS云盘\WPS云盘\工作-麦高\专题研究\低频择时\策略回测结果_{INDEX_NAME}0211.xlsx"
 
     # 实例化 DataHandler 类，加载并预处理数据（默认按月频处理）
     data_handler = DataHandler(file_path=file_path)
 
     # 定义策略名称
-    strategy_names = [
-        f"{INDEX_NAME}_macro_loan",
-        f"{INDEX_NAME}_macro_m1ppi",
-        f"{INDEX_NAME}_macro_usd",
-        f"{INDEX_NAME}_tech_long",
-        f"{INDEX_NAME}_tech_sell",
-        f"{INDEX_NAME}_composite_basic_tech",
-        f"{INDEX_NAME}_composite_basic",
+    strategy_to_run = [
+        f"{INDEX_NAME}_macro_loan_monthly",
+        f"{INDEX_NAME}_macro_m1ppi_monthly",
+        f"{INDEX_NAME}_macro_usd_monthly",
+        f"{INDEX_NAME}_tech_long_monthly",
+        f"{INDEX_NAME}_tech_sell_monthly",
+        f"{INDEX_NAME}_composite_basic_tech_monthly",
+        f"{INDEX_NAME}_composite_basic_monthly",
         # f"{INDEX_NAME}_turnover",
     ]
 
     # 实例化 SignalGenerator 类，生成策略信号
     signal_generator = SignalGenerator(data_handler)
-    df_with_signals = signal_generator.generate_signals_for_all_strategies(strategy_names=strategy_names)
+    df_signals = signal_generator.generate_signals_for_all_strategies(strategy_names=strategy_to_run)
 
     # 获取所有策略的信号列名
-    signal_columns = [f"{name}_signal" for name in strategy_names]
+    signal_columns = [f"{name}_signal" for name in strategy_to_run]
 
     # 实例化 PerformanceEvaluator 类，进行回测和绩效评估
-    performance_evaluator = PerformanceEvaluator(df_with_signals, signal_columns)
+    performance_evaluator = PerformanceEvaluator(data_handler, df_signals, signal_columns)
     performance_evaluator.backtest_all_strategies(start_date='2001-12')
     performance_evaluator.calculate_metrics_all_strategies()
+
     # 针对个别策略进行按年份统计
-    annual_metrics_strategy_name = [f'{INDEX_NAME}_strategy_6', f'{INDEX_NAME}_strategy_7', ]
+    # annual_metrics_strategy_name = [f'{INDEX_NAME}_strategy_6', f'{INDEX_NAME}_strategy_7', ]
     # annual_metrics_strategy_name = f'{INDEX_NAME}_strategy_turnover'
-    performance_evaluator.calculate_annual_metrics_for(annual_metrics_strategy_name)
+    # performance_evaluator.calculate_annual_metrics_for(annual_metrics_strategy_name)
 
     # 生成并保存Excel报告
-    performance_evaluator.generate_excel_reports(output_file, annual_metrics_strategy_name)
+    # performance_evaluator.generate_excel_reports(output_file, annual_metrics_strategy_name)
 
+    # 若输出 Excel 文件不存在，则生成新的
+    if not os.path.exists(output_file):
+        print(f"文件 {output_file} 不存在，生成新的Excel报告...")
+        performance_evaluator.generate_excel_reports(output_file, [])
+    else:
+        print(f"文件 {output_file} 已存在，跳过生成阶段。")
+        # 如需要，还可从Excel中读入 metrics_df
+
+    # 基于 Kelly 仓位合成综合策略
+    composite_df = performance_evaluator.compose_strategies_by_kelly(method='sum_to_one')
+    if composite_df is not None:
+        # 此处用 "Composite_Strategy" 作为策略标识，且综合策略的累计净值存在 "Composite_Cum" 列
+        performance_evaluator.plot_results(
+            composite_df['Composite_Cum'],
+            composite_df['Daily_Cumulative_Index'],
+            "Composite_Strategy"
+        )
+        # 获取并打印综合策略的仓位（各策略权重），假设Kelly仓位为固定值
+        comp_positions = performance_evaluator.get_composite_positions()
+        print("综合策略仓位（各策略权重）：")
+        print(comp_positions.head())
+        # 计算综合策略业绩指标（基于组合日收益数据）
+        composite_metrics = performance_evaluator.calculate_composite_metrics(
+            composite_df['Composite_Return'],
+            composite_df['Composite_Cum']
+        )
+        print("综合策略业绩指标：")
+        for key, value in composite_metrics.items():
+            print(f"{key}: {value}")
+    else:
+        print("未生成综合策略。")
     print(f'回测完成，结果已保存到 {output_file}')
 
 def run_with_optimization():

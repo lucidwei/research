@@ -17,50 +17,114 @@ mpl.rcParams['axes.unicode_minus'] = False
 
 class PositionManager:
     """
-    PositionManager 负责将月频策略信号转换为日频仓位，并处理与仓位管理相关的操作。
+    PositionManager 负责将不同频率（如日频、月频）的信号数据转换为每日实际仓位。
+
+    主要职责：
+      - 针对日频信号，保证信号与每日交易数据对齐，且根据参数决定是否延后一天生效；
+      - 针对月频信号，将每个月信号映射到对应的日交易区间，确保信号在该区间内生效。
+
+    注意：
+      - 此模块仅专注于仓位转换，不涉及业绩指标计算。
     """
 
-    @staticmethod
-    def convert_monthly_signals_to_daily_positions(df_daily, monthly_signal_series, next_day_open=True):
+    def __init__(self, next_day_open=True):
         """
-        根据月度信号将仓位映射为日度仓位。
+        初始化 PositionManager。
 
-        参数:
-            df_daily (pd.DataFrame): 日度数据的 DataFrame，其索引为交易日期。
-            monthly_signal_series (pd.Series): 月度信号，索引为月份末日（或对应日期），值为仓位信号。
-            next_day_open (bool): 若为 True，则在下一个交易日（如下月的第一天）开盘时建仓；否则在信号当日建仓。
-
-        返回:
-            pd.Series: 与日度数据对应的仓位序列。
+        参数：
+            next_day_open (bool): 若为 True，则信号生效日期延迟至下一交易日；否则在信号当日生效。
         """
-        daily_positions = pd.Series(0, index=df_daily.index, dtype=float)
-        monthly_signal_series = monthly_signal_series.dropna()
-        from pandas.tseries.offsets import MonthBegin
+        self.next_day_open = next_day_open
 
-        for month_date, sig_val in monthly_signal_series.items():
-            if sig_val == 0:
-                continue
+    def convert_signal_to_daily_position(self, signal_series, df_daily, frequency):
+        """
+        将给定信号转换成每日实际仓位。
 
-            # 计算下个月首日
-            month_first_day = (month_date + MonthBegin(0)).replace(day=1)
-            next_month_first_day = (month_date + MonthBegin(1))
+        参数：
+            signal_series (pd.Series): 信号序列。若为日频，索引应为交易日期；若为月频，索引通常为月份末日。
+            df_daily (pd.DataFrame): 日交易数据 DataFrame，其索引为交易日期。
+            frequency (str): 信号频率，目前支持 "daily" 或 "monthly"。
 
-            # 根据 next_day_open 参数决定实际建仓日期
-            start_date_for_position = next_month_first_day if next_day_open else month_date
+        返回：
+            pd.Series: 对应 df_daily 索引的每日仓位序列。
 
-            # 信号有效期：从开始日期到下个月末
-            end_date_for_position = (next_month_first_day + MonthBegin(1)) - pd.Timedelta(days=1)
-            mask = (df_daily.index >= start_date_for_position) & (df_daily.index <= end_date_for_position)
-            daily_positions.loc[mask] = sig_val
+        异常：
+            ValueError: 若 frequency 非 "daily" 或 "monthly"。
+        """
+        if frequency == "daily":
+            return self._convert_daily_signal(signal_series, df_daily)
+        elif frequency == "monthly":
+            return self._convert_monthly_signal(signal_series, df_daily)
+        else:
+            raise ValueError(f"Unsupported frequency: {frequency}")
+
+    def _convert_daily_signal(self, signal_series, df_daily):
+        """
+        将日频信号转换为每日仓位。
+        如果 next_day_open 为 True，则信号延后一天生效。
+        """
+        if self.next_day_open:
+            aligned = signal_series.reindex(df_daily.index)
+            daily_positions = aligned.shift(1).fillna(0)
+        else:
+            daily_positions = signal_series.reindex(df_daily.index).fillna(0)
         return daily_positions
 
+    def _convert_monthly_signal(self, signal_series, df_daily):
+        """
+        将月频信号转换为每日仓位。
+        对于每个月的信号，根据 next_day_open 参数确定生效区间，再赋值信号值到该区间内。
+        """
+        daily_positions = pd.Series(0, index=df_daily.index, dtype=float)
+        sorted_signals = signal_series.sort_index()
+
+        for current_date, signal_value in sorted_signals.items():
+            if signal_value == 0:
+                continue
+
+            # 确定起始生效日期
+            if self.next_day_open:
+                subsequent = df_daily.index[df_daily.index > current_date]
+                if len(subsequent) == 0:
+                    continue
+                start_date = subsequent[0]
+            else:
+                if current_date in df_daily.index:
+                    start_date = current_date
+                else:
+                    start_date = df_daily.index[df_daily.index >= current_date][0]
+
+            # 确定结束日期：下一个信号生效前一天；若当前信号最后一个，则延续到最后一个交易日
+            next_signals = sorted_signals.loc[sorted_signals.index > current_date]
+            if len(next_signals) > 0:
+                next_date = next_signals.index[0]
+                if self.next_day_open:
+                    subsequent_next = df_daily.index[df_daily.index > next_date]
+                    if len(subsequent_next) > 0:
+                        end_date = subsequent_next[0] - pd.Timedelta(days=1)
+                    else:
+                        end_date = df_daily.index[-1]
+                else:
+                    if next_date in df_daily.index:
+                        end_date = next_date - pd.Timedelta(days=1)
+                    else:
+                        end_date = df_daily.index[df_daily.index >= next_date][0] - pd.Timedelta(days=1)
+            else:
+                end_date = df_daily.index[-1]
+
+            mask = (df_daily.index >= start_date) & (df_daily.index <= end_date)
+            daily_positions.loc[mask] = signal_value
+        return daily_positions
 
 class PerformanceEvaluator:
     """
-    PerformanceEvaluator 用于对多种策略信号进行回测和绩效评估。
-    支持区分日频与月频策略：
-      1. 若为月频策略，会先在月度层面计算净值及指标，进而映射为日度仓位用于后续计算；
-      2. 若为日频策略，则直接基于日度信号计算相应指标。
+    PerformanceEvaluator 根据传入信号对各策略进行回测和绩效评估，
+    并利用 PositionManager 将不同频率信号转换为每日实际仓位。
+
+    重点：
+      - 内部包含基于各策略凯利公式计算仓位的功能，用于合成综合策略；
+      - 提供 compose_strategies_by_kelly、get_composite_positions、calculate_composite_metrics 三个接口，
+        分别用于生成综合策略、提取综合策略每日仓位、计算综合策略业绩指标。
     """
 
     def __init__(self, data_handler: DataHandler, signals_dict: dict, signals_columns):
@@ -96,6 +160,7 @@ class PerformanceEvaluator:
         self.daily_data_dict = self.data_handler.daily_indices_data  # 日度数据字典
         self.monthly_data_dict = self.data_handler.monthly_indices_data  # 月度数据字典
 
+        self.position_manager = PositionManager(next_day_open=True)
         self.index_df_daily = None  # 当前指数的日度数据
 
     def prepare_data(self, index_name):
@@ -171,9 +236,8 @@ class PerformanceEvaluator:
         if self.is_monthly_signal.get(signal_col, False):
             # 处理月频策略
             monthly_net_value, monthly_strategy_returns = self._backtest_monthly(df_monthly, signal_series)
-            daily_positions = PositionManager.convert_monthly_signals_to_daily_positions(df_daily, signal_series)
-            # 仓位滞后一天，确保信号延时生效
-            df_daily['Position'] = daily_positions.shift(1).fillna(0)
+            daily_positions = self.position_manager.convert_signal_to_daily_position(signal_series, df_daily, "monthly")
+            df_daily['Position'] = daily_positions
             df_daily['Index_Return'] = df_daily['指数:最后一条'].pct_change()
             df_daily['Strategy_Return'] = df_daily['Position'] * df_daily['Index_Return']
             df_daily['Strategy_Return'].fillna(0, inplace=True)
@@ -190,7 +254,9 @@ class PerformanceEvaluator:
             }
         else:
             # 处理日频策略，直接将信号映射为仓位
-            df_daily['Position'] = signal_series.shift(1).reindex(df_daily.index).fillna(0)
+            # 日频策略
+            daily_positions = self.position_manager.convert_signal_to_daily_position(signal_series, df_daily, "daily")
+            df_daily['Position'] = daily_positions
             df_daily['Index_Return'] = df_daily['指数:最后一条'].pct_change()
             df_daily['Strategy_Return'] = df_daily['Position'] * df_daily['Index_Return']
             df_daily['Strategy_Return'].fillna(0, inplace=True)
@@ -271,12 +337,10 @@ class PerformanceEvaluator:
         active_kelly_sum = pd.Series(0.0, index=base_index)  # 当日活跃策略的 Kelly 仓位加总
 
         for strategy_id, results in self.strategies_results.items():
-            # 根据策略名称去除前缀，例如 '上证指数_tech_sell' 得到 "tech_sell"
-            strategy_id_ = "_".join(strategy_id.split("_")[1:])
-            if strategy_id_ not in kelly_dict:
-                print(f"策略 {strategy_id_} 不在 Kelly 数据中，跳过。")
+            if strategy_id not in kelly_dict:
+                print(f"策略 {strategy_id} 不在 Kelly 数据中，跳过。")
                 continue
-            fraction = kelly_dict[strategy_id_]
+            fraction = kelly_dict[strategy_id]
             # 获取该策略的日收益序列
             daily_return = results['Daily_Strategy_Return'].reindex(base_index).fillna(0)
             effective_fraction = fraction * results['Position'].reindex(base_index).fillna(0)
@@ -285,8 +349,8 @@ class PerformanceEvaluator:
             composite_raw += daily_return * effective_fraction
 
             # 保存各策略的贡献收益和每日有效仓位到结果 DataFrame 中
-            combined_df[f'{strategy_id_}_ret'] = daily_return * effective_fraction
-            combined_df[f'{strategy_id_}_position'] = effective_fraction
+            combined_df[f'{strategy_id}_ret'] = daily_return * effective_fraction
+            combined_df[f'{strategy_id}_position'] = effective_fraction
 
         # 以第一个策略的基准指数累计净值作为对比基准
         first_result = list(self.strategies_results.values())[0]
@@ -309,29 +373,12 @@ class PerformanceEvaluator:
         # 保存当日所有活跃策略 Kelly 仓位之和为综合仓位
         combined_df['Composite_Position'] = active_kelly_sum
 
-        # 利用已有指标计算函数（假设这些函数已在类中实现）计算综合策略业绩指标，年化因子对日频数据取 252
-        annual_return = self.calculate_annualized_return(composite_daily_return, annual_factor=252)
-        annual_vol = self.calculate_annualized_volatility(composite_daily_return, annual_factor=252)
-        sharpe = self.calculate_sharpe_ratio(composite_daily_return, risk_free_rate=0, annual_factor=252)
-        sortino = self.calculate_sortino_ratio(composite_daily_return, target=0, annual_factor=252)
-        max_dd = self.calculate_max_drawdown(composite_cum)
-        win_rate = self.calculate_win_rate(composite_daily_return)
-        odds = self.calculate_odds_ratio(composite_daily_return)
-
-        metrics = {
-            '年化收益率': annual_return,
-            '年化波动率': annual_vol,
-            '夏普比率': sharpe,
-            '索提诺比率': sortino,
-            '最大回撤': max_dd,
-            '胜率': win_rate,
-            '赔率': odds,
-            'Composite_Position_Today': active_kelly_sum.iloc[-1]
-        }
-        print("综合策略业绩指标:")
-        for key, value in metrics.items():
+        print("综合策略业绩指标（基于 Kelly 加权计算）：")
+        composite_indicators = self.calculate_indicators(composite_daily_return, composite_cum, annual_factor=252)
+        for key, value in composite_indicators.items():
             print(f"{key}: {value}")
 
+        self.composite_df = combined_df.copy()
         return combined_df
 
     def load_kelly_fractions(self):
@@ -345,11 +392,46 @@ class PerformanceEvaluator:
             return {}
         return self.metrics_df['Kelly仓位'].to_dict()
 
+    def calculate_indicators(self, returns_series, cumulative_series, annual_factor):
+        """
+        根据传入的收益序列和累计净值序列计算常用绩效指标。
+
+        参数：
+          returns_series (pd.Series): 策略日收益序列；
+          cumulative_series (pd.Series): 策略累计净值序列；
+          annual_factor (int): 年化因子（例如日频用 252，月频用 12）。
+
+        返回：
+          dict: 包含以下指标：
+                - 年化收益率
+                - 年化波动率
+                - 夏普比率
+                - 索提诺比率
+                - 最大回撤
+                - 胜率
+                - 赔率
+        """
+        annual_return = self.calculate_annualized_return(returns_series, annual_factor=annual_factor)
+        annual_vol = self.calculate_annualized_volatility(returns_series, annual_factor=annual_factor)
+        sharpe = self.calculate_sharpe_ratio(returns_series, risk_free_rate=0, annual_factor=annual_factor)
+        sortino = self.calculate_sortino_ratio(returns_series, target=0, annual_factor=annual_factor)
+        max_dd = self.calculate_max_drawdown(cumulative_series)
+        win_rate = self.calculate_win_rate(returns_series)
+        odds = self.calculate_odds_ratio(returns_series)
+        return {
+            '年化收益率': annual_return,
+            '年化波动率': annual_vol,
+            '夏普比率': sharpe,
+            '索提诺比率': sortino,
+            '最大回撤': max_dd,
+            '胜率': win_rate,
+            '赔率': odds
+        }
+
     def calculate_metrics_all_strategies(self):
         """
-        计算所有策略的绩效指标（基于策略收益）。
-        对于月度策略：使用月度层面的收益和净值，保证胜率、赔率、Kelly等指标的正确性；
-        对于日度策略：使用日度收益计算指标。
+        对所有策略计算绩效指标。对每个策略调用 calculate_indicators 得到主要指标，
+        同时计算 Kelly 仓位和年均信号次数，最后整合成 DataFrame 保存在 self.metrics_df 中。
         """
         metrics = {
             '策略名称': [],
@@ -363,42 +445,55 @@ class PerformanceEvaluator:
             'Kelly仓位': [],
             '年均信号次数': []
         }
-
         for strategy_id, results in self.strategies_results.items():
-            print(f'正在计算策略 {strategy_id} 的绩效指标...')
             if results.get('is_monthly', False):
                 ret_series = results['Monthly_Strategy_Return']
-                cumulative_strategy = results['Monthly_Cumulative_Strategy']
+                cumulative = results['Monthly_Cumulative_Strategy']
                 factor = 12
             else:
                 ret_series = results['Daily_Strategy_Return']
-                cumulative_strategy = results['Daily_Cumulative_Strategy']
+                cumulative = results['Daily_Cumulative_Strategy']
                 factor = 252
 
-            annualized_return = self.calculate_annualized_return(ret_series, annual_factor=factor)
-            annualized_volatility = self.calculate_annualized_volatility(ret_series, annual_factor=factor)
-            sharpe_ratio = self.calculate_sharpe_ratio(ret_series, risk_free_rate=0, annual_factor=factor)
-            max_drawdown = self.calculate_max_drawdown(cumulative_strategy)
-            sortino_ratio = self.calculate_sortino_ratio(ret_series, target=0, annual_factor=factor)
-            win_rate = self.calculate_win_rate(ret_series)
-            odds_ratio = self.calculate_odds_ratio(ret_series)
-            kelly_fraction = self.calculate_kelly_fraction(win_rate, odds_ratio)
-            average_signals = self.calculate_average_signal_count(ret_series)
+            inds = self.calculate_indicators(ret_series, cumulative, annual_factor=factor)
+            # 通过凯利公式计算仓位（使用胜率和赔率）
+            kelly_fraction = self.calculate_kelly_fraction(inds['胜率'], inds['赔率'])
+            avg_signals = self.calculate_average_signal_count(ret_series)
 
-            display_name = strategy_id[strategy_id.find('_') + 1:] if '_' in strategy_id else strategy_id
-            metrics['策略名称'].append(display_name)
-            metrics['年化收益率'].append(annualized_return)
-            metrics['年化波动率'].append(annualized_volatility)
-            metrics['夏普比率'].append(sharpe_ratio)
-            metrics['最大回撤'].append(max_drawdown)
-            metrics['索提诺比率'].append(sortino_ratio)
-            metrics['胜率'].append(win_rate)
-            metrics['赔率'].append(odds_ratio)
+            metrics['策略名称'].append(strategy_id)
+            metrics['年化收益率'].append(inds['年化收益率'])
+            metrics['年化波动率'].append(inds['年化波动率'])
+            metrics['夏普比率'].append(inds['夏普比率'])
+            metrics['最大回撤'].append(inds['最大回撤'])
+            metrics['索提诺比率'].append(inds['索提诺比率'])
+            metrics['胜率'].append(inds['胜率'])
+            metrics['赔率'].append(inds['赔率'])
             metrics['Kelly仓位'].append(kelly_fraction)
-            metrics['年均信号次数'].append(average_signals)
+            metrics['年均信号次数'].append(avg_signals)
 
-        self.metrics_df = pd.DataFrame(metrics)
-        self.metrics_df.set_index('策略名称', inplace=True)
+        self.metrics_df = pd.DataFrame(metrics).set_index("策略名称")
+        print("所有策略绩效指标：")
+        print(self.metrics_df)
+
+    def calculate_composite_metrics(self, composite_return, composite_cum):
+        """
+        对综合策略计算绩效指标。内部直接调用 calculate_indicators，
+        参数 annual_factor 固定为 252（日频数据）。
+
+        返回：
+          dict: 包含综合策略各项指标。
+        """
+        return self.calculate_indicators(composite_return, composite_cum, annual_factor=252)
+
+    def get_composite_positions(self):
+        """
+        返回综合策略每日仓位（各策略权重合成）。
+        """
+        if self.composite_df is not None:
+            return self.composite_df['Composite_Position']
+        else:
+            print("尚未生成综合策略，请先调用 compose_strategies_by_kelly()。")
+            return None
 
     def calculate_annual_metrics_for(self, strategy_names):
         """
