@@ -1,5 +1,6 @@
 # coding=gbk
 # Time Created: 2025/1/14 14:08
+# Updated: 2025/02/12
 # Author  : Lucid
 # FileName: performance_evaluator.py
 # Software: PyCharm
@@ -14,40 +15,77 @@ mpl.rcParams['font.sans-serif'] = ['STZhongsong']
 mpl.rcParams['axes.unicode_minus'] = False
 
 
+class PositionManager:
+    """
+    PositionManager 负责将月频策略信号转换为日频仓位，并处理与仓位管理相关的操作。
+    """
+
+    @staticmethod
+    def convert_monthly_signals_to_daily_positions(df_daily, monthly_signal_series, next_day_open=True):
+        """
+        根据月度信号将仓位映射为日度仓位。
+
+        参数:
+            df_daily (pd.DataFrame): 日度数据的 DataFrame，其索引为交易日期。
+            monthly_signal_series (pd.Series): 月度信号，索引为月份末日（或对应日期），值为仓位信号。
+            next_day_open (bool): 若为 True，则在下一个交易日（如下月的第一天）开盘时建仓；否则在信号当日建仓。
+
+        返回:
+            pd.Series: 与日度数据对应的仓位序列。
+        """
+        daily_positions = pd.Series(0, index=df_daily.index, dtype=float)
+        monthly_signal_series = monthly_signal_series.dropna()
+        from pandas.tseries.offsets import MonthBegin
+
+        for month_date, sig_val in monthly_signal_series.items():
+            if sig_val == 0:
+                continue
+
+            # 计算下个月首日
+            month_first_day = (month_date + MonthBegin(0)).replace(day=1)
+            next_month_first_day = (month_date + MonthBegin(1))
+
+            # 根据 next_day_open 参数决定实际建仓日期
+            start_date_for_position = next_month_first_day if next_day_open else month_date
+
+            # 信号有效期：从开始日期到下个月末
+            end_date_for_position = (next_month_first_day + MonthBegin(1)) - pd.Timedelta(days=1)
+            mask = (df_daily.index >= start_date_for_position) & (df_daily.index <= end_date_for_position)
+            daily_positions.loc[mask] = sig_val
+        return daily_positions
+
+
 class PerformanceEvaluator:
     """
-    PerformanceEvaluator用于对多种策略信号进行回测和绩效评估。
-    支持区分日频、月频策略：
-      1. 如果识别到是月频策略，先在月度层面计算净值及指标，以保证胜率、赔率、Kelly等统计的正确性；
-      2. 将月度信号逐月映射为日度仓位，以便与其他策略在相同日度坐标系下进行净值曲线合并、作图。
+    PerformanceEvaluator 用于对多种策略信号进行回测和绩效评估。
+    支持区分日频与月频策略：
+      1. 若为月频策略，会先在月度层面计算净值及指标，进而映射为日度仓位用于后续计算；
+      2. 若为日频策略，则直接基于日度信号计算相应指标。
     """
+
     def __init__(self, data_handler: DataHandler, signals_dict: dict, signals_columns):
         """
+        初始化 PerformanceEvaluator。
+
         参数:
-            data_handler: 依赖于DataHandler对象，用于获取daily_indices_data和monthly_indices_data。
-            df_signals: 来自 generate_signals_for_all_strategies，结构形如：
-                 {"M": merged_monthly, "D": merged_daily}。
-            signals_columns (list): 明示哪些列是策略信号。若为 None，则默认df_signals的全部列。
+            data_handler (DataHandler): 用于获取 daily_indices_data 和 monthly_indices_data 的数据处理对象。
+            signals_dict (dict): 包含月频和日频信号的字典，示例结构: {"M": merged_monthly, "D": merged_daily}。
+            signals_columns (list): 策略信号列的列表。如果为 None，则默认使用信号 DataFrame 的所有列。
         """
         self.data_handler = data_handler
-        # 分别保存月频与日频的合并信号（均为字典：键为指数名称，值为对应的 DataFrame）
         self.df_signals_monthly = signals_dict.get("M", {})
         self.df_signals_daily = signals_dict.get("D", {})
 
-        # 构造所有信号列和频率映射
         self.signals_columns = signals_columns
         self.is_monthly_signal = {}
-        # 遍历月频信号，列名中统一附加 "_monthly_signal"
         for index_name, df in self.df_signals_monthly.items():
             for col in df.columns:
                 self.is_monthly_signal[col] = True
-        # 遍历日频信号，列名中统一附加 "_daily_signal"
         for index_name, df in self.df_signals_daily.items():
             for col in df.columns:
                 self.is_monthly_signal[col] = False
 
-        # 其它初始化设置保持不变
-        # 默认年化因子针对日频策略，月频策略在计算绩效指标时使用 12
+        # 配置参数
         self.annual_factor_default = 252
         self.time_delta = 'Y'
         self.strategies_results = {}
@@ -55,17 +93,20 @@ class PerformanceEvaluator:
         self.stats_by_each_year = {}
         self.detailed_data = {}
 
-        # 从 data_handler 获取dict形式的日度/月度数据
-        self.daily_data_dict = self.data_handler.daily_indices_data  # {index_name: df_daily}
-        self.monthly_data_dict = self.data_handler.monthly_indices_data  # {index_name: df_monthly}
+        self.daily_data_dict = self.data_handler.daily_indices_data  # 日度数据字典
+        self.monthly_data_dict = self.data_handler.monthly_indices_data  # 月度数据字典
 
-        # 准备一个属性来存放当前指数的日度数据
-        self.index_df_daily = None
+        self.index_df_daily = None  # 当前指数的日度数据
 
     def prepare_data(self, index_name):
         """
-        从 daily_data_dict 取日度数据，并存到 self.index_df_daily。
-        回测时会在这个DataFrame里加入 'Position', 'Strategy_Return' 等列。
+        根据指数名称获取对应的日度数据，并保存到 self.index_df_daily。
+
+        参数:
+            index_name (str): 指数名称，对应数据字典中的键。
+
+        异常:
+            ValueError: 若在 data_handler 中未找到对应的日度数据。
         """
         if index_name not in self.daily_data_dict:
             raise ValueError(f"在 data_handler 中未找到日度数据: {index_name}")
@@ -73,29 +114,34 @@ class PerformanceEvaluator:
 
     def backtest_all_strategies(self, start_date='2001-12'):
         """
-        分别对月频和日频信号进行回测。
+        对所有月频和日频策略信号分别进行回测评估。
+
+        参数:
+            start_date (str): 回测开始日期，格式应为 'YYYY-MM' 或完整日期。
         """
-        # 处理月频信号回测
+        # 回测月频策略
         for index_name, df_signals in self.df_signals_monthly.items():
             for signal_col in self.signals_columns:
                 print(f"\n开始回测月频策略: {signal_col} (指数: {index_name})...")
-                self.prepare_data(index_name)  # 从 daily_data_dict 中获取日度数据（回测时需要日频数据作图）
-                # 直接从月频信号 DataFrame 中提取对应信号
+                self.prepare_data(index_name)
                 current_signal_series = df_signals[signal_col].dropna().copy()
-                result = self.backtest_single_strategy(index_name, signal_col, start_date, signal_series=current_signal_series)
+                result = self.backtest_single_strategy(index_name, signal_col, start_date,
+                                                       signal_series=current_signal_series)
                 base_name = signal_col.replace("_monthly_signal", "")
                 self.strategies_results[base_name] = result
                 final_strategy = result['Daily_Cumulative_Strategy'].iloc[-1]
                 print(f"策略 {base_name} 最终净值: {final_strategy:.2f}")
+                # 可根据需要调用下行代码做图
                 # self.plot_results(result['Daily_Cumulative_Strategy'], result['Daily_Cumulative_Index'], base_name)
 
-        # 处理日频信号回测
+        # 回测日频策略
         for index_name, df_signals in self.df_signals_daily.items():
             for signal_col in self.signals_columns:
                 print(f"\n开始回测日频策略: {signal_col} (指数: {index_name})...")
                 self.prepare_data(index_name)
                 current_signal_series = df_signals[signal_col].dropna().copy()
-                result = self.backtest_single_strategy(index_name, signal_col, start_date, signal_series=current_signal_series)
+                result = self.backtest_single_strategy(index_name, signal_col, start_date,
+                                                       signal_series=current_signal_series)
                 base_name = signal_col.replace("_daily_signal", "")
                 self.strategies_results[base_name] = result
                 final_strategy = result['Daily_Cumulative_Strategy'].iloc[-1]
@@ -104,13 +150,17 @@ class PerformanceEvaluator:
 
     def backtest_single_strategy(self, index_name, signal_col, start_date='2001-12', signal_series=None):
         """
-        增加 signal_series 参数，直接使用传入的信号数据（来自 df_signals_monthly 或 df_signals_daily）。
-        对月频策略：
-            1. 在月度数据上计算月频净值及收益；
-            2. 调用 convert_monthly_signals_to_daily_positions 将月频信号映射为日频仓位，再计算日频净值。
-        对日频策略：
-            直接在日度数据上计算策略净值。
-        修改点：增加返回结果中的 'Position' 字段，用于保存每日仓位信息（增量信息）。
+        对单一策略进行回测，支持月频和日频策略。
+
+        参数:
+            index_name (str): 指数名称，用于读取对应的数据。
+            signal_col (str): 策略信号所在的列名称。
+            start_date (str): 回测开始日期（格式 'YYYY-MM' 或完整日期）。
+            signal_series (pd.Series): 策略信号序列，从月度或日度的信号 DataFrame 中提取。
+
+        返回:
+            dict: 包含日度和（若适用）月度的回测结果字典，键包括 'Daily_Strategy_Return'、'Daily_Cumulative_Strategy'、
+                  'Daily_Cumulative_Index' 和 'Position'（日仓位信息）。
         """
         df_daily = self.daily_data_dict[index_name].copy()
         df_monthly = self.monthly_data_dict[index_name].copy()
@@ -119,10 +169,10 @@ class PerformanceEvaluator:
         df_monthly = df_monthly[df_monthly.index >= pd.to_datetime(start_date)].copy()
 
         if self.is_monthly_signal.get(signal_col, False):
-            # 月频策略处理
+            # 处理月频策略
             monthly_net_value, monthly_strategy_returns = self._backtest_monthly(df_monthly, signal_series)
-            daily_positions = self.convert_monthly_signals_to_daily_positions(df_daily, signal_series)
-            # 注意：仓位设置后要向后移一日，保证信号滞后生效
+            daily_positions = PositionManager.convert_monthly_signals_to_daily_positions(df_daily, signal_series)
+            # 仓位滞后一天，确保信号延时生效
             df_daily['Position'] = daily_positions.shift(1).fillna(0)
             df_daily['Index_Return'] = df_daily['指数:最后一条'].pct_change()
             df_daily['Strategy_Return'] = df_daily['Position'] * df_daily['Index_Return']
@@ -136,10 +186,10 @@ class PerformanceEvaluator:
                 'Monthly_Strategy_Return': monthly_strategy_returns,
                 'Monthly_Cumulative_Strategy': monthly_net_value,
                 'is_monthly': True,
-                'Position': df_daily['Position']  # 保存增量信息（仓位）
+                'Position': df_daily['Position']
             }
         else:
-            # 日频策略处理：直接使用日频信号进行回测
+            # 处理日频策略，直接将信号映射为仓位
             df_daily['Position'] = signal_series.shift(1).reindex(df_daily.index).fillna(0)
             df_daily['Index_Return'] = df_daily['指数:最后一条'].pct_change()
             df_daily['Strategy_Return'] = df_daily['Position'] * df_daily['Index_Return']
@@ -151,36 +201,40 @@ class PerformanceEvaluator:
                 'Daily_Cumulative_Strategy': df_daily['Cumulative_Strategy'],
                 'Daily_Cumulative_Index': df_daily['Cumulative_Index'],
                 'is_monthly': False,
-                'Position': df_daily['Position']  # 保存增量信息（仓位）
+                'Position': df_daily['Position']
             }
-
 
     def _backtest_monthly(self, df_monthly, monthly_signal_series):
         """
-        仅在月度层面进行回测，计算出月度层面的策略净值和策略收益。
-        用于统计胜率、赔率、Kelly等; 不做日度持仓。
+        在月度层面计算策略净值和月度收益，用于统计胜率、赔率、Kelly 等指标。
+
+        参数:
+            df_monthly (pd.DataFrame): 月度数据的 DataFrame。
+            monthly_signal_series (pd.Series): 月度仓位信号序列。
+
+        返回:
+            tuple: (monthly_net_value, monthly_strategy_returns)
+                   monthly_net_value (pd.Series): 月累计策略净值；
+                   monthly_strategy_returns (pd.Series): 月策略收益。
         """
         df_m_temp = df_monthly.copy()
         df_m_temp['Signal'] = monthly_signal_series.reindex(df_m_temp.index).fillna(0)
         df_m_temp['MonthlyReturn'] = df_m_temp['指数:最后一条'].pct_change()
-
-        # 策略收益 = Signal.shift(1) * MonthlyReturn
         df_m_temp['MonthlyStrategyReturn'] = df_m_temp['Signal'].shift(1).fillna(0) * df_m_temp['MonthlyReturn']
         df_m_temp['MonthlyStrategyReturn'].fillna(0, inplace=True)
         df_m_temp['MonthlyCumStrategy'] = (1 + df_m_temp['MonthlyStrategyReturn']).cumprod()
-
         monthly_net_value = df_m_temp['MonthlyCumStrategy']
         monthly_strategy_returns = df_m_temp['MonthlyStrategyReturn']
         return monthly_net_value, monthly_strategy_returns
 
     def plot_results(self, cumulative_strategy, cumulative_index, strategy_id):
         """
-        Plots cumulative returns of the strategy against the index.
+        绘制策略净值与基准指数的累计收益曲线对比图。
 
-        Parameters:
-            cumulative_strategy (pd.Series): Cumulative strategy returns.
-            cumulative_index (pd.Series): Cumulative index returns.
-            strategy_id (int): Strategy id.
+        参数:
+            cumulative_strategy (pd.Series): 策略累计净值序列。
+            cumulative_index (pd.Series): 指数累计收益序列。
+            strategy_id (str): 策略标识（用于图例和标题）。
         """
         plt.figure(figsize=(12, 6))
         plt.plot(cumulative_index, label='基准指数')
@@ -192,75 +246,17 @@ class PerformanceEvaluator:
         plt.grid(True)
         plt.show()
 
-    def convert_monthly_signals_to_daily_positions(self, df_daily, monthly_signal_series,
-                                                   next_day_open=True):
-        """
-        将月度信号映射为日度仓位。示例写法：
-          next_day_open=True表示在目标生效日的下一交易日开盘建仓。
-        """
-        daily_positions = pd.Series(0, index=df_daily.index, dtype=float)
-
-        # 遍历月度信号，根据 next_day_open 决定在下个月首日还是当月末日建仓
-        monthly_signal_series = monthly_signal_series.dropna()
-        # 月度数据的index是每个月最后一天(或您csv如何定)，我们需要从当月/下月的日度区间筛选
-
-        for month_date, sig_val in monthly_signal_series.items():
-            if sig_val == 0:
-                continue
-
-            # 月末 (month_date), 下个月第一天
-            from pandas.tseries.offsets import MonthBegin
-            month_first_day = (month_date + MonthBegin(0)).replace(day=1)
-            next_month_first_day = (month_date + MonthBegin(1))
-
-            if next_day_open:
-                # 下一个交易日(如下月首日)才建仓
-                start_date_for_position = next_month_first_day
-            else:
-                # 当月末就建仓
-                start_date_for_position = month_date
-
-            # 该signal通常有效到下个月末。
-            end_date_for_position = (next_month_first_day + MonthBegin(1)) - pd.Timedelta(days=1)
-
-            # 赋值给日度区间
-            mask = (df_daily.index >= start_date_for_position) & (df_daily.index <= end_date_for_position)
-            daily_positions.loc[mask] = sig_val
-
-        return daily_positions
-
-    def load_kelly_fractions(self):
-        """
-        从 self.metrics_df 中读取各策略 Kelly 仓位信息
-        返回一个字典，键为策略标识，值为对应的 Kelly 仓位。
-        """
-        if self.metrics_df is None:
-            return {}
-        kelly_dict = self.metrics_df['Kelly仓位'].to_dict()
-        return kelly_dict
-
     def compose_strategies_by_kelly(self, method='sum_to_one'):
         """
-        根据各策略的 Kelly 仓位以及当日是否持仓（通过 Daily_Strategy_Return 判断）
-        组合成一个总策略：
-          - 当日若该策略的 Daily_Strategy_Return 为 0，则认为无持仓，其 Kelly 仓位不计入当日加权。
-          - 对于有持仓的策略，其贡献收益为 Daily_Strategy_Return 乘以 Kelly 仓位，
-            当日有效 Kelly 仓位为 Kelly 仓位（即常量）乘以持仓指示器（非零 -> 1，否则 0）。
-          - 日综合收益为所有策略贡献收益总和除以当日所有活跃策略 Kelly 仓位之和，
-            若当日无活跃策略，则综合收益记为 0。
-
-        特别说明：
-          对于策略 '上证指数_tech_sell' 和 '上证指数_composite_basic_tech'（做空策略），
-          其有效仓位将取负值，从而在总仓位中“减去”它们的仓位（总仓位可以为负，代表做空）。
+        根据每个策略的 Kelly 仓位及每日持仓（由 Position 字段给出）组合成一个总策略。
 
         参数:
-            method:
-                'sum_to_one'：使用当日所有活跃策略的 Kelly 仓位求和归一化计算综合收益；
-                'avg_to_one'：扩展方案（目前示例中与 sum_to_one 用法一致）。
+            method (str): 组合收益计算方法。
+                          'sum_to_one'：使用当日所有活跃策略 Kelly 仓位之和归一化；
+                          'avg_to_one'：扩展方案，目前实现与 'sum_to_one' 类似。
 
         返回:
-            pd.DataFrame: 包含综合策略日收益、累计净值、各策略当日贡献收益及其有效 Kelly 仓位，
-                          以及每日综合仓位（Composite_Position）。
+            pd.DataFrame: 包含综合策略每日收益、累计净值、各策略贡献收益、有效 Kelly 仓位以及总仓位（Composite_Position）的数据表。
         """
         if not self.strategies_results:
             print("无策略回测结果。")
@@ -274,7 +270,6 @@ class PerformanceEvaluator:
         composite_raw = pd.Series(0.0, index=base_index)  # 用于累计各策略贡献的日收益
         active_kelly_sum = pd.Series(0.0, index=base_index)  # 当日活跃策略的 Kelly 仓位加总
 
-        # 遍历每个策略，判断当日是否持仓（通过 Daily_Strategy_Return 是否为 0 判断）
         for strategy_id, results in self.strategies_results.items():
             # 根据策略名称去除前缀，例如 '上证指数_tech_sell' 得到 "tech_sell"
             strategy_id_ = "_".join(strategy_id.split("_")[1:])
@@ -284,7 +279,6 @@ class PerformanceEvaluator:
             fraction = kelly_dict[strategy_id_]
             # 获取该策略的日收益序列
             daily_return = results['Daily_Strategy_Return'].reindex(base_index).fillna(0)
-
             effective_fraction = fraction * results['Position'].reindex(base_index).fillna(0)
 
             active_kelly_sum += effective_fraction
@@ -340,6 +334,17 @@ class PerformanceEvaluator:
 
         return combined_df
 
+    def load_kelly_fractions(self):
+        """
+        从指标数据中提取各策略的 Kelly 仓位信息。
+
+        返回:
+            dict: 键为策略标识，值为对应的 Kelly 仓位值；若指标数据不存在则返回空字典。
+        """
+        if self.metrics_df is None:
+            return {}
+        return self.metrics_df['Kelly仓位'].to_dict()
+
     def calculate_metrics_all_strategies(self):
         """
         计算所有策略的绩效指标（基于策略收益）。
@@ -380,7 +385,7 @@ class PerformanceEvaluator:
             kelly_fraction = self.calculate_kelly_fraction(win_rate, odds_ratio)
             average_signals = self.calculate_average_signal_count(ret_series)
 
-            display_name = strategy_id[strategy_id.find('_')+1:] if '_' in strategy_id else strategy_id
+            display_name = strategy_id[strategy_id.find('_') + 1:] if '_' in strategy_id else strategy_id
             metrics['策略名称'].append(display_name)
             metrics['年化收益率'].append(annualized_return)
             metrics['年化波动率'].append(annualized_volatility)
@@ -397,9 +402,13 @@ class PerformanceEvaluator:
 
     def calculate_annual_metrics_for(self, strategy_names):
         """
-        Calculates annual metrics for specific strategies and saves detailed data.
-        Parameters:
-            strategy_names (list): List of strategy names (e.g., ['strategy6', 'strategy7']).
+        为指定策略计算年度绩效指标，并保存详细数据。
+
+        参数:
+            strategy_names (list): 策略名称列表，例如 ['strategy6', 'strategy7']。
+
+        注意:
+            需要确保 self.index_df_with_signal 已经被正确构建，否则可能导致错误。
         """
         if not isinstance(strategy_names, list):
             raise TypeError("strategy_names 应该是一个列表。")
@@ -408,7 +417,6 @@ class PerformanceEvaluator:
             if strategy_name not in self.strategies_results:
                 raise ValueError(f"策略名称 '{strategy_name}' 不存在于回测结果中。")
 
-            # 注意：此处需要保证 self.index_df_with_signal 已经适当构建
             strategy_returns = self.strategies_results[strategy_name].get('Daily_Strategy_Return')
             index_returns = self.index_df_with_signal['Index_Return']
 
@@ -425,18 +433,15 @@ class PerformanceEvaluator:
                 '持有多单次数': trade_counts['Annual_Long_Trades'],
                 '持有空单次数': trade_counts['Annual_Short_Trades']
             })
-            self.stats_by_each_year[strategy_name].index = self.stats_by_each_year[strategy_name].index.year  # 将索引设置为年份
+            self.stats_by_each_year[strategy_name].index = self.stats_by_each_year[strategy_name].index.year
 
-            # 提取用户指定的列
             signal_column = f'{strategy_name}_signal'
             if signal_column not in self.index_df_with_signal.columns:
                 raise ValueError(f"信号列 '{signal_column}' 不存在于 index_df_with_signal 中。")
 
             detailed_df = self.index_df_with_signal[
                 [signal_column, 'Position', 'Strategy_Return', 'Cumulative_Strategy', 'Cumulative_Index']].copy()
-            detailed_df.rename(columns={
-                signal_column: '本策略Signal'
-            }, inplace=True)
+            detailed_df.rename(columns={signal_column: '本策略Signal'}, inplace=True)
 
             # 提取用户指定的列及增量记录
             signal_columns = [col for col in self.index_df_with_signal.columns if col.endswith('_signal')]
@@ -449,10 +454,11 @@ class PerformanceEvaluator:
 
     def generate_excel_reports(self, output_file, annual_metrics_strategy_names):
         """
-        生成并保存年度统计和详细数据到同一个Excel文件的多个工作表中。
-        Parameters:
-            output_file (str): 输出Excel文件的路径。
-            annual_metrics_strategy_names (list): List of strategy names to generate annual metrics for.
+        将年度统计数据和详细数据输出到同一个 Excel 文件的各个工作表中。
+
+        参数:
+            output_file (str): 输出 Excel 文件的完整路径。
+            annual_metrics_strategy_names (list): 需要生成年度绩效指标的策略名称列表。
         """
         with pd.ExcelWriter(output_file) as writer:
             for strategy_name in annual_metrics_strategy_names:
@@ -460,12 +466,10 @@ class PerformanceEvaluator:
                     self.stats_by_each_year[strategy_name].to_excel(writer, sheet_name=f'{strategy_name}_年度统计')
                 else:
                     print(f"策略 {strategy_name} 的年度统计数据不存在，跳过。")
-
                 if strategy_name in self.detailed_data:
                     self.detailed_data[strategy_name].to_excel(writer, sheet_name=f'{strategy_name}_详细数据')
                 else:
                     print(f"策略 {strategy_name} 的详细数据不存在，跳过。")
-
             if self.metrics_df is not None:
                 self.metrics_df.to_excel(writer, sheet_name='策略绩效指标')
             else:
@@ -473,11 +477,13 @@ class PerformanceEvaluator:
 
     def calculate_average_signal_count(self, strategy_returns):
         """
-        Calculates the average number of signals per year.
-        Parameters:
-            strategy_returns (pd.Series): Strategy returns.
-        Returns:
-            float: Average number of signals per year.
+        计算每年平均的信号次数。
+
+        参数:
+            strategy_returns (pd.Series): 策略收益序列（非零代表有信号）。
+
+        返回:
+            float: 每年平均的信号次数。
         """
         signals = strategy_returns != 0
         annual_signals = signals.resample(self.time_delta).sum()
@@ -486,41 +492,50 @@ class PerformanceEvaluator:
 
     def calculate_annualized_return(self, strategy_returns, annual_factor=None):
         """
-        Calculates the annualized return.
-        Parameters:
-            strategy_returns (pd.Series): Strategy returns.
-            annual_factor (int): Annualization factor. 若为 None，则使用默认值。
-        Returns:
-            float: Annualized return.
+        计算策略的年化收益率。
+
+        参数:
+            strategy_returns (pd.Series): 策略收益序列。
+            annual_factor (int): 年化因子。如果为 None，则使用默认值。
+
+        返回:
+            float: 年化收益率。
         """
         cumulative_return = (1 + strategy_returns).prod()
         n_periods = strategy_returns.count()
         if n_periods == 0:
             return np.nan
+        annual_factor = annual_factor if annual_factor is not None else self.annual_factor_default
         annualized_return = cumulative_return ** (annual_factor / n_periods) - 1
         return annualized_return
 
     def calculate_annualized_volatility(self, strategy_returns, annual_factor=None):
         """
-        Calculates the annualized volatility.
-        Parameters:
-            strategy_returns (pd.Series): Strategy returns.
-            annual_factor (int): Annualization factor.
-        Returns:
-            float: Annualized volatility.
+        计算策略收益的年化波动率。
+
+        参数:
+            strategy_returns (pd.Series): 策略收益序列。
+            annual_factor (int): 年化因子。
+
+        返回:
+            float: 年化波动率。
         """
+        annual_factor = annual_factor if annual_factor is not None else self.annual_factor_default
         return strategy_returns.std() * np.sqrt(annual_factor)
 
     def calculate_sharpe_ratio(self, strategy_returns, risk_free_rate=0, annual_factor=None):
         """
-        Calculates the Sharpe Ratio.
-        Parameters:
-            strategy_returns (pd.Series): Strategy returns.
-            risk_free_rate (float): Risk-free rate.
-            annual_factor (int): Annualization factor.
-        Returns:
-            float: Sharpe Ratio.
+        计算策略的夏普比率。
+
+        参数:
+            strategy_returns (pd.Series): 策略收益序列。
+            risk_free_rate (float): 无风险收益率。
+            annual_factor (int): 年化因子。
+
+        返回:
+            float: 夏普比率。
         """
+        annual_factor = annual_factor if annual_factor is not None else self.annual_factor_default
         excess_returns = strategy_returns.mean() - (risk_free_rate / annual_factor)
         volatility = strategy_returns.std()
         if volatility == 0:
@@ -529,14 +544,17 @@ class PerformanceEvaluator:
 
     def calculate_sortino_ratio(self, strategy_returns, target=0, annual_factor=None):
         """
-        Calculates the Sortino Ratio.
-        Parameters:
-            strategy_returns (pd.Series): Strategy returns.
-            target (float): Target return.
-            annual_factor (int): Annualization factor.
-        Returns:
-            float: Sortino Ratio.
+        计算策略的索提诺比率。
+
+        参数:
+            strategy_returns (pd.Series): 策略收益序列。
+            target (float): 目标收益率。
+            annual_factor (int): 年化因子。
+
+        返回:
+            float: 索提诺比率。
         """
+        annual_factor = annual_factor if annual_factor is not None else self.annual_factor_default
         downside_returns = strategy_returns[strategy_returns < target]
         downside_deviation = downside_returns.std() * np.sqrt(annual_factor)
         expected_return = (strategy_returns.mean() - target) * annual_factor
@@ -546,11 +564,13 @@ class PerformanceEvaluator:
 
     def calculate_max_drawdown(self, cumulative_returns):
         """
-        Calculates the Maximum Drawdown.
-        Parameters:
-            cumulative_returns (pd.Series): Cumulative strategy returns.
-        Returns:
-            float: Maximum Drawdown.
+        计算策略累计净值的最大回撤。
+
+        参数:
+            cumulative_returns (pd.Series): 累计收益序列。
+
+        返回:
+            float: 最大回撤值。
         """
         rolling_max = cumulative_returns.cummax()
         drawdown = (cumulative_returns - rolling_max) / rolling_max
@@ -558,27 +578,30 @@ class PerformanceEvaluator:
 
     def calculate_win_rate(self, strategy_returns):
         """
-        Calculates the win rate.
-        Parameters:
-            strategy_returns (pd.Series): Strategy returns.
-        Returns:
-            float: Win rate.
+        计算策略的胜率，即正收益信号占所有交易信号的比例。
+
+        参数:
+            strategy_returns (pd.Series): 策略收益序列。
+
+        返回:
+            float: 胜率。
         """
         active_returns = strategy_returns[strategy_returns != 0]
         if active_returns.empty:
             return np.nan
-        buy_wins = active_returns > 0
-        total_wins = buy_wins.sum()
+        total_wins = (active_returns > 0).sum()
         total_signals = active_returns.count()
         return total_wins / total_signals
 
     def calculate_odds_ratio(self, strategy_returns):
         """
-        Calculates the Odds Ratio.
-        Parameters:
-            strategy_returns (pd.Series): Strategy returns.
-        Returns:
-            float: Odds Ratio.
+        计算策略的赔率，即平均盈利与平均亏损之比。
+
+        参数:
+            strategy_returns (pd.Series): 策略收益序列。
+
+        返回:
+            float: 赔率；若亏损为空，则返回 NaN。
         """
         active_returns = strategy_returns[strategy_returns != 0]
         wins = active_returns[active_returns > 0]
@@ -591,12 +614,14 @@ class PerformanceEvaluator:
 
     def calculate_kelly_fraction(self, win_rate, odds_ratio):
         """
-        Calculates the Kelly Fraction.
-        Parameters:
-            win_rate (float): Win rate.
-            odds_ratio (float): Odds ratio.
-        Returns:
-            float: Kelly Fraction.
+        计算策略的 Kelly 仓位分配比例。
+
+        参数:
+            win_rate (float): 胜率。
+            odds_ratio (float): 赔率。
+
+        返回:
+            float: Kelly 分配比例。若赔率无效，则返回 0；否则返回计算值与 0 的较大者。
         """
         if np.isnan(odds_ratio) or odds_ratio == 0:
             return 0
@@ -605,11 +630,13 @@ class PerformanceEvaluator:
 
     def calculate_trade_counts(self, signals):
         """
-        Calculates the number of long and short trades per year.
-        Parameters:
-            signals (pd.Series): Signal series.
-        Returns:
-            pd.DataFrame: Trade counts per year.
+        计算每年多头和空头交易的次数。
+
+        参数:
+            signals (pd.Series): 信号序列，其中1代表多头信号，-1代表空头信号。
+
+        返回:
+            pd.DataFrame: 包含每年多空交易笔数的数据表，列名为 'Annual_Long_Trades' 和 'Annual_Short_Trades'。
         """
         long_trades = signals == 1
         short_trades = signals == -1
